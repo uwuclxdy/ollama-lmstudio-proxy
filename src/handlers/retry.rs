@@ -253,7 +253,7 @@ where
                 operation,
                 cancellation_token,
             )
-            .await
+                .await
         }
         None => with_simple_retry(operation, cancellation_token).await,
     }
