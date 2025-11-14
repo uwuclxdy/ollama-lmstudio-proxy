@@ -8,6 +8,9 @@ pub mod model_legacy; // Legacy OpenAI-compatible API support
 pub mod server;
 pub mod utils;
 
+#[cfg(test)]
+mod tests;
+
 // Public re-exports for easy access
 pub use common::RequestContext;
 
