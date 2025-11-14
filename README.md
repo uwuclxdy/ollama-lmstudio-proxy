@@ -126,7 +126,25 @@ The proxy understands two payload styles:
 - **Ollama-style**: advanced parameters belong in `options`. Use this when calling `/api/*` endpoints.
 - **OpenAI-style passthrough**: send OpenAI-compatible JSON to `/v1/*` and the proxy forwards it untouched.
 
-When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM Studio's native parameters.
+When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM Studio's native parameters. You can set `"format": "json"` for quick JSON responses or provide a JSON Schema object (also acceptable inside `options.format`) to take advantage of LM Studio's structured output enforcement.
+
+### Option mapping cheat sheet
+
+The proxy automatically forwards or converts these knobs for you:
+
+| Ollama option            | LM Studio parameter        | Notes |
+|--------------------------|----------------------------|-------|
+| `temperature`, `top_p`   | Same name                  | Direct passthrough |
+| `top_k`                  | `top_k`                    | Direct passthrough |
+| `presence_penalty`       | `presence_penalty`         | Direct passthrough |
+| `frequency_penalty`      | `frequency_penalty`        | Direct passthrough |
+| `repeat_penalty`         | `repeat_penalty`/`frequency_penalty` | Mapped depending on what is already provided |
+| `max_tokens`/`num_predict` | `max_tokens`             | Picks whichever you set, with `max_tokens` taking priority |
+| `logit_bias`             | `logit_bias`               | Works with either JSON or map notation |
+| `system` (in `options`)  | `system`                   | Injected as LM Studio system prompt |
+| `stop`, `seed`           | Same name                  | Direct passthrough |
+
+If you do not need structured output, you can still pass overrides such as `stop`, `seed`, or additional OpenAI-compatible payloads and the proxy will pass them through untouched.
 
 ### Structured output via `/api/generate`
 
@@ -137,7 +155,7 @@ curl http://localhost:11434/api/generate -H "Content-Type: application/json" -d 
   "stream": false,
   "format": {
     "type": "object",
-    "properties": {file:color-palette-template.md 
+    "properties": {
       "status": {"type": "string"},
       "checked_at": {"type": "string", "format": "date-time"}
     },
