@@ -1,5 +1,4 @@
 /// src/handlers/helpers.rs - Enhanced request/response transformation with native API support
-
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
@@ -16,9 +15,18 @@ pub fn json_response(value: &Value) -> warp::reply::Response {
         .header("Content-Type", CONTENT_TYPE_JSON)
         .header("Content-Length", content_length.to_string())
         .header("Cache-Control", HEADER_CACHE_CONTROL)
-        .header("Access-Control-Allow-Origin", HEADER_ACCESS_CONTROL_ALLOW_ORIGIN)
-        .header("Access-Control-Allow-Methods", HEADER_ACCESS_CONTROL_ALLOW_METHODS)
-        .header("Access-Control-Allow-Headers", HEADER_ACCESS_CONTROL_ALLOW_HEADERS)
+        .header(
+            "Access-Control-Allow-Origin",
+            HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+        )
+        .header(
+            "Access-Control-Allow-Methods",
+            HEADER_ACCESS_CONTROL_ALLOW_METHODS,
+        )
+        .header(
+            "Access-Control-Allow-Headers",
+            HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
+        )
         .body(json_string.into())
         .unwrap_or_else(|_| {
             warp::http::Response::builder()
@@ -78,7 +86,8 @@ impl TimingInfo {
             // Calculate more accurate timing breakdown
             let prompt_eval_duration_ns = ttft_ns.max(1);
             let eval_duration_ns = generation_time_ns.saturating_sub(ttft_ns).max(1);
-            let total_duration_ns = generation_time_ns.max(prompt_eval_duration_ns + eval_duration_ns);
+            let total_duration_ns =
+                generation_time_ns.max(prompt_eval_duration_ns + eval_duration_ns);
 
             return Self {
                 total_duration: total_duration_ns,
@@ -95,8 +104,14 @@ impl TimingInfo {
             Instant::now(),
             estimated_input_tokens,
             estimated_output_tokens,
-            lm_response.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_u64()),
-            lm_response.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_u64()),
+            lm_response
+                .get("usage")
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64()),
+            lm_response
+                .get("usage")
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|t| t.as_u64()),
         )
     }
 
@@ -111,20 +126,26 @@ impl TimingInfo {
         let total_duration_ns = start_time.elapsed().as_nanos() as u64;
 
         let final_prompt_tokens = actual_prompt_tokens.unwrap_or(input_tokens_estimate).max(1);
-        let final_eval_tokens = actual_completion_tokens.unwrap_or(output_tokens_estimate).max(1);
+        let final_eval_tokens = actual_completion_tokens
+            .unwrap_or(output_tokens_estimate)
+            .max(1);
 
         // Proportional split
-        let prompt_eval_duration_ns = if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
-            (total_duration_ns as f64 * (final_prompt_tokens as f64 / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
-        } else {
-            total_duration_ns / TIMING_PROMPT_RATIO
-        };
+        let prompt_eval_duration_ns =
+            if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
+                (total_duration_ns as f64
+                    * (final_prompt_tokens as f64
+                        / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
+            } else {
+                total_duration_ns / TIMING_PROMPT_RATIO
+            };
 
-        let eval_duration_ns = if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
-            total_duration_ns - prompt_eval_duration_ns
-        } else {
-            total_duration_ns / TIMING_EVAL_RATIO
-        };
+        let eval_duration_ns =
+            if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
+                total_duration_ns - prompt_eval_duration_ns
+            } else {
+                total_duration_ns / TIMING_EVAL_RATIO
+            };
 
         Self {
             total_duration: total_duration_ns,
@@ -144,7 +165,11 @@ impl TimingInfo {
     }
 
     /// Calculate timing from message count (legacy fallback)
-    pub fn from_message_count(start_time: Instant, message_count: usize, output_text: &str) -> Self {
+    pub fn from_message_count(
+        start_time: Instant,
+        message_count: usize,
+        output_text: &str,
+    ) -> Self {
         let input_tokens = (message_count * 10).max(1) as u64;
         let output_tokens = estimate_token_count(output_text);
         Self::calculate_legacy(start_time, input_tokens, output_tokens, None, None)
@@ -172,8 +197,14 @@ impl ResponseTransformer {
                 estimate_token_count(&content),
             )
         } else {
-            let actual_prompt_tokens = lm_response.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_u64());
-            let actual_completion_tokens = lm_response.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_u64());
+            let actual_prompt_tokens = lm_response
+                .get("usage")
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64());
+            let actual_completion_tokens = lm_response
+                .get("usage")
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|t| t.as_u64());
 
             TimingInfo::calculate_legacy(
                 start_time,
@@ -189,7 +220,8 @@ impl ResponseTransformer {
             "content": content
         });
 
-        if let Some(tool_calls) = lm_response.get("choices")
+        if let Some(tool_calls) = lm_response
+            .get("choices")
             .and_then(|c| c.as_array()?.first())
             .and_then(|choice| choice.get("message")?.get("tool_calls"))
             .and_then(|tc| tc.as_array())
@@ -201,6 +233,7 @@ impl ResponseTransformer {
             }
         }
 
+        // TODO: emit LM Studio's real conversation context once the native API exposes it.
         json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
@@ -232,8 +265,14 @@ impl ResponseTransformer {
                 estimate_token_count(&content),
             )
         } else {
-            let actual_prompt_tokens = lm_response.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_u64());
-            let actual_completion_tokens = lm_response.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_u64());
+            let actual_prompt_tokens = lm_response
+                .get("usage")
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64());
+            let actual_completion_tokens = lm_response
+                .get("usage")
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|t| t.as_u64());
 
             TimingInfo::calculate_legacy(
                 start_time,
@@ -249,7 +288,6 @@ impl ResponseTransformer {
             "created_at": chrono::Utc::now().to_rfc3339(),
             "response": content,
             "done": true,
-            "context": DEFAULT_CONTEXT,
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
@@ -272,9 +310,16 @@ impl ResponseTransformer {
         let estimated_output_tokens = embeddings.len().max(1) as u64;
 
         let timing = if use_native_stats {
-            TimingInfo::from_native_stats(lm_response, estimated_input_tokens, estimated_output_tokens)
+            TimingInfo::from_native_stats(
+                lm_response,
+                estimated_input_tokens,
+                estimated_output_tokens,
+            )
         } else {
-            let actual_prompt_tokens = lm_response.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_u64());
+            let actual_prompt_tokens = lm_response
+                .get("usage")
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64());
 
             TimingInfo::calculate_legacy(
                 start_time,
@@ -307,10 +352,13 @@ impl ResponseTransformer {
         if let Some(reasoning) = lm_response
             .get("choices")
             .and_then(|c| c.as_array()?.first())
-            .and_then(|choice| choice.get("message")?.get("reasoning_content")?.as_str())
+            .and_then(|choice| choice.get("message")?.get("reasoning")?.as_str())
         {
             if !reasoning.is_empty() {
-                return format!("**Reasoning:**\n{}\n\n**Answer:**\n{}", reasoning, base_content);
+                return format!(
+                    "**Reasoning:**\n{}\n\n**Answer:**\n{}",
+                    reasoning, base_content
+                );
             }
         }
         base_content
@@ -332,7 +380,8 @@ impl ResponseTransformer {
             .get("data")
             .and_then(|d| d.as_array())
             .map(|data_array| {
-                data_array.iter()
+                data_array
+                    .iter()
                     .filter_map(|item| item.get("embedding").cloned())
                     .collect()
             })
@@ -346,9 +395,9 @@ pub fn build_lm_studio_request(
     request_type: LMStudioRequestType,
     ollama_options: Option<&Value>,
     ollama_tools: Option<&Value>,
+    structured_format: Option<&Value>,
 ) -> Value {
-    let mut builder = RequestBuilder::new()
-        .add_required("model", model_lm_studio_id);
+    let mut builder = RequestBuilder::new().add_required("model", model_lm_studio_id);
 
     match request_type {
         LMStudioRequestType::Chat { messages, stream } => {
@@ -361,7 +410,11 @@ pub fn build_lm_studio_request(
                 }
             }
         }
-        LMStudioRequestType::Completion { prompt, stream, images } => {
+        LMStudioRequestType::Completion {
+            prompt,
+            stream,
+            images,
+        } => {
             // Vision support
             if let Some(img_array) = images {
                 let chat_messages = json!([{
@@ -383,7 +436,7 @@ pub fn build_lm_studio_request(
         }
     }
 
-    let lm_studio_mapped_params = map_ollama_to_lmstudio_params(ollama_options);
+    let lm_studio_mapped_params = map_ollama_to_lmstudio_params(ollama_options, structured_format);
     let mut request_json = builder.build();
 
     if let Some(request_obj) = request_json.as_object_mut() {
@@ -397,9 +450,18 @@ pub fn build_lm_studio_request(
 
 /// Request type enumeration
 pub enum LMStudioRequestType<'a> {
-    Chat { messages: &'a Value, stream: bool },
-    Completion { prompt: &'a str, stream: bool, images: Option<&'a Value> },
-    Embeddings { input: &'a Value },
+    Chat {
+        messages: &'a Value,
+        stream: bool,
+    },
+    Completion {
+        prompt: &'a str,
+        stream: bool,
+        images: Option<&'a Value>,
+    },
+    Embeddings {
+        input: &'a Value,
+    },
 }
 
 /// Extract content from streaming chunk
@@ -455,19 +517,24 @@ pub fn create_ollama_streaming_chunk(
             "done": done
         })
     } else {
+        // TODO: attach LM Studio context handles to streaming completion chunks once the API returns them.
         json!({
             "model": model_ollama_name,
             "created_at": timestamp,
             "response": content,
-            "done": done,
-            "context": if done { Some(DEFAULT_CONTEXT.to_vec()) } else { None }
+            "done": done
         })
     }
 }
 
 /// Create error chunk for streaming
-pub fn create_error_chunk(model_ollama_name: &str, error_message: &str, is_chat_endpoint: bool) -> Value {
-    let mut chunk = create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+pub fn create_error_chunk(
+    model_ollama_name: &str,
+    error_message: &str,
+    is_chat_endpoint: bool,
+) -> Value {
+    let mut chunk =
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("error".to_string(), json!(error_message));
         if is_chat_endpoint {
@@ -486,13 +553,23 @@ pub fn create_cancellation_chunk(
     tokens_generated_estimate: u64,
     is_chat_endpoint: bool,
 ) -> Value {
-    let timing = TimingInfo::calculate_legacy(Instant::now() - duration, 10, tokens_generated_estimate, None, Some(tokens_generated_estimate));
+    let timing = TimingInfo::calculate_legacy(
+        Instant::now() - duration,
+        10,
+        tokens_generated_estimate,
+        None,
+        Some(tokens_generated_estimate),
+    );
 
-    let mut chunk = create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+    let mut chunk =
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         let content_field_value = if tokens_generated_estimate > 0 {
-            format!("[Request cancelled after {} tokens generated (estimated)]", tokens_generated_estimate)
+            format!(
+                "[Request cancelled after {} tokens generated (estimated)]",
+                tokens_generated_estimate
+            )
         } else {
             ERROR_CANCELLED.to_string()
         };
@@ -507,8 +584,14 @@ pub fn create_cancellation_chunk(
 
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
-        chunk_obj.insert("prompt_eval_count".to_string(), json!(timing.prompt_eval_count));
-        chunk_obj.insert("prompt_eval_duration".to_string(), json!(timing.prompt_eval_duration));
+        chunk_obj.insert(
+            "prompt_eval_count".to_string(),
+            json!(timing.prompt_eval_count),
+        );
+        chunk_obj.insert(
+            "prompt_eval_duration".to_string(),
+            json!(timing.prompt_eval_duration),
+        );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
         chunk_obj.insert("done_reason".to_string(), json!("cancelled"));
@@ -531,13 +614,20 @@ pub fn create_final_chunk(
         None,
     );
 
-    let mut chunk = create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+    let mut chunk =
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
-        chunk_obj.insert("prompt_eval_count".to_string(), json!(timing.prompt_eval_count));
-        chunk_obj.insert("prompt_eval_duration".to_string(), json!(timing.prompt_eval_duration));
+        chunk_obj.insert(
+            "prompt_eval_count".to_string(),
+            json!(timing.prompt_eval_count),
+        );
+        chunk_obj.insert(
+            "prompt_eval_duration".to_string(),
+            json!(timing.prompt_eval_duration),
+        );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
     }
@@ -546,7 +636,9 @@ pub fn create_final_chunk(
 
 /// Estimate token count from text
 fn estimate_token_count(text: &str) -> u64 {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
     ((text.len() as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
 }
 
@@ -570,8 +662,83 @@ where
             load_timeout_seconds,
             operation,
             cancellation_token,
-        ).await
+        )
+        .await
     } else {
         crate::handlers::retry::with_simple_retry(operation, cancellation_token).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn completion_with_images_becomes_chat_payload() {
+        let images = json!(["img-data"]);
+        let request = build_lm_studio_request(
+            "test-model",
+            LMStudioRequestType::Completion {
+                prompt: "describe the image",
+                stream: true,
+                images: Some(&images),
+            },
+            None,
+            None,
+            None,
+        );
+
+        assert!(request.get("messages").is_some());
+        assert!(request.get("prompt").is_none());
+    }
+
+    #[test]
+    fn chat_request_includes_tools_and_schema_format() {
+        let messages = json!([
+            {"role": "user", "content": "Say hi"}
+        ]);
+        let tools = json!([
+            {"type": "function", "function": {"name": "hi", "parameters": {"type": "object"}}}
+        ]);
+        let schema = json!({"type": "object", "properties": {"answer": {"type": "string"}}});
+
+        let request = build_lm_studio_request(
+            "test-model",
+            LMStudioRequestType::Chat {
+                messages: &messages,
+                stream: false,
+            },
+            None,
+            Some(&tools),
+            Some(&schema),
+        );
+
+        assert_eq!(request.get("tools"), Some(&tools));
+        let response_format = request["response_format"].clone();
+        assert_eq!(response_format["json_schema"]["schema"], schema);
+    }
+
+    #[test]
+    fn json_mode_format_creates_json_object_response_format() {
+        let messages = json!([
+            {"role": "user", "content": "respond with json"}
+        ]);
+        let format_value = Value::String("json".into());
+
+        let request = build_lm_studio_request(
+            "test-model",
+            LMStudioRequestType::Chat {
+                messages: &messages,
+                stream: true,
+            },
+            None,
+            None,
+            Some(&format_value),
+        );
+
+        assert_eq!(request["response_format"], json!({"type": "json_object"}));
+        // ensure original format value remains unchanged for caller reuse
+        assert_eq!(format_value, Value::String("json".into()));
     }
 }

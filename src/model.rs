@@ -60,7 +60,10 @@ impl ModelInfo {
             id: native_data.id.clone(),
             ollama_name,
             model_type: native_data.model_type.clone(),
-            publisher: native_data.publisher.clone().unwrap_or_else(|| "unknown".to_string()),
+            publisher: native_data
+                .publisher
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             arch: native_data.arch.clone(),
             compatibility_type: native_data.compatibility_type.clone(),
             quantization: native_data.quantization.clone(),
@@ -77,7 +80,10 @@ impl ModelInfo {
         match self.model_type.as_str() {
             "llm" => {
                 caps.push("completion".to_string());
-                if self.arch.contains("instruct") || self.id.contains("instruct") || self.id.contains("chat") {
+                if self.arch.contains("instruct")
+                    || self.id.contains("instruct")
+                    || self.id.contains("chat")
+                {
                     caps.push("chat".to_string());
                 }
             }
@@ -294,22 +300,52 @@ impl ModelResolver {
 
         // Check cache first
         if let Some(cached_lm_studio_id) = self.cache.get(&cleaned_ollama_request).await {
-            log_timed(LOG_PREFIX_SUCCESS, &format!("Cache hit: '{}' -> '{}'", cleaned_ollama_request, cached_lm_studio_id), start_time);
+            log_timed(
+                LOG_PREFIX_SUCCESS,
+                &format!(
+                    "Cache hit: '{}' -> '{}'",
+                    cleaned_ollama_request, cached_lm_studio_id
+                ),
+                start_time,
+            );
             return Ok(cached_lm_studio_id);
         }
 
-        log_warning("Cache miss", &format!("Fetching '{}' from LM Studio", cleaned_ollama_request));
+        log_warning(
+            "Cache miss",
+            &format!("Fetching '{}' from LM Studio", cleaned_ollama_request),
+        );
 
-        match self.get_available_lm_studio_models_native(client, cancellation_token).await {
+        match self
+            .get_available_lm_studio_models_native(client, cancellation_token)
+            .await
+        {
             Ok(available_models) => {
-                if let Some(matched_model) = self.find_best_match_native(&cleaned_ollama_request, &available_models) {
+                if let Some(matched_model) =
+                    self.find_best_match_native(&cleaned_ollama_request, &available_models)
+                {
                     // Check if model is loaded for strict error handling
                     if !matched_model.is_loaded {
-                        log_warning("Model state", &format!("'{}' found but not loaded (state: {})", matched_model.id, matched_model.state));
+                        log_warning(
+                            "Model state",
+                            &format!(
+                                "'{}' found but not loaded (state: {})",
+                                matched_model.id, matched_model.state
+                            ),
+                        );
                     }
 
-                    self.cache.insert(cleaned_ollama_request.clone(), matched_model.id.clone()).await;
-                    log_timed(LOG_PREFIX_SUCCESS, &format!("Resolved: '{}' -> '{}' ({})", cleaned_ollama_request, matched_model.id, matched_model.state), start_time);
+                    self.cache
+                        .insert(cleaned_ollama_request.clone(), matched_model.id.clone())
+                        .await;
+                    log_timed(
+                        LOG_PREFIX_SUCCESS,
+                        &format!(
+                            "Resolved: '{}' -> '{}' ({})",
+                            cleaned_ollama_request, matched_model.id, matched_model.state
+                        ),
+                        start_time,
+                    );
                     Ok(matched_model.id)
                 } else {
                     // Strict error handling - don't allow unknown models
@@ -358,21 +394,19 @@ impl ModelResolver {
             return Err(ProxyError::new(
                 format!(
                     "Native API error ({}): {}. Try --legacy flag for older versions",
-                    response.status(), ERROR_LM_STUDIO_UNAVAILABLE
+                    response.status(),
+                    ERROR_LM_STUDIO_UNAVAILABLE
                 ),
                 response.status().as_u16(),
             ));
         }
 
-        let native_response = response
-            .json::<NativeModelsResponse>()
-            .await
-            .map_err(|e| {
-                ProxyError::internal_server_error(&format!(
-                    "Invalid JSON from /api/v0/models: {}. Try --legacy flag",
-                    e
-                ))
-            })?;
+        let native_response = response.json::<NativeModelsResponse>().await.map_err(|e| {
+            ProxyError::internal_server_error(&format!(
+                "Invalid JSON from /api/v0/models: {}. Try --legacy flag",
+                e
+            ))
+        })?;
 
         let models = native_response
             .data
@@ -447,15 +481,23 @@ impl ModelResolver {
         }
 
         // Architecture matching bonus
-        if model.arch.to_lowercase().contains(&ollama_name.to_lowercase()) {
+        if model
+            .arch
+            .to_lowercase()
+            .contains(&ollama_name.to_lowercase())
+        {
             score += 5;
         }
 
         // Model type matching bonus
-        if model.model_type == "llm" && (ollama_name.contains("chat") || ollama_name.contains("instruct")) {
+        if model.model_type == "llm"
+            && (ollama_name.contains("chat") || ollama_name.contains("instruct"))
+        {
             score += 3;
         }
-        if model.model_type == "vlm" && (ollama_name.contains("vision") || ollama_name.contains("llava")) {
+        if model.model_type == "vlm"
+            && (ollama_name.contains("vision") || ollama_name.contains("llava"))
+        {
             score += 3;
         }
         if model.model_type == "embeddings" && ollama_name.contains("embed") {

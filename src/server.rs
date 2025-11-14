@@ -34,7 +34,10 @@ pub struct Config {
     )]
     pub lmstudio_url: String,
 
-    #[arg(long, help = "Use legacy OpenAI-compatible API instead of native LM Studio API")]
+    #[arg(
+        long,
+        help = "Use legacy OpenAI-compatible API instead of native LM Studio API"
+    )]
     pub legacy: bool,
 
     #[arg(long, help = "Disable logging output")]
@@ -342,13 +345,13 @@ impl ProxyServer {
                 }
             });
 
-        let unsupported_ollama_route = warp::path("api")
-            .and(warp::path::full())
-            .and_then(|path: warp::path::FullPath| async move {
+        let unsupported_ollama_route = warp::path("api").and(warp::path::full()).and_then(
+            |path: warp::path::FullPath| async move {
                 handlers::ollama::handle_unsupported(path.as_str())
                     .await
                     .map_err(warp::reject::custom)
-            });
+            },
+        );
 
         let app_routes = ollama_tags_route
             .boxed()
@@ -372,24 +375,57 @@ impl ProxyServer {
     fn print_startup_banner(&self) {
         if is_logging_enabled() {
             println!();
-            println!("✨ Ollama <-> LM Studio Proxy - Version: {} ✨", crate::VERSION);
+            println!("Ollama LM Studio Proxy - Version: {}", crate::VERSION);
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
             // Configuration information
-            println!("📡 | Listening on: {}", self.config.listen);
-            println!("🔗 | LM Studio URL: {}", self.config.lmstudio_url);
-            println!("📝 | Logging: {}", if is_logging_enabled() { "Enabled" } else { "Disabled" });
-            println!("⏱️ | Model Load Timeout: {}s", self.config.load_timeout_seconds);
-            println!("⏱️ | Cache TTL: {}s", self.config.model_resolution_cache_ttl_seconds);
-            println!("📊 | Initial SSE Buffer: {} bytes", self.config.max_buffer_size);
-            println!("🔄 | Chunk Recovery: {}", if get_runtime_config().enable_chunk_recovery { "Enabled" } else { "Disabled" });
-            println!("🔌 | API Mode: {}", if self.config.legacy { "Legacy (OpenAI-compatible)" } else { "LM Studio REST API - beta" });
+            println!("📡 Listening on: {}", self.config.listen);
+            println!("🔗 LM Studio URL: {}", self.config.lmstudio_url);
+            println!(
+                "📝 Logging: {}",
+                if is_logging_enabled() {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+            );
+            println!(
+                "🕒 Model Load Timeout: {}s",
+                self.config.load_timeout_seconds
+            );
+            println!(
+                "🕒 Cache TTL: {}s",
+                self.config.model_resolution_cache_ttl_seconds
+            );
+            println!(
+                "📊 Initial SSE Buffer: {} bytes",
+                self.config.max_buffer_size
+            );
+            println!(
+                "🔄 Chunk Recovery: {}",
+                if get_runtime_config().enable_chunk_recovery {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+            );
+            println!(
+                "🔌 API Mode: {}",
+                if self.config.legacy {
+                    "Legacy (OpenAI-compatible)"
+                } else {
+                    "LM Studio Native REST API"
+                }
+            );
             if !self.config.legacy {
                 println!("     • Requires LM Studio 0.3.6+ (use --legacy for older versions)");
             }
 
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("ℹ️ | Proxy forwards all requests and timing to LM Studio backend.");
+            println!(
+                "✅ All requests sent to {} will be converted and forwarded to LM Studio",
+                self.config.listen
+            );
         }
     }
 }
