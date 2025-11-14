@@ -135,7 +135,7 @@ impl TimingInfo {
             if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
                 (total_duration_ns as f64
                     * (final_prompt_tokens as f64
-                        / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
+                    / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
             } else {
                 total_duration_ns / TIMING_PROMPT_RATIO
             };
@@ -663,7 +663,7 @@ where
             operation,
             cancellation_token,
         )
-        .await
+            .await
     } else {
         crate::handlers::retry::with_simple_retry(operation, cancellation_token).await
     }
