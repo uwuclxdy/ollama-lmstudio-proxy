@@ -1,5 +1,4 @@
 /// src/constants.rs - Runtime configurable constants and static values with native API support
-
 use std::sync::OnceLock;
 
 /// Global configuration that can be set at runtime
@@ -14,7 +13,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_buffer_size: usize::MAX, // No limit
+            max_buffer_size: usize::MAX,          // No limit
             max_partial_content_size: usize::MAX, // No limit
             string_buffer_size: 2048,
             enable_chunk_recovery: true,
@@ -85,7 +84,8 @@ pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
 pub const ERROR_REQUEST_TOO_LARGE: &str = "Request body too large";
-pub const ERROR_NATIVE_API_UNAVAILABLE: &str = "LM Studio native API not available - use --legacy flag for older versions";
+pub const ERROR_NATIVE_API_UNAVAILABLE: &str =
+    "LM Studio native API not available - use --legacy flag for older versions";
 
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";
@@ -100,6 +100,3 @@ pub const LOG_PREFIX_WARNING: &str = "⚠️";
 pub const LOG_PREFIX_CANCEL: &str = "🚫";
 pub const LOG_PREFIX_INFO: &str = "ℹ️";
 pub const LOG_PREFIX_CONN: &str = "↔️";
-
-/// Default context array for generate responses
-pub const DEFAULT_CONTEXT: [u32; 3] = [1, 2, 3];

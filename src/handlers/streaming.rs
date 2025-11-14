@@ -1,5 +1,4 @@
 /// src/handlers/streaming.rs - Enhanced streaming with model loading detection and better timing
-
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,7 +9,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::constants::*;
 use crate::handlers::helpers::{
-    create_cancellation_chunk, create_error_chunk, create_final_chunk, create_ollama_streaming_chunk,
+    create_cancellation_chunk, create_error_chunk, create_final_chunk,
+    create_ollama_streaming_chunk,
 };
 use crate::utils::{log_error, log_timed, log_warning, ProxyError};
 
@@ -21,7 +21,9 @@ const STREAM_START_LOADING_THRESHOLD_MS: u128 = 500;
 
 /// Check if request is streaming
 pub fn is_streaming_request(body: &Value) -> bool {
-    body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false)
+    body.get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false)
 }
 
 /// Handle streaming response with model loading detection
@@ -102,6 +104,9 @@ pub async fn handle_streaming_response(
                                                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                                                 content_to_send.push_str(content);
                                                             }
+                                                            if let Some(reasoning) = delta.get("reasoning").and_then(|r| r.as_str()) {
+                                                                content_to_send.push_str(reasoning);
+                                                            }
                                                             if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
                                                                 if accumulated_tool_calls.is_none() {
                                                                     accumulated_tool_calls = Some(Vec::new());
@@ -166,7 +171,11 @@ pub async fn handle_streaming_response(
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
 
-        log_timed(LOG_PREFIX_CONN, &format!("Stream [{}] completed | {} chunks", stream_id, chunk_count), start_time);
+        log_timed(
+            LOG_PREFIX_CONN,
+            &format!("Stream [{}] completed | {} chunks", stream_id, chunk_count),
+            start_time,
+        );
     });
 
     create_ollama_streaming_response_format(rx)
@@ -218,16 +227,29 @@ pub async fn handle_passthrough_streaming_response(
             }
         }
 
-        log_timed(LOG_PREFIX_CONN, &format!("Passthrough stream [{}] | {} chunks", stream_id, chunk_count), start_time);
+        log_timed(
+            LOG_PREFIX_CONN,
+            &format!(
+                "Passthrough stream [{}] | {} chunks",
+                stream_id, chunk_count
+            ),
+            start_time,
+        );
     });
 
     create_passthrough_streaming_response_format(rx)
 }
 
 /// Send Ollama chunk to client
-async fn send_ollama_chunk(tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>, chunk: &Value) -> bool {
+async fn send_ollama_chunk(
+    tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
+    chunk: &Value,
+) -> bool {
     let chunk_json = serde_json::to_string(chunk).unwrap_or_else(|e| {
-        log_error("Chunk serialization", &format!("Failed to serialize: {}", e));
+        log_error(
+            "Chunk serialization",
+            &format!("Failed to serialize: {}", e),
+        );
         String::from("{\"error\":\"Internal proxy error: failed to serialize chunk\"}")
     });
     let chunk_with_newline = format!("{}\n", chunk_json);
@@ -268,9 +290,18 @@ fn create_generic_streaming_response(
         .header("content-type", content_type)
         .header("cache-control", HEADER_CACHE_CONTROL)
         .header("connection", HEADER_CONNECTION)
-        .header("access-control-allow-origin", HEADER_ACCESS_CONTROL_ALLOW_ORIGIN)
-        .header("access-control-allow-methods", HEADER_ACCESS_CONTROL_ALLOW_METHODS)
-        .header("access-control-allow-headers", HEADER_ACCESS_CONTROL_ALLOW_HEADERS)
+        .header(
+            "access-control-allow-origin",
+            HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+        )
+        .header(
+            "access-control-allow-methods",
+            HEADER_ACCESS_CONTROL_ALLOW_METHODS,
+        )
+        .header(
+            "access-control-allow-headers",
+            HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
+        )
         .body(warp::hyper::Body::wrap_stream(stream))
         .map_err(|_| ProxyError::internal_server_error(error_message_on_build_fail))
 }
@@ -279,12 +310,20 @@ fn create_generic_streaming_response(
 fn create_ollama_streaming_response_format(
     rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
 ) -> Result<warp::reply::Response, ProxyError> {
-    create_generic_streaming_response(rx, "application/x-ndjson; charset=utf-8", "Failed to create Ollama streaming response")
+    create_generic_streaming_response(
+        rx,
+        "application/x-ndjson; charset=utf-8",
+        "Failed to create Ollama streaming response",
+    )
 }
 
 /// Create passthrough SSE streaming response
 fn create_passthrough_streaming_response_format(
     rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
 ) -> Result<warp::reply::Response, ProxyError> {
-    create_generic_streaming_response(rx, CONTENT_TYPE_SSE, "Failed to create passthrough SSE streaming response")
+    create_generic_streaming_response(
+        rx,
+        CONTENT_TYPE_SSE,
+        "Failed to create passthrough SSE streaming response",
+    )
 }

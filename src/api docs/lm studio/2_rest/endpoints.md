@@ -1,21 +1,35 @@
-# LM Studio REST API (beta)
+---
+title: REST API v0
+description: "The REST API includes enhanced stats such as Token / Second and Time To First Token (TTFT), as well as rich information about models such as loaded vs unloaded, max context, quantization, and more."
+---
 
-**Experimental**
+##### Requires [LM Studio 0.3.6](/download) or newer.
 
-Requires LM Studio 0.3.6 or newer. Still WIP, endpoints may change.
+LM Studio now has its own REST API, in addition to OpenAI compatibility mode ([learn more](/docs/developer/openai-compat)).
 
-LM Studio now has its own REST API, in addition to OpenAI compatibility mode.
+The REST API includes enhanced stats such as Token / Second and Time To First Token (TTFT), as well as rich information about models such as loaded vs unloaded, max context, quantization, and more.
 
-The REST API includes enhanced stats such as Token / Second and Time To First Token (TTFT), as well as rich information
-about models such as loaded vs unloaded, max context, quantization, and more.
+#### Supported API Endpoints
 
-## Supported API Endpoints
+- [`GET /api/v0/models`](#get-apiv0models) - List available models
+- [`GET /api/v0/models/{model}`](#get-apiv0modelsmodel) - Get info about a specific model
+- [`POST /api/v0/chat/completions`](#post-apiv0chatcompletions) - Chat Completions (messages -> assistant response)
+- [`POST /api/v0/completions`](#post-apiv0completions) - Text Completions (prompt -> completion)
+- [`POST /api/v0/embeddings`](#post-apiv0embeddings) - Text Embeddings (text -> embedding)
 
-* `GET /api/v0/models` - List available models
-* `GET /api/v0/models/{model}` - Get info about a specific model
-* `POST /api/v0/chat/completions` - Chat Completions (messages → assistant response)
-* `POST /api/v0/completions` - Text Completions (prompt → completion)
-* `POST /api/v0/embeddings` - Text Embeddings (text → embedding)
+---
+
+### Start the REST API server
+
+To start the server, run the following command:
+
+```bash
+lms server start
+```
+
+```lms_protip
+You can run LM Studio as a service and get the server to auto-start on boot without launching the GUI. [Learn about Headless Mode](/docs/developer/core/headless).
+```
 
 ## Endpoints
 
@@ -138,7 +152,7 @@ curl http://localhost:1234/api/v0/chat/completions \
       "finish_reason": "stop",
       "message": {
         "role": "assistant",
-        "content": "Greetings, I'm a helpful AI, here to assist,\nIn providing answers, with rhymes I persist."
+        "content": "Greetings, I'm a helpful AI, here to assist,\nIn providing answers, with no distress.\nI'll keep it short and sweet, in rhyme you'll find,\nA friendly companion, all day long you'll bind."
       }
     }
   ],
@@ -238,12 +252,12 @@ Text Embeddings API. You provide a text and a representation of the text as an e
 **Example request**
 
 ```bash
-curl http://127.0.0.1:1234/api/v0/embeddings \
+curl http://localhost:1234/api/v0/embeddings \
   -H "Content-Type: application/json" \
   -d '{
     "model": "text-embedding-nomic-embed-text-v1.5",
     "input": "Some text to embed"
-  }'
+  }
 ```
 
 **Example response**
@@ -260,7 +274,7 @@ curl http://127.0.0.1:1234/api/v0/embeddings \
         -0.1407836228609085,
         ... (truncated for brevity) ...,
         0.02505224384367466,
-        -0.0037634295859859814,
+        -0.0037634256295859814,
         -0.04341062530875206
       ],
       "index": 0
@@ -273,3 +287,7 @@ curl http://127.0.0.1:1234/api/v0/embeddings \
   }
 }
 ```
+
+---
+
+Please report bugs by opening an issue on [Github](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues).

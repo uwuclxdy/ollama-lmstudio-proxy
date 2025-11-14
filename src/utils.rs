@@ -1,5 +1,4 @@
 /// src/utils.rs - Enhanced centralized logging and utilities with model loading detection
-
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{self, Write};
@@ -33,7 +32,11 @@ pub fn is_logging_enabled() -> bool {
 /// Log informational message
 pub fn log_info(message: &str) {
     if is_logging_enabled() {
-        println!("[{}] ℹ️ {}", chrono::Local::now().format("%H:%M:%S"), sanitize_log_message(message));
+        println!(
+            "[{}] ℹ️ {}",
+            chrono::Local::now().format("%H:%M:%S"),
+            sanitize_log_message(message)
+        );
     }
 }
 
@@ -43,7 +46,14 @@ pub fn log_warning(operation: &str, warning: &str) {
         STRING_BUFFER.with(|buf| {
             let mut buffer = buf.borrow_mut();
             buffer.clear();
-            write!(buffer, "{} {}: {}", LOG_PREFIX_WARNING, sanitize_log_message(operation), sanitize_log_message(warning)).unwrap();
+            write!(
+                buffer,
+                "{} {}: {}",
+                LOG_PREFIX_WARNING,
+                sanitize_log_message(operation),
+                sanitize_log_message(warning)
+            )
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -55,7 +65,14 @@ pub fn log_error(operation: &str, error: &str) {
         STRING_BUFFER.with(|buf| {
             let mut buffer = buf.borrow_mut();
             buffer.clear();
-            write!(buffer, "{} {} failed: {}", LOG_PREFIX_ERROR, sanitize_log_message(operation), sanitize_log_message(error)).unwrap();
+            write!(
+                buffer,
+                "{} {} failed: {}",
+                LOG_PREFIX_ERROR,
+                sanitize_log_message(operation),
+                sanitize_log_message(error)
+            )
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -68,8 +85,23 @@ pub fn log_request(method: &str, path: &str, model: Option<&str>) {
             let mut buffer = buf.borrow_mut();
             buffer.clear();
             match model {
-                Some(m) => write!(buffer, "{} {} {} (model: {})", LOG_PREFIX_REQUEST, method, sanitize_log_message(path), sanitize_log_message(m)).unwrap(),
-                None => write!(buffer, "{} {} {}", LOG_PREFIX_REQUEST, method, sanitize_log_message(path)).unwrap(),
+                Some(m) => write!(
+                    buffer,
+                    "{} {} {} (model: {})",
+                    LOG_PREFIX_REQUEST,
+                    method,
+                    sanitize_log_message(path),
+                    sanitize_log_message(m)
+                )
+                .unwrap(),
+                None => write!(
+                    buffer,
+                    "{} {} {}",
+                    LOG_PREFIX_REQUEST,
+                    method,
+                    sanitize_log_message(path)
+                )
+                .unwrap(),
             }
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
@@ -83,7 +115,14 @@ pub fn log_timed(prefix: &str, operation: &str, start: Instant) {
         STRING_BUFFER.with(|buf| {
             let mut buffer = buf.borrow_mut();
             buffer.clear();
-            write!(buffer, "{} {} | {}", prefix, operation, format_duration(duration)).unwrap();
+            write!(
+                buffer,
+                "{} {} | {}",
+                prefix,
+                operation,
+                format_duration(duration)
+            )
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -95,10 +134,13 @@ macro_rules! handle_lm_error {
     ($response:expr) => {
         if !$response.status().is_success() {
             let status = $response.status();
-            let error_body = $response.text().await.unwrap_or_else(|_| "Unknown error body".to_string());
+            let error_body = $response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error body".to_string());
             return Err(ProxyError::new(
                 format!("LM Studio error: {} - {}", status, error_body),
-                status.as_u16()
+                status.as_u16(),
             ));
         }
     };
@@ -239,34 +281,68 @@ pub fn is_model_loading_error(message: &str) -> bool {
 
     // Explicit model loading indicators
     let loading_indicators = [
-        "loading model", "model loading", "model is loading", "loading the model",
-        "model not loaded", "not loaded", "model unavailable", "model not available",
-        "model not found", "no model", "invalid model", "unknown model",
-        "failed to load", "loading failed", "model error", "is not embedding",
-        "model initialization", "initializing model", "warming up model",
-        "model startup", "preparing model", "model not ready"
+        "loading model",
+        "model loading",
+        "model is loading",
+        "loading the model",
+        "model not loaded",
+        "not loaded",
+        "model unavailable",
+        "model not available",
+        "model not found",
+        "no model",
+        "invalid model",
+        "unknown model",
+        "failed to load",
+        "loading failed",
+        "model error",
+        "is not embedding",
+        "model initialization",
+        "initializing model",
+        "warming up model",
+        "model startup",
+        "preparing model",
+        "model not ready",
     ];
 
     // Check explicit indicators first
-    if loading_indicators.iter().any(|&pattern| lower.contains(pattern)) {
+    if loading_indicators
+        .iter()
+        .any(|&pattern| lower.contains(pattern))
+    {
         return true;
     }
 
     // Check combinations of keywords that suggest model loading issues
-    let has_negative = lower.contains("no") || lower.contains("not") || lower.contains("missing")
-        || lower.contains("invalid") || lower.contains("unknown") || lower.contains("failed")
-        || lower.contains("unavailable") || lower.contains("unreachable");
+    let has_negative = lower.contains("no")
+        || lower.contains("not")
+        || lower.contains("missing")
+        || lower.contains("invalid")
+        || lower.contains("unknown")
+        || lower.contains("failed")
+        || lower.contains("unavailable")
+        || lower.contains("unreachable");
 
-    let has_model_ref = lower.contains("model") || lower.contains("load") || lower.contains("available")
-        || lower.contains("ready") || lower.contains("initialize");
+    let has_model_ref = lower.contains("model")
+        || lower.contains("load")
+        || lower.contains("available")
+        || lower.contains("ready")
+        || lower.contains("initialize");
 
     // Additional LM Studio specific error patterns
     let lm_studio_loading_patterns = [
-        "service unavailable", "server error", "internal error",
-        "timeout", "connection", "503", "500"
+        "service unavailable",
+        "server error",
+        "internal error",
+        "timeout",
+        "connection",
+        "503",
+        "500",
     ];
 
-    let has_lm_studio_loading = lm_studio_loading_patterns.iter().any(|&pattern| lower.contains(pattern));
+    let has_lm_studio_loading = lm_studio_loading_patterns
+        .iter()
+        .any(|&pattern| lower.contains(pattern));
 
     (has_negative && has_model_ref) || has_lm_studio_loading
 }
@@ -290,15 +366,24 @@ pub enum ModelLoadingErrorType {
 pub fn classify_model_loading_error(message: &str) -> ModelLoadingErrorType {
     let lower = message.to_lowercase();
 
-    if lower.contains("not found") || lower.contains("unknown model") || lower.contains("invalid model") {
+    if lower.contains("not found")
+        || lower.contains("unknown model")
+        || lower.contains("invalid model")
+    {
         ModelLoadingErrorType::ModelNotFound
     } else if lower.contains("not loaded") || lower.contains("model unavailable") {
         ModelLoadingErrorType::ModelNotLoaded
-    } else if lower.contains("loading") || lower.contains("initializing") || lower.contains("warming up") {
+    } else if lower.contains("loading")
+        || lower.contains("initializing")
+        || lower.contains("warming up")
+    {
         ModelLoadingErrorType::ModelLoading
     } else if lower.contains("failed to load") || lower.contains("loading failed") {
         ModelLoadingErrorType::ModelFailed
-    } else if lower.contains("service unavailable") || lower.contains("503") || lower.contains("timeout") {
+    } else if lower.contains("service unavailable")
+        || lower.contains("503")
+        || lower.contains("timeout")
+    {
         ModelLoadingErrorType::ServiceUnavailable
     } else {
         ModelLoadingErrorType::Unknown
@@ -324,7 +409,10 @@ pub fn validate_config(config: &crate::server::Config) -> Result<(), String> {
         return Err(format!("Invalid listen address: {}", config.listen));
     }
     if !config.lmstudio_url.starts_with("http://") && !config.lmstudio_url.starts_with("https://") {
-        return Err(format!("Invalid LM Studio URL (must start with http:// or https://): {}", config.lmstudio_url));
+        return Err(format!(
+            "Invalid LM Studio URL (must start with http:// or https://): {}",
+            config.lmstudio_url
+        ));
     }
     if let Err(e) = url::Url::parse(&config.lmstudio_url) {
         return Err(format!("Invalid LM Studio URL format: {}", e));
@@ -342,7 +430,13 @@ pub fn is_protected_endpoint(path: &str) -> bool {
 pub fn sanitize_log_message(message: &str) -> String {
     message
         .chars()
-        .map(|c| if c.is_control() && !matches!(c, '\t' | '\n' | '\r') { '?' } else { c })
+        .map(|c| {
+            if c.is_control() && !matches!(c, '\t' | '\n' | '\r') {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -352,7 +446,7 @@ pub fn extract_client_ip(headers: &warp::http::HeaderMap) -> Option<String> {
         "x-forwarded-for",
         "x-real-ip",
         "cf-connecting-ip",
-        "x-client-ip"
+        "x-client-ip",
     ];
     for header_name in &ip_headers {
         if let Some(header_value) = headers.get(*header_name) {
