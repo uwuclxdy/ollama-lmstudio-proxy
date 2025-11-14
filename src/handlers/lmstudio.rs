@@ -151,7 +151,7 @@ pub async fn handle_lmstudio_passthrough(
                 // Log LM Studio response time for completions only
                 if current_original_model_name.is_some()
                     && (current_endpoint.contains("completion")
-                        || current_endpoint.contains("chat"))
+                    || current_endpoint.contains("chat"))
                 {
                     log_timed(
                         LOG_PREFIX_INFO,
@@ -169,7 +169,7 @@ pub async fn handle_lmstudio_passthrough(
                         current_cancellation_token.clone(),
                         60,
                     )
-                    .await
+                        .await
                 } else {
                     let json_data =
                         handle_json_response(response, current_cancellation_token).await?;
@@ -187,7 +187,7 @@ pub async fn handle_lmstudio_passthrough(
             operation,
             cancellation_token,
         )
-        .await?
+            .await?
     } else {
         with_simple_retry(operation, cancellation_token).await?
     };

@@ -86,11 +86,11 @@ pub async fn handle_ollama_tags(
         0,
         cancellation_token.clone(),
     )
-    .await
-    .unwrap_or_else(|e| {
-        log_error("Tags fetch", &e.message);
-        json!({ "models": [] })
-    });
+        .await
+        .unwrap_or_else(|e| {
+            log_error("Tags fetch", &e.message);
+            json!({ "models": [] })
+        });
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
     Ok(json_response(&result))
@@ -168,11 +168,11 @@ pub async fn handle_ollama_ps(
         0,
         cancellation_token.clone(),
     )
-    .await
-    .unwrap_or_else(|e| {
-        log_error("PS fetch", &e.message);
-        json!({ "models": [] })
-    });
+        .await
+        .unwrap_or_else(|e| {
+            log_error("PS fetch", &e.message);
+            json!({ "models": [] })
+        });
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
     Ok(json_response(&result))
@@ -317,7 +317,7 @@ pub async fn handle_ollama_chat(
                     cancellation_token_clone.clone(),
                     60,
                 )
-                .await
+                    .await
             } else {
                 let lm_response_value =
                     handle_json_response(response, cancellation_token_clone).await?;
@@ -341,7 +341,7 @@ pub async fn handle_ollama_chat(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-    .await?;
+        .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama chat", start_time);
     Ok(result)
@@ -431,9 +431,9 @@ pub async fn handle_ollama_generate(
             // Determine endpoint based on API type and whether images are present
             let (lm_studio_target_url, lm_request_type) = if current_images.is_some()
                 && current_images
-                    .unwrap()
-                    .as_array()
-                    .map_or(false, |a| !a.is_empty())
+                .unwrap()
+                .as_array()
+                .map_or(false, |a| !a.is_empty())
             {
                 let chat_endpoint = match &model_resolver {
                     ModelResolverType::Native(_) => LM_STUDIO_NATIVE_CHAT,
@@ -491,7 +491,7 @@ pub async fn handle_ollama_generate(
                     cancellation_token_clone.clone(),
                     60,
                 )
-                .await
+                    .await
             } else {
                 let lm_response_value =
                     handle_json_response(response, cancellation_token_clone).await?;
@@ -515,7 +515,7 @@ pub async fn handle_ollama_generate(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-    .await?;
+        .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama generate", start_time);
     Ok(result)
@@ -610,7 +610,7 @@ pub async fn handle_ollama_embeddings(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-    .await?;
+        .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama embeddings", start_time);
     Ok(result)
