@@ -118,3 +118,96 @@ curl http://localhost:11434/api/chat -d '{
   "messages": [{"role": "user", "content": "Hello!"}]
 }'
 ```
+
+## Request Shapes & Examples
+
+The proxy understands two payload styles:
+
+- **Ollama-style**: advanced parameters belong in `options`. Use this when calling `/api/*` endpoints.
+- **OpenAI-style passthrough**: send OpenAI-compatible JSON to `/v1/*` and the proxy forwards it untouched.
+
+When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM Studio's native parameters.
+
+### Structured output via `/api/generate`
+
+```bash
+curl http://localhost:11434/api/generate -H "Content-Type: application/json" -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Return a status payload for ACME widgets.",
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {file:color-palette-template.md 
+      "status": {"type": "string"},
+      "checked_at": {"type": "string", "format": "date-time"}
+    },
+    "required": ["status", "checked_at"]
+  }
+}'
+```
+
+### Structured output via `/api/chat`
+
+```bash
+curl http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+  "model": "llama3.1:8b",
+  "messages": [
+    {"role": "system", "content": "Answer with machine readable JSON"},
+    {"role": "user", "content": "List two tasks with priorities"}
+  ],
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "tasks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {"type": "string"},
+            "priority": {"type": "integer"}
+          },
+          "required": ["title", "priority"]
+        }
+      }
+    },
+    "required": ["tasks"]
+  }
+}'
+```
+
+### `logit_bias` (discourage/force tokens)
+
+```bash
+curl http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+  "model": "llama3.1:8b",
+  "messages": [{"role": "user", "content": "Reply yes or no"}],
+  "options": {
+    "logit_bias": {
+      "464": -10,   // discourage "No"
+      "302": 15     // strongly prefer "Yes"
+    }
+  },
+  "stream": false
+}'
+```
+
+### `max_tokens` vs `num_predict`
+
+Both knobs map to LM Studio's `max_tokens`. Pick the style that matches your client.
+
+```bash
+# Ollama default knob
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Write a haiku",
+  "options": {"num_predict": 64}
+}'
+
+# OpenAI-style knob (same effect)
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Write a haiku",
+  "options": {"max_tokens": 64}
+}'
+```

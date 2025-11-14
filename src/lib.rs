@@ -1,13 +1,12 @@
+pub mod common;
 /// src/lib.rs - Main library file with native and legacy API support
-
 // Core modules
 pub mod constants;
-pub mod model;           // Native LM Studio API support
-pub mod model_legacy;    // Legacy OpenAI-compatible API support
+pub mod handlers;
+pub mod model; // Native LM Studio API support
+pub mod model_legacy; // Legacy OpenAI-compatible API support
 pub mod server;
 pub mod utils;
-pub mod handlers;
-pub mod common;
 
 // Public re-exports for easy access
 pub use common::RequestContext;
@@ -16,9 +15,7 @@ pub use common::RequestContext;
 pub use model::{clean_model_name, ModelInfo, ModelResolver};
 
 // Legacy API exports
-pub use model_legacy::{
-    clean_model_name_legacy, ModelInfoLegacy, ModelResolverLegacy
-};
+pub use model_legacy::{clean_model_name_legacy, ModelInfoLegacy, ModelResolverLegacy};
 
 // Server exports
 pub use server::{Config, ModelResolverType, ProxyServer};
@@ -33,18 +30,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Re-export runtime configuration functions
-pub use constants::{
-    get_runtime_config,
-    init_runtime_config,
-    RuntimeConfig,
-};
+pub use constants::{get_runtime_config, init_runtime_config, RuntimeConfig};
 
 /// Re-export optimized constants for external use
 pub use constants::{
     // API endpoint constants
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_SSE,
-    DEFAULT_CONTEXT,
     DEFAULT_LOAD_DURATION_NS,
     DEFAULT_MODEL_SIZE_BYTES,
     DEFAULT_REPEAT_PENALTY,
@@ -123,13 +115,12 @@ pub fn create_model_resolver(
     use_legacy: bool,
 ) -> ModelResolverType {
     if use_legacy {
-        ModelResolverType::Legacy(std::sync::Arc::new(
-            ModelResolverLegacy::new_legacy(lmstudio_url, cache)
-        ))
+        ModelResolverType::Legacy(std::sync::Arc::new(ModelResolverLegacy::new_legacy(
+            lmstudio_url,
+            cache,
+        )))
     } else {
-        ModelResolverType::Native(std::sync::Arc::new(
-            ModelResolver::new(lmstudio_url, cache)
-        ))
+        ModelResolverType::Native(std::sync::Arc::new(ModelResolver::new(lmstudio_url, cache)))
     }
 }
 
@@ -179,10 +170,7 @@ impl ApiFeatureComparison {
                 "Basic functionality coverage",
                 "Fallback compatibility",
             ],
-            native_limitations: vec![
-                "Requires LM Studio 0.3.6+",
-                "May have API changes in beta",
-            ],
+            native_limitations: vec!["Requires LM Studio 0.3.6+", "May have API changes in beta"],
             legacy_limitations: vec![
                 "No real model state information",
                 "Estimated timing and metrics",

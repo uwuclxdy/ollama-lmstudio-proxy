@@ -249,7 +249,7 @@ impl ModelInfoLegacy {
                 "gemma.feed_forward_length": if self.parameter_size_str.contains("2b") {16384} else {24576},
                 "gemma.vocab_size": 256000,
             }),
-            _ => json!({})
+            _ => json!({}),
         }
     }
 }
@@ -510,14 +510,28 @@ impl ModelResolverLegacy {
         cancellation_token: CancellationToken,
     ) -> Result<String, ProxyError> {
         let start_time = Instant::now();
-        let cleaned_ollama_request = clean_model_name_legacy(ollama_model_name_requested).to_string();
+        let cleaned_ollama_request =
+            clean_model_name_legacy(ollama_model_name_requested).to_string();
 
         if let Some(cached_lm_studio_id) = self.cache.get(&cleaned_ollama_request).await {
-            log_timed(LOG_PREFIX_SUCCESS, &format!("Cache hit (legacy): '{}' -> '{}'", cleaned_ollama_request, cached_lm_studio_id), start_time);
+            log_timed(
+                LOG_PREFIX_SUCCESS,
+                &format!(
+                    "Cache hit (legacy): '{}' -> '{}'",
+                    cleaned_ollama_request, cached_lm_studio_id
+                ),
+                start_time,
+            );
             return Ok(cached_lm_studio_id);
         }
 
-        log_warning("Cache miss", &format!("Fetching '{}' from LM Studio (legacy)", cleaned_ollama_request));
+        log_warning(
+            "Cache miss",
+            &format!(
+                "Fetching '{}' from LM Studio (legacy)",
+                cleaned_ollama_request
+            ),
+        );
 
         match self
             .get_available_lm_studio_models_legacy(client, cancellation_token)
@@ -530,7 +544,14 @@ impl ModelResolverLegacy {
                     self.cache
                         .insert(cleaned_ollama_request.clone(), matched_lm_studio_id.clone())
                         .await;
-                    log_timed(LOG_PREFIX_SUCCESS, &format!("Resolved (legacy): '{}' -> '{}'", cleaned_ollama_request, matched_lm_studio_id), start_time);
+                    log_timed(
+                        LOG_PREFIX_SUCCESS,
+                        &format!(
+                            "Resolved (legacy): '{}' -> '{}'",
+                            cleaned_ollama_request, matched_lm_studio_id
+                        ),
+                        start_time,
+                    );
                     Ok(matched_lm_studio_id)
                 } else {
                     Ok(cleaned_ollama_request)
@@ -560,24 +581,17 @@ impl ModelResolverLegacy {
 
         if !response.status().is_success() {
             return Err(ProxyError::new(
-                format!(
-                    "{}: {}",
-                    ERROR_LM_STUDIO_UNAVAILABLE,
-                    response.status()
-                ),
+                format!("{}: {}", ERROR_LM_STUDIO_UNAVAILABLE, response.status()),
                 response.status().as_u16(),
             ));
         }
 
-        let models_response = response
-            .json::<Value>()
-            .await
-            .map_err(|e| {
-                ProxyError::internal_server_error(&format!(
-                    "Invalid JSON from LM Studio /v1/models: {}",
-                    e
-                ))
-            })?;
+        let models_response = response.json::<Value>().await.map_err(|e| {
+            ProxyError::internal_server_error(&format!(
+                "Invalid JSON from LM Studio /v1/models: {}",
+                e
+            ))
+        })?;
 
         let mut model_ids = Vec::new();
         if let Some(data) = models_response.get("data").and_then(|d| d.as_array()) {
@@ -615,7 +629,8 @@ impl ModelResolverLegacy {
         let mut best_match = None;
         let mut best_score = 0;
         for lm_id in available_lm_studio_ids {
-            let score = self.calculate_enhanced_match_score_legacy(&lower_ollama, &lm_id.to_lowercase());
+            let score =
+                self.calculate_enhanced_match_score_legacy(&lower_ollama, &lm_id.to_lowercase());
             if score > best_score && score >= 3 {
                 best_score = score;
                 best_match = Some(lm_id.clone());

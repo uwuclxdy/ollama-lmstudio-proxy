@@ -100,7 +100,8 @@ pub async fn handle_lmstudio_passthrough(
                     }
                 };
 
-                let request = CancellableRequest::new(context.clone(), current_cancellation_token.clone());
+                let request =
+                    CancellableRequest::new(context.clone(), current_cancellation_token.clone());
 
                 let request_body_opt = if current_method == "GET" || current_method == "DELETE" {
                     None
@@ -118,12 +119,16 @@ pub async fn handle_lmstudio_passthrough(
                     let error_message = match status.as_u16() {
                         404 => {
                             // Provide helpful message for native API 404s
-                            if current_endpoint.starts_with("/v1/") && matches!(model_resolver, ModelResolverType::Native(_)) {
+                            if current_endpoint.starts_with("/v1/")
+                                && matches!(model_resolver, ModelResolverType::Native(_))
+                            {
                                 format!(
                                     "LM Studio endpoint not found: {}. Note: Using native API mode, which targets /api/v0/ endpoints. Error from: {}",
                                     current_endpoint, final_endpoint_url
                                 )
-                            } else if current_endpoint.starts_with("/api/v0/") && matches!(model_resolver, ModelResolverType::Legacy(_)) {
+                            } else if current_endpoint.starts_with("/api/v0/")
+                                && matches!(model_resolver, ModelResolverType::Legacy(_))
+                            {
                                 format!(
                                     "LM Studio native API endpoint not available: {}. Try removing --legacy flag or update to LM Studio 0.3.6+. Error from: {}",
                                     current_endpoint, final_endpoint_url
@@ -134,7 +139,9 @@ pub async fn handle_lmstudio_passthrough(
                         }
                         503 => ERROR_LM_STUDIO_UNAVAILABLE.to_string(),
                         400 => "Bad request to LM Studio".to_string(),
-                        401 | 403 => "Authentication/Authorization error with LM Studio".to_string(),
+                        401 | 403 => {
+                            "Authentication/Authorization error with LM Studio".to_string()
+                        }
                         500 => "LM Studio internal error".to_string(),
                         _ => format!("LM Studio error ({})", status),
                     };
@@ -142,8 +149,18 @@ pub async fn handle_lmstudio_passthrough(
                 }
 
                 // Log LM Studio response time for completions only
-                if current_original_model_name.is_some() && (current_endpoint.contains("completion") || current_endpoint.contains("chat")) {
-                    log_timed(LOG_PREFIX_INFO, &format!("LM Studio responded | {}", format_duration(lm_studio_request_start.elapsed())), lm_studio_request_start);
+                if current_original_model_name.is_some()
+                    && (current_endpoint.contains("completion")
+                        || current_endpoint.contains("chat"))
+                {
+                    log_timed(
+                        LOG_PREFIX_INFO,
+                        &format!(
+                            "LM Studio responded | {}",
+                            format_duration(lm_studio_request_start.elapsed())
+                        ),
+                        lm_studio_request_start,
+                    );
                 }
 
                 if is_streaming {
@@ -152,9 +169,10 @@ pub async fn handle_lmstudio_passthrough(
                         current_cancellation_token.clone(),
                         60,
                     )
-                        .await
+                    .await
                 } else {
-                    let json_data = handle_json_response(response, current_cancellation_token).await?;
+                    let json_data =
+                        handle_json_response(response, current_cancellation_token).await?;
                     Ok(json_response(&json_data))
                 }
             }
@@ -169,7 +187,7 @@ pub async fn handle_lmstudio_passthrough(
             operation,
             cancellation_token,
         )
-            .await?
+        .await?
     } else {
         with_simple_retry(operation, cancellation_token).await?
     };
@@ -239,19 +257,27 @@ pub async fn get_lmstudio_status(
                             .and_then(|d| d.as_array())
                             .map(|arr| arr.len())
                             .unwrap_or(0);
-                        additional_info.insert("model_count".to_string(), serde_json::json!(model_count));
+                        additional_info
+                            .insert("model_count".to_string(), serde_json::json!(model_count));
 
                         // For native API, include additional metadata
                         if endpoint.starts_with("/api/v0/") {
-                            if let Some(data) = models_response.get("data").and_then(|d| d.as_array()) {
-                                let loaded_count = data.iter()
+                            if let Some(data) =
+                                models_response.get("data").and_then(|d| d.as_array())
+                            {
+                                let loaded_count = data
+                                    .iter()
                                     .filter(|model| {
-                                        model.get("state")
+                                        model
+                                            .get("state")
                                             .and_then(|s| s.as_str())
                                             .map_or(false, |state| state == "loaded")
                                     })
                                     .count();
-                                additional_info.insert("loaded_models".to_string(), serde_json::json!(loaded_count));
+                                additional_info.insert(
+                                    "loaded_models".to_string(),
+                                    serde_json::json!(loaded_count),
+                                );
                             }
                         }
                     }
