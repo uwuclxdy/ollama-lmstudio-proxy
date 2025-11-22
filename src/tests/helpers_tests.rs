@@ -1,5 +1,5 @@
 use crate::handlers::helpers::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[test]
 fn completion_with_images_becomes_chat_payload() {

@@ -24,7 +24,7 @@ mod parameter_mapping_tests {
         assert_eq!(ollama_request["options"]["temperature"], 0.7);
         assert_eq!(ollama_request["options"]["top_p"], 0.9);
         assert!(ollama_request["options"].get("top_k").is_some());
-        
+
         // After mapping to LM Studio
         assert_eq!(lmstudio_expected["temperature"], 0.7);
         assert_eq!(lmstudio_expected["top_p"], 0.9);

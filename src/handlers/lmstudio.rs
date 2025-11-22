@@ -3,13 +3,13 @@ use serde_json::Value;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{handle_json_response, CancellableRequest, RequestContext};
+use crate::common::{CancellableRequest, RequestContext, handle_json_response};
 use crate::constants::*;
 use crate::handlers::helpers::json_response;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
 use crate::handlers::streaming::{handle_passthrough_streaming_response, is_streaming_request};
 use crate::server::ModelResolverType;
-use crate::utils::{format_duration, log_request, log_timed, ProxyError};
+use crate::utils::{ProxyError, format_duration, log_request, log_timed};
 
 /// Handle direct LM Studio API passthrough with model loading detection
 pub async fn handle_lmstudio_passthrough(
@@ -74,7 +74,7 @@ pub async fn handle_lmstudio_passthrough(
 
                 // Determine the correct endpoint URL based on API type and requested endpoint
                 let final_endpoint_url = determine_passthrough_endpoint_url(
-                    &context.lmstudio_url,
+                    context.lmstudio_url,
                     &current_endpoint,
                     &model_resolver,
                 );
@@ -96,7 +96,7 @@ pub async fn handle_lmstudio_passthrough(
                         return Err(ProxyError::bad_request(&format!(
                             "Unsupported method: {}",
                             current_method
-                        )))
+                        )));
                     }
                 };
 
@@ -151,7 +151,7 @@ pub async fn handle_lmstudio_passthrough(
                 // Log LM Studio response time for completions only
                 if current_original_model_name.is_some()
                     && (current_endpoint.contains("completion")
-                    || current_endpoint.contains("chat"))
+                        || current_endpoint.contains("chat"))
                 {
                     log_timed(
                         LOG_PREFIX_INFO,
@@ -169,7 +169,7 @@ pub async fn handle_lmstudio_passthrough(
                         current_cancellation_token.clone(),
                         60,
                     )
-                        .await
+                    .await
                 } else {
                     let json_data =
                         handle_json_response(response, current_cancellation_token).await?;
@@ -187,7 +187,7 @@ pub async fn handle_lmstudio_passthrough(
             operation,
             cancellation_token,
         )
-            .await?
+        .await?
     } else {
         with_simple_retry(operation, cancellation_token).await?
     };
@@ -250,38 +250,33 @@ pub async fn get_lmstudio_status(
             let mut additional_info = serde_json::Map::new();
 
             if is_healthy {
-                match response.json::<Value>().await {
-                    Ok(models_response) => {
-                        let model_count = models_response
-                            .get("data")
-                            .and_then(|d| d.as_array())
-                            .map(|arr| arr.len())
-                            .unwrap_or(0);
-                        additional_info
-                            .insert("model_count".to_string(), serde_json::json!(model_count));
+                if let Ok(models_response) = response.json::<Value>().await {
+                    let model_count = models_response
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+                    additional_info
+                        .insert("model_count".to_string(), serde_json::json!(model_count));
 
-                        // For native API, include additional metadata
-                        if endpoint.starts_with("/api/v0/") {
-                            if let Some(data) =
-                                models_response.get("data").and_then(|d| d.as_array())
-                            {
-                                let loaded_count = data
-                                    .iter()
-                                    .filter(|model| {
-                                        model
-                                            .get("state")
-                                            .and_then(|s| s.as_str())
-                                            .map_or(false, |state| state == "loaded")
-                                    })
-                                    .count();
-                                additional_info.insert(
-                                    "loaded_models".to_string(),
-                                    serde_json::json!(loaded_count),
-                                );
-                            }
+                    // For native API, include additional metadata
+                    if endpoint.starts_with("/api/v0/")
+                        && let Some(data) =
+                            models_response.get("data").and_then(|d| d.as_array())
+                        {
+                            let loaded_count = data
+                                .iter()
+                                .filter(|model| {
+                                    model
+                                        .get("state")
+                                        .and_then(|s| s.as_str()) == Some("loaded")
+                                })
+                                .count();
+                            additional_info.insert(
+                                "loaded_models".to_string(),
+                                serde_json::json!(loaded_count),
+                            );
                         }
-                    }
-                    Err(_) => {}
                 }
             }
 
@@ -296,13 +291,12 @@ pub async fn get_lmstudio_status(
             });
 
             // Add additional info if available
-            if !additional_info.is_empty() {
-                if let Some(result_obj) = result.as_object_mut() {
+            if !additional_info.is_empty()
+                && let Some(result_obj) = result.as_object_mut() {
                     for (key, value) in additional_info {
                         result_obj.insert(key, value);
                     }
                 }
-            }
 
             log_timed(LOG_PREFIX_SUCCESS, "Health check", health_check_start);
             Ok(result)

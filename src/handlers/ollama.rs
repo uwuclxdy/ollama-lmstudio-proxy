@@ -1,20 +1,20 @@
 /// src/handlers/ollama.rs - Ollama API endpoint handlers with native and legacy support
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{extract_model_name, handle_json_response, CancellableRequest, RequestContext};
+use crate::common::{CancellableRequest, RequestContext, extract_model_name, handle_json_response};
 use crate::constants::*;
 use crate::handlers::helpers::{
-    build_lm_studio_request, execute_request_with_retry, json_response, LMStudioRequestType,
-    ResponseTransformer,
+    LMStudioRequestType, ResponseTransformer, build_lm_studio_request, execute_request_with_retry,
+    json_response,
 };
 use crate::handlers::retry::trigger_model_loading_for_ollama;
 use crate::handlers::streaming::{handle_streaming_response, is_streaming_request};
 use crate::model::ModelInfo;
 use crate::model_legacy::ModelInfoLegacy;
 use crate::server::{Config, ModelResolverType};
-use crate::utils::{log_error, log_request, log_timed, log_warning, ProxyError};
+use crate::utils::{ProxyError, log_error, log_request, log_timed, log_warning};
 
 /// Handle GET /api/tags - list available models
 pub async fn handle_ollama_tags(
@@ -86,11 +86,11 @@ pub async fn handle_ollama_tags(
         0,
         cancellation_token.clone(),
     )
-        .await
-        .unwrap_or_else(|e| {
-            log_error("Tags fetch", &e.message);
-            json!({ "models": [] })
-        });
+    .await
+    .unwrap_or_else(|e| {
+        log_error("Tags fetch", &e.message);
+        json!({ "models": [] })
+    });
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
     Ok(json_response(&result))
@@ -168,11 +168,11 @@ pub async fn handle_ollama_ps(
         0,
         cancellation_token.clone(),
     )
-        .await
-        .unwrap_or_else(|e| {
-            log_error("PS fetch", &e.message);
-            json!({ "models": [] })
-        });
+    .await
+    .unwrap_or_else(|e| {
+        log_error("PS fetch", &e.message);
+        json!({ "models": [] })
+    });
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
     Ok(json_response(&result))
@@ -317,7 +317,7 @@ pub async fn handle_ollama_chat(
                     cancellation_token_clone.clone(),
                     60,
                 )
-                    .await
+                .await
             } else {
                 let lm_response_value =
                     handle_json_response(response, cancellation_token_clone).await?;
@@ -341,7 +341,7 @@ pub async fn handle_ollama_chat(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-        .await?;
+    .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama chat", start_time);
     Ok(result)
@@ -365,7 +365,7 @@ pub async fn handle_ollama_generate(
     let images = body.get("images");
 
     // Empty prompt trigger
-    if prompt.is_empty() && images.map_or(true, |i| i.as_array().map_or(true, |a| a.is_empty())) {
+    if prompt.is_empty() && images.is_none_or(|i| i.as_array().is_none_or(|a| a.is_empty())) {
         log_timed(
             LOG_PREFIX_INFO,
             &format!("Load hint for {}", ollama_model_name),
@@ -431,9 +431,9 @@ pub async fn handle_ollama_generate(
             // Determine endpoint based on API type and whether images are present
             let (lm_studio_target_url, lm_request_type) = if current_images.is_some()
                 && current_images
-                .unwrap()
-                .as_array()
-                .map_or(false, |a| !a.is_empty())
+                    .unwrap()
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty())
             {
                 let chat_endpoint = match &model_resolver {
                     ModelResolverType::Native(_) => LM_STUDIO_NATIVE_CHAT,
@@ -491,7 +491,7 @@ pub async fn handle_ollama_generate(
                     cancellation_token_clone.clone(),
                     60,
                 )
-                    .await
+                .await
             } else {
                 let lm_response_value =
                     handle_json_response(response, cancellation_token_clone).await?;
@@ -515,7 +515,7 @@ pub async fn handle_ollama_generate(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-        .await?;
+    .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama generate", start_time);
     Ok(result)
@@ -610,7 +610,7 @@ pub async fn handle_ollama_embeddings(
         config.load_timeout_seconds,
         cancellation_token.clone(),
     )
-        .await?;
+    .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama embeddings", start_time);
     Ok(result)
@@ -678,18 +678,14 @@ pub async fn handle_health_check(
             let is_healthy = status.is_success();
             let mut model_count = 0;
 
-            if is_healthy {
-                match response.json::<Value>().await {
-                    Ok(models_response) => {
-                        model_count = models_response
-                            .get("data")
-                            .and_then(|d| d.as_array())
-                            .map(|arr| arr.len())
-                            .unwrap_or(0);
-                    }
-                    Err(_) => {}
+            if is_healthy
+                && let Ok(models_response) = response.json::<Value>().await {
+                    model_count = models_response
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
                 }
-            }
 
             log_timed(
                 if is_healthy {

@@ -41,12 +41,7 @@ mod model_resolution_tests {
     #[test]
     fn test_model_name_case_sensitivity() {
         // According to model.rs: Matching should handle case variations
-        let variations = vec![
-            "llama2",
-            "Llama2",
-            "LLAMA2",
-            "LLaMA2",
-        ];
+        let variations = vec!["llama2", "Llama2", "LLAMA2", "LLaMA2"];
 
         // All should normalize to lowercase for comparison
         for name in variations {
@@ -115,10 +110,10 @@ mod model_resolution_tests {
     fn test_model_scoring_partial_match() {
         let requested = "llama2";
         let candidates = vec![
-            "llama2",                              // Exact: highest score
-            "llama2-7b",                           // Prefix match: high score
-            "meta-llama2-chat",                    // Contains: medium score
-            "codellama",                           // Similar: low score
+            "llama2",           // Exact: highest score
+            "llama2-7b",        // Prefix match: high score
+            "meta-llama2-chat", // Contains: medium score
+            "codellama",        // Similar: low score
         ];
 
         // Exact match should score highest
@@ -133,9 +128,9 @@ mod model_resolution_tests {
         // If user specifies quantization, prefer matching quant
         let _requested = "llama2:Q4_K_M";
         let candidates = vec![
-            ("llama2", "Q4_K_M"),  // Matching quant
-            ("llama2", "Q8_0"),    // Different quant
-            ("llama2", "F16"),     // Full precision
+            ("llama2", "Q4_K_M"), // Matching quant
+            ("llama2", "Q8_0"),   // Different quant
+            ("llama2", "F16"),    // Full precision
         ];
 
         // First candidate should score highest
@@ -218,9 +213,9 @@ mod model_resolution_tests {
     fn test_resolution_priority() {
         let requested = "granite";
         let candidates = vec![
-            "granite-3.0-2b-instruct",     // Prefix match
-            "ibm-granite-7b",              // Contains match
-            "granite",                      // Exact match (if exists)
+            "granite-3.0-2b-instruct", // Prefix match
+            "ibm-granite-7b",          // Contains match
+            "granite",                 // Exact match (if exists)
         ];
 
         // Exact match (if available) should win
@@ -238,11 +233,7 @@ mod model_resolution_tests {
     /// Test model resolution with version numbers
     #[test]
     fn test_model_with_version_numbers() {
-        let models = vec![
-            "llama-3.1-8b",
-            "llama-3.0-7b",
-            "llama-2-13b",
-        ];
+        let models = vec!["llama-3.1-8b", "llama-3.0-7b", "llama-2-13b"];
 
         // Should match version correctly
         let requested = "llama-3.1";
@@ -258,7 +249,7 @@ mod model_resolution_tests {
         // Some models have multiple names - test that partial name matching works
         let aliases = vec![
             ("llama2", "meta-llama-2"),
-            ("llama", "meta-llama-2"),  // More general match
+            ("llama", "meta-llama-2"), // More general match
             ("mistral", "mistral-7b-instruct"),
             ("granite", "granite-3.0-2b-instruct"),
         ];
@@ -268,8 +259,12 @@ mod model_resolution_tests {
             let short_normalized = short.replace('-', "");
             let long_normalized = long.replace('-', "");
             assert!(
-                long_normalized.to_lowercase().contains(&short_normalized.to_lowercase()),
-                "Expected '{}' to contain '{}'", long, short
+                long_normalized
+                    .to_lowercase()
+                    .contains(&short_normalized.to_lowercase()),
+                "Expected '{}' to contain '{}'",
+                long,
+                short
             );
         }
     }

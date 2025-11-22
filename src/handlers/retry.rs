@@ -8,7 +8,7 @@ use crate::check_cancelled;
 use crate::common::{CancellableRequest, RequestContext};
 use crate::constants::ERROR_LM_STUDIO_UNAVAILABLE;
 use crate::model_legacy::clean_model_name_legacy;
-use crate::utils::{is_model_loading_error, log_error, log_timed, log_warning, ProxyError};
+use crate::utils::{ProxyError, is_model_loading_error, log_error, log_timed, log_warning};
 
 #[derive(Serialize)]
 struct MinimalChatMessage<'a> {
@@ -253,7 +253,7 @@ where
                 operation,
                 cancellation_token,
             )
-                .await
+            .await
         }
         None => with_simple_retry(operation, cancellation_token).await,
     }

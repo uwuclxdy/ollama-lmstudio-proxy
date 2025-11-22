@@ -382,10 +382,7 @@ mod lmstudio_api_tests {
             original_request["custom_field"],
             forwarded_request["custom_field"]
         );
-        assert_eq!(
-            original_request["messages"],
-            forwarded_request["messages"]
-        );
+        assert_eq!(original_request["messages"], forwarded_request["messages"]);
     }
 
     /// Test health check structure

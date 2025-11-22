@@ -1,13 +1,13 @@
 /// src/model.rs - Native LM Studio API model handling with real data
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::CancellableRequest;
 use crate::constants::*;
-use crate::utils::{log_timed, log_warning, ProxyError};
+use crate::utils::{ProxyError, log_timed, log_warning};
 
 /// Native LM Studio model data from /api/v0/models
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -411,7 +411,7 @@ impl ModelResolver {
         let models = native_response
             .data
             .iter()
-            .map(|native_data| ModelInfo::from_native_data(native_data))
+            .map(ModelInfo::from_native_data)
             .collect();
 
         Ok(models)
@@ -434,11 +434,10 @@ impl ModelResolver {
 
         // Substring match
         for model in available_models {
-            if model.id.to_lowercase().contains(&lower_ollama) {
-                if lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10 {
+            if model.id.to_lowercase().contains(&lower_ollama)
+                && (lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10) {
                     return Some(model.clone());
                 }
-            }
         }
 
         // Enhanced scoring match

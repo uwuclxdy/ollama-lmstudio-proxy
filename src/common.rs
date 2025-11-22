@@ -1,11 +1,11 @@
 /// src/common.rs - Enhanced infrastructure with centralized logging
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::check_cancelled;
 use crate::constants::*;
-use crate::utils::{log_error, ProxyError};
+use crate::utils::{ProxyError, log_error};
 
 /// Lightweight request context for concurrent request handling
 #[derive(Clone)]
@@ -220,11 +220,10 @@ pub fn map_ollama_to_lmstudio_params(
 
     let format_source =
         structured_format.or_else(|| ollama_options.and_then(|options| options.get("format")));
-    if let Some(format_value) = format_source {
-        if let Some(converted) = convert_structured_format(format_value) {
+    if let Some(format_value) = format_source
+        && let Some(converted) = convert_structured_format(format_value) {
             params.insert("response_format".to_string(), converted);
         }
-    }
 
     params
 }
