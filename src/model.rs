@@ -435,9 +435,10 @@ impl ModelResolver {
         // Substring match
         for model in available_models {
             if model.id.to_lowercase().contains(&lower_ollama)
-                && (lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10) {
-                    return Some(model.clone());
-                }
+                && (lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10)
+            {
+                return Some(model.clone());
+            }
         }
 
         // Enhanced scoring match
