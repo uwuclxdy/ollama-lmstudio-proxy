@@ -221,9 +221,10 @@ pub fn map_ollama_to_lmstudio_params(
     let format_source =
         structured_format.or_else(|| ollama_options.and_then(|options| options.get("format")));
     if let Some(format_value) = format_source
-        && let Some(converted) = convert_structured_format(format_value) {
-            params.insert("response_format".to_string(), converted);
-        }
+        && let Some(converted) = convert_structured_format(format_value)
+    {
+        params.insert("response_format".to_string(), converted);
+    }
 
     params
 }

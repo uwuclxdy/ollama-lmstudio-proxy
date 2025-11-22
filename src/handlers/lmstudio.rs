@@ -249,8 +249,8 @@ pub async fn get_lmstudio_status(
             let is_healthy = status.is_success();
             let mut additional_info = serde_json::Map::new();
 
-            if is_healthy {
-                if let Ok(models_response) = response.json::<Value>().await {
+            if is_healthy
+                && let Ok(models_response) = response.json::<Value>().await {
                     let model_count = models_response
                         .get("data")
                         .and_then(|d| d.as_array())
@@ -261,24 +261,18 @@ pub async fn get_lmstudio_status(
 
                     // For native API, include additional metadata
                     if endpoint.starts_with("/api/v0/")
-                        && let Some(data) =
-                            models_response.get("data").and_then(|d| d.as_array())
-                        {
-                            let loaded_count = data
-                                .iter()
-                                .filter(|model| {
-                                    model
-                                        .get("state")
-                                        .and_then(|s| s.as_str()) == Some("loaded")
-                                })
-                                .count();
-                            additional_info.insert(
-                                "loaded_models".to_string(),
-                                serde_json::json!(loaded_count),
-                            );
-                        }
+                        && let Some(data) = models_response.get("data").and_then(|d| d.as_array())
+                    {
+                        let loaded_count = data
+                            .iter()
+                            .filter(|model| {
+                                model.get("state").and_then(|s| s.as_str()) == Some("loaded")
+                            })
+                            .count();
+                        additional_info
+                            .insert("loaded_models".to_string(), serde_json::json!(loaded_count));
+                    }
                 }
-            }
 
             let response_time = health_check_start.elapsed();
             let mut result = serde_json::json!({
@@ -292,11 +286,12 @@ pub async fn get_lmstudio_status(
 
             // Add additional info if available
             if !additional_info.is_empty()
-                && let Some(result_obj) = result.as_object_mut() {
-                    for (key, value) in additional_info {
-                        result_obj.insert(key, value);
-                    }
+                && let Some(result_obj) = result.as_object_mut()
+            {
+                for (key, value) in additional_info {
+                    result_obj.insert(key, value);
                 }
+            }
 
             log_timed(LOG_PREFIX_SUCCESS, "Health check", health_check_start);
             Ok(result)
