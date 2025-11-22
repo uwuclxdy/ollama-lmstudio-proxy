@@ -678,14 +678,13 @@ pub async fn handle_health_check(
             let is_healthy = status.is_success();
             let mut model_count = 0;
 
-            if is_healthy
-                && let Ok(models_response) = response.json::<Value>().await {
-                    model_count = models_response
-                        .get("data")
-                        .and_then(|d| d.as_array())
-                        .map(|arr| arr.len())
-                        .unwrap_or(0);
-                }
+            if is_healthy && let Ok(models_response) = response.json::<Value>().await {
+                model_count = models_response
+                    .get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+            }
 
             log_timed(
                 if is_healthy {

@@ -59,9 +59,10 @@ impl ModelInfoLegacy {
             || lower_name.contains("chat")
             || lower_family.contains("instruct")
             || lower_family.contains("chat"))
-            && !caps.contains(&"chat".to_string()) {
-                caps.push("chat".to_string());
-            }
+            && !caps.contains(&"chat".to_string())
+        {
+            caps.push("chat".to_string());
+        }
 
         if (lower_name.contains("llava")
             || lower_name.contains("vision")
@@ -69,14 +70,16 @@ impl ModelInfoLegacy {
             || lower_family.contains("llava")
             || lower_family.contains("vision")
             || lower_family.contains("bakllava"))
-            && !caps.contains(&"vision".to_string()) {
-                caps.push("vision".to_string());
-            }
+            && !caps.contains(&"vision".to_string())
+        {
+            caps.push("vision".to_string());
+        }
 
         if (lower_family == "embedding" || lower_name.contains("embed"))
-            && !caps.contains(&"embedding".to_string()) {
-                caps.push("embedding".to_string());
-            }
+            && !caps.contains(&"embedding".to_string())
+        {
+            caps.push("embedding".to_string());
+        }
 
         if caps.contains(&"chat".to_string()) && !caps.contains(&"completion".to_string()) {
             caps.push("completion".to_string());
@@ -167,11 +170,12 @@ impl ModelInfoLegacy {
 
         let arch_params = self.get_base_architecture_params_legacy();
         if let Some(obj) = model_info.as_object_mut()
-            && let Some(base_obj) = arch_params.as_object() {
-                for (key, value) in base_obj {
-                    obj.insert(key.clone(), value.clone());
-                }
+            && let Some(base_obj) = arch_params.as_object()
+        {
+            for (key, value) in base_obj {
+                obj.insert(key.clone(), value.clone());
             }
+        }
 
         if let Some(obj) = model_info.as_object_mut() {
             obj.insert(
@@ -614,9 +618,10 @@ impl ModelResolverLegacy {
 
         for lm_id in available_lm_studio_ids {
             if lm_id.to_lowercase().contains(&lower_ollama)
-                && (lower_ollama.len() > lm_id.len() / 2 || lower_ollama.len() > 10) {
-                    return Some(lm_id.clone());
-                }
+                && (lower_ollama.len() > lm_id.len() / 2 || lower_ollama.len() > 10)
+            {
+                return Some(lm_id.clone());
+            }
         }
 
         let mut best_match = None;

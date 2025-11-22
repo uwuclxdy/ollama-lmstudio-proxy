@@ -470,10 +470,10 @@ mod response_transformation_tests {
     #[test]
     fn test_context_array_handling() {
         // Ollama includes context tokens for conversation continuity
-        let context = vec![101, 2023, 2003, 1037, 3231];
+        let context = [101, 2023, 2003, 1037, 3231];
 
         assert!(!context.is_empty());
-        assert!(context.len() > 0);
+        assert!(!context.is_empty());
     }
 
     /// Test done flag in streaming responses

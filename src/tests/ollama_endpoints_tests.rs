@@ -180,7 +180,7 @@ mod ollama_endpoints_tests {
         });
 
         assert_eq!(response["done"], true);
-        assert!(response["message"]["content"].as_str().unwrap().len() > 0);
+        assert!(!response["message"]["content"].as_str().unwrap().is_empty());
         assert!(response["total_duration"].as_u64().unwrap() > 0);
     }
 
