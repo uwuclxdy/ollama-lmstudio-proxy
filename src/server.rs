@@ -17,7 +17,7 @@ use crate::handlers::json_response;
 use crate::model::ModelResolver;
 use crate::model_legacy::ModelResolverLegacy;
 use crate::utils::{
-    init_global_logger, is_logging_enabled, log_error, log_info, validate_config, ProxyError,
+    ProxyError, init_global_logger, is_logging_enabled, log_error, log_info, validate_config,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -219,8 +219,8 @@ impl ProxyServer {
                     token,
                     config_ref,
                 )
-                    .await
-                    .map_err(warp::reject::custom)
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_generate_route = warp::path!("api" / "generate")
@@ -241,8 +241,8 @@ impl ProxyServer {
                     token,
                     config_ref,
                 )
-                    .await
-                    .map_err(warp::reject::custom)
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_embeddings_route = warp::path!("api" / "embeddings")
@@ -264,8 +264,8 @@ impl ProxyServer {
                     token,
                     s.config.as_ref(),
                 )
-                    .await
-                    .map_err(warp::reject::custom)
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_show_route = warp::path!("api" / "show")
@@ -307,9 +307,9 @@ impl ProxyServer {
             .and(with_server_state.clone())
             .and_then(
                 |tail: warp::path::Tail,
-                    method: warp::http::Method,
-                    body: Value,
-                    s: Arc<ProxyServer>| async move {
+                 method: warp::http::Method,
+                 body: Value,
+                 s: Arc<ProxyServer>| async move {
                     let context = RequestContext {
                         client: &s.client,
                         lmstudio_url: &s.config.lmstudio_url,
@@ -325,8 +325,8 @@ impl ProxyServer {
                         token,
                         s.config.load_timeout_seconds,
                     )
-                        .await
-                        .map_err(warp::reject::custom)
+                    .await
+                    .map_err(warp::reject::custom)
                 },
             );
 

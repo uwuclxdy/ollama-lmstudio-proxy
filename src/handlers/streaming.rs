@@ -1,6 +1,6 @@
 /// src/handlers/streaming.rs - Enhanced streaming with model loading detection and better timing
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -12,7 +12,7 @@ use crate::handlers::helpers::{
     create_cancellation_chunk, create_error_chunk, create_final_chunk,
     create_ollama_streaming_chunk,
 };
-use crate::utils::{log_error, log_timed, log_warning, ProxyError};
+use crate::utils::{ProxyError, log_error, log_timed, log_warning};
 
 static STREAM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -98,9 +98,9 @@ pub async fn handle_streaming_response(
                                                 let mut content_to_send = String::new();
                                                 let mut tool_calls_delta: Option<Value> = None;
 
-                                                if let Some(choices) = lm_studio_json_chunk.get("choices").and_then(|c| c.as_array()) {
-                                                    if let Some(choice) = choices.first() {
-                                                        if let Some(delta) = choice.get("delta") {
+                                                if let Some(choices) = lm_studio_json_chunk.get("choices").and_then(|c| c.as_array())
+                                                    && let Some(choice) = choices.first()
+                                                        && let Some(delta) = choice.get("delta") {
                                                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                                                 content_to_send.push_str(content);
                                                             }
@@ -114,8 +114,6 @@ pub async fn handle_streaming_response(
                                                                 tool_calls_delta = Some(json!(new_tool_calls));
                                                             }
                                                         }
-                                                    }
-                                                }
 
                                                 if !content_to_send.is_empty() || tool_calls_delta.is_some() {
                                                     let ollama_chunk = create_ollama_streaming_chunk(

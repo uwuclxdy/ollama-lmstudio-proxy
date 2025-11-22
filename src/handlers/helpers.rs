@@ -1,8 +1,8 @@
 /// src/handlers/helpers.rs - Enhanced request/response transformation with native API support
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
-use crate::common::{map_ollama_to_lmstudio_params, RequestBuilder};
+use crate::common::{RequestBuilder, map_ollama_to_lmstudio_params};
 use crate::constants::*;
 
 /// Create JSON response with proper headers
@@ -135,7 +135,7 @@ impl TimingInfo {
             if final_prompt_tokens + final_eval_tokens > 0 && total_duration_ns > 1000 {
                 (total_duration_ns as f64
                     * (final_prompt_tokens as f64
-                    / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
+                        / (final_prompt_tokens + final_eval_tokens) as f64)) as u64
             } else {
                 total_duration_ns / TIMING_PROMPT_RATIO
             };
@@ -225,13 +225,10 @@ impl ResponseTransformer {
             .and_then(|c| c.as_array()?.first())
             .and_then(|choice| choice.get("message")?.get("tool_calls"))
             .and_then(|tc| tc.as_array())
-        {
-            if !tool_calls.is_empty() {
-                if let Some(msg_obj) = ollama_message.as_object_mut() {
+            && !tool_calls.is_empty()
+                && let Some(msg_obj) = ollama_message.as_object_mut() {
                     msg_obj.insert("tool_calls".to_string(), json!(tool_calls));
                 }
-            }
-        }
 
         // TODO: emit LM Studio's real conversation context once the native API exposes it.
         json!({
@@ -353,14 +350,12 @@ impl ResponseTransformer {
             .get("choices")
             .and_then(|c| c.as_array()?.first())
             .and_then(|choice| choice.get("message")?.get("reasoning")?.as_str())
-        {
-            if !reasoning.is_empty() {
+            && !reasoning.is_empty() {
                 return format!(
                     "**Reasoning:**\n{}\n\n**Answer:**\n{}",
                     reasoning, base_content
                 );
             }
-        }
         base_content
     }
 
@@ -404,11 +399,10 @@ pub fn build_lm_studio_request(
             builder = builder
                 .add_required("messages", messages.clone())
                 .add_required("stream", stream);
-            if let Some(tools_val) = ollama_tools {
-                if tools_val.is_array() && !tools_val.as_array().unwrap().is_empty() {
+            if let Some(tools_val) = ollama_tools
+                && tools_val.is_array() && !tools_val.as_array().unwrap().is_empty() {
                     builder = builder.add_required("tools", tools_val.clone());
                 }
-            }
         }
         LMStudioRequestType::Completion {
             prompt,
@@ -504,11 +498,10 @@ pub fn create_ollama_streaming_chunk(
             "role": "assistant",
             "content": content
         });
-        if let Some(tc_delta) = tool_calls_delta {
-            if let Some(msg_map) = message_obj.as_object_mut() {
+        if let Some(tc_delta) = tool_calls_delta
+            && let Some(msg_map) = message_obj.as_object_mut() {
                 msg_map.insert("tool_calls".to_string(), tc_delta.clone());
             }
-        }
 
         json!({
             "model": model_ollama_name,
@@ -537,11 +530,10 @@ pub fn create_error_chunk(
         create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("error".to_string(), json!(error_message));
-        if is_chat_endpoint {
-            if let Some(msg) = chunk_obj.get_mut("message").and_then(|m| m.as_object_mut()) {
+        if is_chat_endpoint
+            && let Some(msg) = chunk_obj.get_mut("message").and_then(|m| m.as_object_mut()) {
                 msg.insert("content".to_string(), json!(""));
             }
-        }
     }
     chunk
 }
@@ -663,7 +655,7 @@ where
             operation,
             cancellation_token,
         )
-            .await
+        .await
     } else {
         crate::handlers::retry::with_simple_retry(operation, cancellation_token).await
     }
