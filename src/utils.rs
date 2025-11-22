@@ -53,7 +53,7 @@ pub fn log_warning(operation: &str, warning: &str) {
                 sanitize_log_message(operation),
                 sanitize_log_message(warning)
             )
-                .unwrap();
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -72,7 +72,7 @@ pub fn log_error(operation: &str, error: &str) {
                 sanitize_log_message(operation),
                 sanitize_log_message(error)
             )
-                .unwrap();
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -93,7 +93,7 @@ pub fn log_request(method: &str, path: &str, model: Option<&str>) {
                     sanitize_log_message(path),
                     sanitize_log_message(m)
                 )
-                    .unwrap(),
+                .unwrap(),
                 None => write!(
                     buffer,
                     "{} {} {}",
@@ -101,7 +101,7 @@ pub fn log_request(method: &str, path: &str, model: Option<&str>) {
                     method,
                     sanitize_log_message(path)
                 )
-                    .unwrap(),
+                .unwrap(),
             }
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
@@ -122,7 +122,7 @@ pub fn log_timed(prefix: &str, operation: &str, start: Instant) {
                 operation,
                 format_duration(duration)
             )
-                .unwrap();
+            .unwrap();
             println!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), buffer);
         });
     }
@@ -449,14 +449,13 @@ pub fn extract_client_ip(headers: &warp::http::HeaderMap) -> Option<String> {
         "x-client-ip",
     ];
     for header_name in &ip_headers {
-        if let Some(header_value) = headers.get(*header_name) {
-            if let Ok(ip_str) = header_value.to_str() {
+        if let Some(header_value) = headers.get(*header_name)
+            && let Ok(ip_str) = header_value.to_str() {
                 let ip = ip_str.split(',').next().unwrap_or(ip_str).trim();
                 if !ip.is_empty() {
                     return Some(ip.to_string());
                 }
             }
-        }
     }
     None
 }

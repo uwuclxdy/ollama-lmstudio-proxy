@@ -1,12 +1,12 @@
 /// src/model-legacy.rs - Legacy model handling with programmatic calculations (OpenAI-compatible endpoints)
 use moka::future::Cache;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::CancellableRequest;
 use crate::constants::*;
-use crate::utils::{log_timed, log_warning, ProxyError};
+use crate::utils::{ProxyError, log_timed, log_warning};
 
 /// Legacy model information with calculated estimates
 #[derive(Debug, Clone)]
@@ -55,33 +55,28 @@ impl ModelInfoLegacy {
 
         caps.push("completion".to_string());
 
-        if lower_name.contains("instruct")
+        if (lower_name.contains("instruct")
             || lower_name.contains("chat")
             || lower_family.contains("instruct")
-            || lower_family.contains("chat")
-        {
-            if !caps.contains(&"chat".to_string()) {
+            || lower_family.contains("chat"))
+            && !caps.contains(&"chat".to_string()) {
                 caps.push("chat".to_string());
             }
-        }
 
-        if lower_name.contains("llava")
+        if (lower_name.contains("llava")
             || lower_name.contains("vision")
             || lower_name.contains("bakllava")
             || lower_family.contains("llava")
             || lower_family.contains("vision")
-            || lower_family.contains("bakllava")
-        {
-            if !caps.contains(&"vision".to_string()) {
+            || lower_family.contains("bakllava"))
+            && !caps.contains(&"vision".to_string()) {
                 caps.push("vision".to_string());
             }
-        }
 
-        if lower_family == "embedding" || lower_name.contains("embed") {
-            if !caps.contains(&"embedding".to_string()) {
+        if (lower_family == "embedding" || lower_name.contains("embed"))
+            && !caps.contains(&"embedding".to_string()) {
                 caps.push("embedding".to_string());
             }
-        }
 
         if caps.contains(&"chat".to_string()) && !caps.contains(&"completion".to_string()) {
             caps.push("completion".to_string());
@@ -171,13 +166,12 @@ impl ModelInfoLegacy {
         });
 
         let arch_params = self.get_base_architecture_params_legacy();
-        if let Some(obj) = model_info.as_object_mut() {
-            if let Some(base_obj) = arch_params.as_object() {
+        if let Some(obj) = model_info.as_object_mut()
+            && let Some(base_obj) = arch_params.as_object() {
                 for (key, value) in base_obj {
                     obj.insert(key.clone(), value.clone());
                 }
             }
-        }
 
         if let Some(obj) = model_info.as_object_mut() {
             obj.insert(
@@ -619,11 +613,10 @@ impl ModelResolverLegacy {
         }
 
         for lm_id in available_lm_studio_ids {
-            if lm_id.to_lowercase().contains(&lower_ollama) {
-                if lower_ollama.len() > lm_id.len() / 2 || lower_ollama.len() > 10 {
+            if lm_id.to_lowercase().contains(&lower_ollama)
+                && (lower_ollama.len() > lm_id.len() / 2 || lower_ollama.len() > 10) {
                     return Some(lm_id.clone());
                 }
-            }
         }
 
         let mut best_match = None;
@@ -681,7 +674,7 @@ impl ModelResolverLegacy {
             score += 3;
         }
 
-        let cleaned_lm_name = lm_name.split('/').last().unwrap_or(lm_name);
+        let cleaned_lm_name = lm_name.split('/').next_back().unwrap_or(lm_name);
         if cleaned_lm_name.starts_with(ollama_name) {
             score += ollama_name.len();
         }

@@ -40,7 +40,8 @@ fn converts_schema_format_into_response_format() {
 
 #[test]
 fn maps_json_mode_string_to_json_object_response_format() {
-    let params = map_ollama_to_lmstudio_params(None, Some(&serde_json::Value::String("json".into())));
+    let params =
+        map_ollama_to_lmstudio_params(None, Some(&serde_json::Value::String("json".into())));
     assert_eq!(
         params.get("response_format"),
         Some(&json!({"type": "json_object"}))

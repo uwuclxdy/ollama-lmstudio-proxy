@@ -156,8 +156,10 @@ mod response_transformation_tests {
         });
 
         // Convert to nanoseconds for Ollama format
-        let time_to_first_token_ns = (stats["time_to_first_token"].as_f64().unwrap() * 1_000_000_000.0) as u64;
-        let generation_time_ns = (stats["generation_time"].as_f64().unwrap() * 1_000_000_000.0) as u64;
+        let time_to_first_token_ns =
+            (stats["time_to_first_token"].as_f64().unwrap() * 1_000_000_000.0) as u64;
+        let generation_time_ns =
+            (stats["generation_time"].as_f64().unwrap() * 1_000_000_000.0) as u64;
 
         assert_eq!(time_to_first_token_ns, 111_000_000);
         assert_eq!(generation_time_ns, 954_000_000);
@@ -305,7 +307,9 @@ mod response_transformation_tests {
             "prompt_eval_count": 5
         });
 
-        let lm_embedding = lmstudio_response["data"][0]["embedding"].as_array().unwrap();
+        let lm_embedding = lmstudio_response["data"][0]["embedding"]
+            .as_array()
+            .unwrap();
         let ollama_embedding = ollama_response["embeddings"][0].as_array().unwrap();
 
         assert_eq!(lm_embedding, ollama_embedding);
@@ -430,9 +434,9 @@ mod response_transformation_tests {
     /// Test total_duration calculation
     #[test]
     fn test_total_duration_calculation() {
-        let load_duration = 100_000_000_u64;       // 0.1s
+        let load_duration = 100_000_000_u64; // 0.1s
         let prompt_eval_duration = 200_000_000_u64; // 0.2s
-        let eval_duration = 300_000_000_u64;        // 0.3s
+        let eval_duration = 300_000_000_u64; // 0.3s
 
         let total = load_duration + prompt_eval_duration + eval_duration;
         assert_eq!(total, 600_000_000); // 0.6s total
