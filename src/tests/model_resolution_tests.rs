@@ -159,8 +159,8 @@ mod model_resolution_tests {
     #[test]
     fn test_model_list_refresh() {
         // Cache should be refreshable when models change
-        let initial_models = vec!["model1", "model2"];
-        let updated_models = vec!["model1", "model2", "model3"];
+        let initial_models = ["model1", "model2"];
+        let updated_models = ["model1", "model2", "model3"];
 
         assert_eq!(initial_models.len(), 2);
         assert_eq!(updated_models.len(), 3);
@@ -171,9 +171,9 @@ mod model_resolution_tests {
     fn test_unknown_model_handling() {
         // When model not found, should return error or pass through
         let requested = "nonexistent-model";
-        let available = vec!["model1", "model2"];
+        let available = ["model1", "model2"];
 
-        let found = available.iter().any(|&m| m == requested);
+        let found = available.contains(&requested);
         assert!(!found);
     }
 
@@ -233,7 +233,7 @@ mod model_resolution_tests {
     /// Test model resolution with version numbers
     #[test]
     fn test_model_with_version_numbers() {
-        let models = vec!["llama-3.1-8b", "llama-3.0-7b", "llama-2-13b"];
+        let models = ["llama-3.1-8b", "llama-3.0-7b", "llama-2-13b"];
 
         // Should match version correctly
         let requested = "llama-3.1";
@@ -286,11 +286,9 @@ mod model_resolution_tests {
     #[test]
     fn test_model_with_size_hints() {
         let requested = "llama2-7b";
-        let candidates = vec![
-            ("llama2-7b", 7_000_000_000_u64),
+        let candidates = [("llama2-7b", 7_000_000_000_u64),
             ("llama2-13b", 13_000_000_000_u64),
-            ("llama2-70b", 70_000_000_000_u64),
-        ];
+            ("llama2-70b", 70_000_000_000_u64)];
 
         // Should match the 7b variant
         let matched = candidates.iter().find(|(name, _)| *name == requested);
@@ -302,7 +300,7 @@ mod model_resolution_tests {
     #[test]
     fn test_concurrent_resolution() {
         // Multiple simultaneous requests should use shared cache
-        let models = vec!["model1", "model2", "model3"];
+        let models = ["model1", "model2", "model3"];
 
         let request1 = "model1";
         let request2 = "model2";
@@ -319,7 +317,7 @@ mod model_resolution_tests {
     fn test_resolution_error_messages() {
         // Should provide helpful error when model not found
         let requested = "nonexistent-model";
-        let available = vec!["model1", "model2", "model3"];
+        let available = ["model1", "model2", "model3"];
 
         let found = available.contains(&requested);
         assert!(!found);

@@ -450,12 +450,13 @@ pub fn extract_client_ip(headers: &warp::http::HeaderMap) -> Option<String> {
     ];
     for header_name in &ip_headers {
         if let Some(header_value) = headers.get(*header_name)
-            && let Ok(ip_str) = header_value.to_str() {
-                let ip = ip_str.split(',').next().unwrap_or(ip_str).trim();
-                if !ip.is_empty() {
-                    return Some(ip.to_string());
-                }
+            && let Ok(ip_str) = header_value.to_str()
+        {
+            let ip = ip_str.split(',').next().unwrap_or(ip_str).trim();
+            if !ip.is_empty() {
+                return Some(ip.to_string());
             }
+        }
     }
     None
 }
