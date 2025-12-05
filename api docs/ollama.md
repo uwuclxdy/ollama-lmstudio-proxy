@@ -1864,6 +1864,6 @@ curl http://localhost:11434/api/version
 
 ```json
 {
-  "version": "0.5.1"
+  "version": "0.13.0"
 }
 ```
