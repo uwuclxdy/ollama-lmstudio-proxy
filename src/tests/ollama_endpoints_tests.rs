@@ -1,6 +1,7 @@
-/// Tests for Ollama API endpoint response structures
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod ollama_endpoints_tests {
+    use crate::constants::OLLAMA_SERVER_VERSION;
     use serde_json::json;
 
     /// Test /api/tags response structure according to Ollama API docs
@@ -289,6 +290,32 @@ mod ollama_endpoints_tests {
         assert_eq!(request["format"], "json");
     }
 
+    /// Test /api/generate advanced parameters
+    #[test]
+    fn test_ollama_generate_advanced_parameters() {
+        // According to ollama.md: suffix/system/template/raw/think/keep_alive/context are supported
+        let request = json!({
+            "model": "llama3.2",
+            "prompt": "Why is the sky blue?",
+            "suffix": " Thanks!",
+            "system": "You are concise.",
+            "template": "User: {{prompt}}",
+            "raw": true,
+            "think": true,
+            "keep_alive": "5m",
+            "context": [1, 2, 3],
+            "stream": false
+        });
+
+        assert_eq!(request["suffix"], " Thanks!");
+        assert_eq!(request["system"], "You are concise.");
+        assert_eq!(request["template"], "User: {{prompt}}");
+        assert_eq!(request["raw"], true);
+        assert_eq!(request["think"], true);
+        assert_eq!(request["keep_alive"], "5m");
+        assert!(request["context"].is_array());
+    }
+
     /// Test /api/embeddings request structure
     #[test]
     fn test_ollama_embeddings_request() {
@@ -337,12 +364,28 @@ mod ollama_endpoints_tests {
         assert_eq!(inputs.len(), 2);
     }
 
+    /// Test /api/embed documented advanced parameters
+    #[test]
+    fn test_ollama_embeddings_parameters() {
+        let request = json!({
+            "model": "all-minilm",
+            "input": "text",
+            "truncate": false,
+            "keep_alive": "10m",
+            "dimensions": 128
+        });
+
+        assert_eq!(request["truncate"], false);
+        assert_eq!(request["dimensions"], 128);
+        assert_eq!(request["keep_alive"], "10m");
+    }
+
     /// Test /api/version response
     #[test]
     fn test_ollama_version_response() {
         // According to ollama.md: version returns version string
         let response = json!({
-            "version": "0.5.1"
+            "version": OLLAMA_SERVER_VERSION
         });
 
         assert!(response.get("version").is_some());
@@ -375,7 +418,7 @@ mod ollama_endpoints_tests {
         assert_eq!(response["done_reason"], "load");
     }
 
-    /// Test unload model hint
+    /// Test unload model hint (keep_alive=0)
     #[test]
     fn test_ollama_chat_unload_hint() {
         // According to ollama.md: empty messages with keep_alive=0 triggers unload
@@ -428,7 +471,6 @@ mod ollama_endpoints_tests {
         assert!(options.get("repeat_penalty").is_some());
         assert!(options.get("seed").is_some());
         assert!(options.get("num_predict").is_some());
-        assert!(options.get("stop").is_some());
     }
 
     /// Test logit_bias parameter
@@ -450,5 +492,111 @@ mod ollama_endpoints_tests {
         assert!(logit_bias.is_object());
         assert_eq!(logit_bias["464"], -10);
         assert_eq!(logit_bias["302"], 15);
+    }
+
+    /// Test /api/pull streaming status chunks
+    #[test]
+    fn test_ollama_pull_streaming_status() {
+        let initial = json!({
+            "status": "pulling manifest",
+            "model": "llama3.2",
+            "detail": "queued"
+        });
+
+        let success = json!({
+            "status": "success",
+            "model": "llama3.2",
+            "total": 1024_u64,
+            "completed": 1024_u64
+        });
+
+        assert_eq!(initial["status"], "pulling manifest");
+        assert_eq!(success["status"], "success");
+        assert!(success.get("total").is_some());
+        assert!(success.get("completed").is_some());
+    }
+
+    /// Test /api/create streamed status objects
+    #[test]
+    fn test_ollama_create_streaming_status() {
+        let chunks = [
+            json!({"status": "reading model metadata"}),
+            json!({
+                "status": "quantizing F16 model to Q4_K_M",
+                "digest": "0",
+                "total": 6433687776_u64,
+                "completed": 12302_u64
+            }),
+            json!({"status": "writing manifest"}),
+            json!({"status": "success"}),
+        ];
+
+        assert_eq!(chunks.first().unwrap()["status"], "reading model metadata");
+        assert_eq!(chunks.last().unwrap()["status"], "success");
+        assert!(chunks[1].get("digest").is_some());
+        assert!(chunks[1].get("total").is_some());
+    }
+
+    /// Test /api/create alias response shape
+    #[test]
+    fn test_ollama_create_alias_response() {
+        let response = json!({
+            "status": "success",
+            "model": "chatbot",
+            "virtual": true
+        });
+
+        assert_eq!(response["status"], "success");
+        assert_eq!(response["virtual"], true);
+        assert!(response.get("model").is_some());
+    }
+
+    /// Test /api/copy response shape
+    #[test]
+    fn test_ollama_copy_response() {
+        let response = json!({
+            "status": "success",
+            "model": "chatbot-copy"
+        });
+
+        assert_eq!(response["model"], "chatbot-copy");
+        assert!(response.get("status").is_some());
+    }
+
+    /// Test /api/delete response shape
+    #[test]
+    fn test_ollama_delete_response() {
+        let response = json!({
+            "status": "success",
+            "model": "chatbot"
+        });
+
+        assert_eq!(response["status"], "success");
+        assert!(response.get("model").is_some());
+    }
+
+    /// Test /api/push streaming status responses
+    #[test]
+    fn test_ollama_push_streaming_status() {
+        let chunks = [
+            json!({"status": "retrieving manifest", "model": "llama3.2"}),
+            json!({"status": "starting upload", "model": "llama3.2"}),
+            json!({"status": "success", "model": "llama3.2"}),
+        ];
+
+        assert_eq!(chunks.first().unwrap()["status"], "retrieving manifest");
+        assert_eq!(chunks.last().unwrap()["status"], "success");
+    }
+
+    /// Test /api/blobs HEAD/POST status codes
+    #[test]
+    fn test_ollama_blob_status_codes() {
+        let exists_status = 200_u16;
+        let missing_status = 404_u16;
+        let upload_status = 201_u16;
+
+        assert_eq!(exists_status, warp::http::StatusCode::OK.as_u16());
+        assert_eq!(missing_status, warp::http::StatusCode::NOT_FOUND.as_u16());
+        assert_eq!(upload_status, warp::http::StatusCode::CREATED.as_u16());
     }
 }

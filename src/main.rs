@@ -1,11 +1,10 @@
-/// src/main.rs - Application entry point for the Ollama-LMStudio proxy server.
 // Core modules
 mod common;
 mod constants;
 mod handlers;
 mod model;
-mod model_legacy;
 mod server;
+mod storage;
 mod utils;
 
 // Bring into scope for main

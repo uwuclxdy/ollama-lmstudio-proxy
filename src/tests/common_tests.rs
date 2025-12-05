@@ -47,3 +47,25 @@ fn maps_json_mode_string_to_json_object_response_format() {
         Some(&json!({"type": "json_object"}))
     );
 }
+
+#[test]
+fn maps_text_mode_to_text_response_format() {
+    let params =
+        map_ollama_to_lmstudio_params(None, Some(&serde_json::Value::String("text".into())));
+    assert_eq!(
+        params.get("response_format"),
+        Some(&json!({"type": "text"}))
+    );
+}
+
+#[test]
+fn forwards_embedding_specific_parameters() {
+    let options = json!({
+        "truncate": true,
+        "dimensions": 256,
+    });
+
+    let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert_eq!(params.get("truncate"), Some(&json!(true)));
+    assert_eq!(params.get("dimensions"), Some(&json!(256)));
+}

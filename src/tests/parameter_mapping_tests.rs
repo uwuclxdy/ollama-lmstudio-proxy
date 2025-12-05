@@ -1,5 +1,5 @@
-/// Tests for parameter mapping between Ollama and LM Studio APIs
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod parameter_mapping_tests {
     use serde_json::json;
 
