@@ -1,5 +1,5 @@
-/// Tests for model name resolution and cleaning logic
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod model_resolution_tests {
     use serde_json::json;
 
@@ -7,7 +7,7 @@ mod model_resolution_tests {
     #[test]
     fn test_clean_model_name_suffix_removal() {
         // According to model.rs: clean_model_name removes :latest, :tag suffixes
-        let test_cases = vec![
+        let test_cases = [
             ("llama2:latest", "llama2"),
             ("mistral:7b-instruct", "mistral"),
             ("codellama:13b", "codellama"),
@@ -25,7 +25,7 @@ mod model_resolution_tests {
     #[test]
     fn test_clean_model_name_special_chars() {
         // Names with dashes, underscores, dots should be preserved
-        let test_cases = vec![
+        let test_cases = [
             ("granite-3.0-2b-instruct", "granite-3.0-2b-instruct"),
             ("llama_2_7b", "llama_2_7b"),
             ("model.v2", "model.v2"),
@@ -41,7 +41,7 @@ mod model_resolution_tests {
     #[test]
     fn test_model_name_case_sensitivity() {
         // According to model.rs: Matching should handle case variations
-        let variations = vec!["llama2", "Llama2", "LLAMA2", "LLaMA2"];
+        let variations = ["llama2", "Llama2", "LLAMA2", "LLaMA2"];
 
         // All should normalize to lowercase for comparison
         for name in variations {
@@ -109,7 +109,7 @@ mod model_resolution_tests {
     #[test]
     fn test_model_scoring_partial_match() {
         let requested = "llama2";
-        let candidates = vec![
+        let candidates = [
             "llama2",           // Exact: highest score
             "llama2-7b",        // Prefix match: high score
             "meta-llama2-chat", // Contains: medium score
@@ -127,7 +127,7 @@ mod model_resolution_tests {
     fn test_model_scoring_quantization() {
         // If user specifies quantization, prefer matching quant
         let _requested = "llama2:Q4_K_M";
-        let candidates = vec![
+        let candidates = [
             ("llama2", "Q4_K_M"), // Matching quant
             ("llama2", "Q8_0"),   // Different quant
             ("llama2", "F16"),    // Full precision
@@ -212,7 +212,7 @@ mod model_resolution_tests {
     #[test]
     fn test_resolution_priority() {
         let requested = "granite";
-        let candidates = vec![
+        let candidates = [
             "granite-3.0-2b-instruct", // Prefix match
             "ibm-granite-7b",          // Contains match
             "granite",                 // Exact match (if exists)
@@ -247,7 +247,7 @@ mod model_resolution_tests {
     #[test]
     fn test_model_aliases() {
         // Some models have multiple names - test that partial name matching works
-        let aliases = vec![
+        let aliases = [
             ("llama2", "meta-llama-2"),
             ("llama", "meta-llama-2"), // More general match
             ("mistral", "mistral-7b-instruct"),
@@ -286,9 +286,11 @@ mod model_resolution_tests {
     #[test]
     fn test_model_with_size_hints() {
         let requested = "llama2-7b";
-        let candidates = [("llama2-7b", 7_000_000_000_u64),
+        let candidates = [
+            ("llama2-7b", 7_000_000_000_u64),
             ("llama2-13b", 13_000_000_000_u64),
-            ("llama2-70b", 70_000_000_000_u64)];
+            ("llama2-70b", 70_000_000_000_u64),
+        ];
 
         // Should match the 7b variant
         let matched = candidates.iter().find(|(name, _)| *name == requested);
@@ -331,7 +333,7 @@ mod model_resolution_tests {
     /// Test model resolution with empty model list
     #[test]
     fn test_resolution_with_empty_list() {
-        let available: Vec<&str> = vec![];
+        let available: [&str; 0] = [];
         let requested = "any-model";
 
         let found = available.contains(&requested);
@@ -342,7 +344,7 @@ mod model_resolution_tests {
     #[test]
     fn test_special_model_names() {
         // Names with special chars, unicode, etc.
-        let special_names = vec![
+        let special_names = [
             "model-with-dashes",
             "model_with_underscores",
             "model.with.dots",
@@ -360,7 +362,7 @@ mod model_resolution_tests {
     #[test]
     fn test_model_id_format() {
         // Valid LM Studio model IDs
-        let valid_ids = vec![
+        let valid_ids = [
             "lmstudio-community/meta-llama-3.1-8b-instruct",
             "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
             "microsoft/phi-2",
@@ -395,7 +397,7 @@ mod model_resolution_tests {
     /// Test model type detection
     #[test]
     fn test_model_type_detection() {
-        let models = vec![
+        let models = [
             ("llama2", "llm"),
             ("text-embedding-nomic", "embeddings"),
             ("qwen2-vl", "vlm"),

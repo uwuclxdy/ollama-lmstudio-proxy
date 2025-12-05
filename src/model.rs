@@ -1,4 +1,3 @@
-/// src/model.rs - Native LM Studio API model handling with real data
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,26 +8,34 @@ use crate::common::CancellableRequest;
 use crate::constants::*;
 use crate::utils::{ProxyError, log_timed, log_warning};
 
-/// Native LM Studio model data from /api/v0/models
+/// Native LM Studio model data from /api/v1/models
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeModelData {
-    pub id: String,
-    pub object: String,
+    pub key: String,
     #[serde(rename = "type")]
     pub model_type: String,
-    pub publisher: Option<String>,
-    pub arch: String,
-    pub compatibility_type: String,
-    pub quantization: String,
-    pub state: String,
+    pub publisher: String,
+    pub architecture: Option<String>,
+    pub format: Option<String>,
+    pub quantization: Option<NativeQuantization>,
     pub max_context_length: u64,
+    pub loaded_instances: Vec<NativeLoadedInstance>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeQuantization {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeLoadedInstance {
+    pub id: String,
 }
 
 /// Native LM Studio models response
 #[derive(Debug, Deserialize)]
 pub struct NativeModelsResponse {
-    pub object: String,
-    pub data: Vec<NativeModelData>,
+    pub models: Vec<NativeModelData>,
 }
 
 /// Enhanced model information using real LM Studio data
@@ -49,28 +56,46 @@ pub struct ModelInfo {
 impl ModelInfo {
     /// Create model info from native LM Studio data
     pub fn from_native_data(native_data: &NativeModelData) -> Self {
-        let is_loaded = native_data.state == "loaded";
-        let ollama_name = if native_data.id.contains(':') {
-            native_data.id.clone()
+        let is_loaded = !native_data.loaded_instances.is_empty();
+        let state = if is_loaded { "loaded" } else { "not-loaded" };
+
+        let ollama_name = if native_data.key.contains(':') {
+            native_data.key.clone()
         } else {
-            format!("{}:latest", native_data.id)
+            format!("{}:latest", native_data.key)
         };
 
+        let quantization = native_data
+            .quantization
+            .as_ref()
+            .and_then(|q| q.name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         Self {
-            id: native_data.id.clone(),
+            id: native_data.key.clone(),
             ollama_name,
             model_type: native_data.model_type.clone(),
-            publisher: native_data
-                .publisher
+            publisher: native_data.publisher.clone(),
+            arch: native_data
+                .architecture
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
-            arch: native_data.arch.clone(),
-            compatibility_type: native_data.compatibility_type.clone(),
-            quantization: native_data.quantization.clone(),
-            state: native_data.state.clone(),
+            compatibility_type: native_data
+                .format
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            quantization,
+            state: state.to_string(),
             max_context_length: native_data.max_context_length,
             is_loaded,
         }
+    }
+
+    /// Clone model info but override the Ollama-visible name
+    pub fn with_alias_name(&self, alias_name: &str) -> Self {
+        let mut cloned = self.clone();
+        cloned.ollama_name = alias_name.to_string();
+        cloned
     }
 
     /// Determine model capabilities based on type and architecture
@@ -360,7 +385,7 @@ impl ModelResolver {
                 if e.message.contains("404") || e.message.contains("not found") {
                     Err(ProxyError::new(
                         format!(
-                            "LM Studio native API not available. Please update to LM Studio 0.3.6+ or use --legacy flag. Original error: {}",
+                            "LM Studio native API not available. Please update to LM Studio 0.3.6+ (legacy mode has been removed). Original error: {}",
                             e.message
                         ),
                         503,
@@ -378,13 +403,9 @@ impl ModelResolver {
         client: &reqwest::Client,
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ModelInfo>, ProxyError> {
-        let url = format!("{}/api/v0/models", self.lmstudio_url);
+        let url = format!("{}{}", self.lmstudio_url, LM_STUDIO_NATIVE_MODELS);
 
-        let temp_context = crate::common::RequestContext {
-            client,
-            lmstudio_url: &self.lmstudio_url,
-        };
-        let request = CancellableRequest::new(temp_context, cancellation_token);
+        let request = CancellableRequest::new(client, cancellation_token);
 
         let response = request
             .make_request(reqwest::Method::GET, &url, None::<Value>)
@@ -393,7 +414,7 @@ impl ModelResolver {
         if !response.status().is_success() {
             return Err(ProxyError::new(
                 format!(
-                    "Native API error ({}): {}. Try --legacy flag for older versions",
+                    "Native API error ({}): {}. Ensure LM Studio 0.3.6+ is installed",
                     response.status(),
                     ERROR_LM_STUDIO_UNAVAILABLE
                 ),
@@ -403,13 +424,13 @@ impl ModelResolver {
 
         let native_response = response.json::<NativeModelsResponse>().await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Invalid JSON from /api/v0/models: {}. Try --legacy flag",
-                e
+                "Invalid JSON from {}: {}. Ensure LM Studio 0.3.6+ is running",
+                LM_STUDIO_NATIVE_MODELS, e
             ))
         })?;
 
         let models = native_response
-            .data
+            .models
             .iter()
             .map(ModelInfo::from_native_data)
             .collect();

@@ -4,7 +4,8 @@
 - run `cargo run`
 
 **always:**
-- read the files in full or at least 300 line chunks.
-- before styling tui, read documents in /docs/ratatui/
+- read the files in full instead of partial chunks.
+- prioritize solving the problem by removing, simplifying, or reusing existing code.
+- read api docs in `api docs/` if unsure about api usage.
 
 run `./cargo.sh` at the end of a request and fix any warnings.

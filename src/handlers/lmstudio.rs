@@ -1,157 +1,145 @@
-/// src/handlers/lmstudio.rs - Enhanced LM Studio API passthrough handlers with model loading detection
+use bytes::Bytes;
+use futures_util::TryStreamExt;
+use reqwest::header::{
+    self, HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
+};
 use serde_json::Value;
+use std::io;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
+use warp::http::{self, Response as WarpResponse};
 
-use crate::common::{CancellableRequest, RequestContext, handle_json_response};
+use crate::common::{RequestContext, handle_json_response};
 use crate::constants::*;
 use crate::handlers::helpers::json_response;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
 use crate::handlers::streaming::{handle_passthrough_streaming_response, is_streaming_request};
 use crate::server::ModelResolverType;
-use crate::utils::{ProxyError, format_duration, log_request, log_timed};
+use crate::utils::{ProxyError, format_duration, log_error, log_request, log_timed};
+
+/// Container for LM Studio passthrough request data used to keep function signature concise
+pub struct LmStudioPassthroughRequest {
+    pub method: http::Method,
+    pub endpoint: String,
+    pub body: Bytes,
+    pub headers: http::HeaderMap,
+    pub query: Option<String>,
+}
 
 /// Handle direct LM Studio API passthrough with model loading detection
 pub async fn handle_lmstudio_passthrough(
     context: RequestContext<'_>,
     model_resolver: ModelResolverType,
-    method: &str,
-    endpoint: &str,
-    body: Value,
+    request: LmStudioPassthroughRequest,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    debug: bool,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
+    let LmStudioPassthroughRequest {
+        method,
+        endpoint,
+        body,
+        headers,
+        query,
+    } = request;
 
-    let original_model_name = body.get("model").and_then(|m| m.as_str());
+    if debug {
+        println!("[DEBUG] Passthrough Request: {} {}", method, endpoint);
+        // Try to print body as string if possible
+        if let Ok(body_str) = std::str::from_utf8(&body) {
+            println!("[DEBUG] Passthrough Body: {}", body_str);
+        }
+    }
+
+    let json_body_template = parse_json_body_template(&headers, &body)?;
+    let original_model_name = json_body_template
+        .as_ref()
+        .and_then(|value| value.get("model"))
+        .and_then(|value| value.as_str())
+        .map(|s| s.to_string());
 
     let operation = {
         let context = context.clone();
         let model_resolver = model_resolver.clone();
-        let method_str = method.to_string();
-        let endpoint_str = endpoint.to_string();
+        let method_clone = method.clone();
+        let endpoint_clone = endpoint.clone();
         let body_clone = body.clone();
-        let cancellation_token_clone = cancellation_token.clone();
-        let original_model_name_clone = original_model_name.map(|s| s.to_string());
+        let headers_clone = headers.clone();
+        let query_clone = query.clone();
+        let json_template_clone = json_body_template.clone();
+        let cancellation_clone = cancellation_token.clone();
+        let original_model_name_clone = original_model_name.clone();
 
         move || {
             let context = context.clone();
             let model_resolver = model_resolver.clone();
-            let current_method = method_str.clone();
-            let current_endpoint = endpoint_str.clone();
-            let mut current_body = body_clone.clone();
-            let current_cancellation_token = cancellation_token_clone.clone();
-            let current_original_model_name = original_model_name_clone.clone();
+            let method = method_clone.clone();
+            let endpoint = endpoint_clone.clone();
+            let body_bytes = body_clone.clone();
+            let headers = headers_clone.clone();
+            let query = query_clone.clone();
+            let json_template = json_template_clone.clone();
+            let cancellation_token = cancellation_clone.clone();
+            let original_model_name = original_model_name_clone.clone();
+            let debug = debug;
 
             async move {
-                // Resolve model name based on API type
-                if let Some(ref model_name) = current_original_model_name {
+                let mut current_body = json_template.clone();
+                let mut resolved_model_name: Option<String> = None;
+
+                if let Some(ref mut body_json) = current_body
+                    && let Some(model_name) = body_json.get("model").and_then(|m| m.as_str())
+                {
                     let resolved_model = match &model_resolver {
                         ModelResolverType::Native(resolver) => {
                             resolver
                                 .resolve_model_name(
                                     model_name,
                                     context.client,
-                                    current_cancellation_token.clone(),
-                                )
-                                .await?
-                        }
-                        ModelResolverType::Legacy(resolver) => {
-                            resolver
-                                .resolve_model_name_legacy(
-                                    model_name,
-                                    context.client,
-                                    current_cancellation_token.clone(),
+                                    cancellation_token.clone(),
                                 )
                                 .await?
                         }
                     };
-
-                    if let Some(body_obj) = current_body.as_object_mut() {
-                        body_obj.insert("model".to_string(), Value::String(resolved_model.clone()));
+                    resolved_model_name = Some(resolved_model.clone());
+                    if let Some(obj) = body_json.as_object_mut() {
+                        obj.insert("model".to_string(), Value::String(resolved_model));
                     }
                 }
 
-                // Determine the correct endpoint URL based on API type and requested endpoint
-                let final_endpoint_url = determine_passthrough_endpoint_url(
-                    context.lmstudio_url,
-                    &current_endpoint,
-                    &model_resolver,
+                let final_endpoint_url = append_query_params(
+                    determine_passthrough_endpoint_url(
+                        context.lmstudio_url,
+                        &endpoint,
+                        &model_resolver,
+                    ),
+                    query.as_deref(),
                 );
 
-                let is_streaming = is_streaming_request(&current_body);
+                let log_model = resolved_model_name
+                    .as_deref()
+                    .or(original_model_name.as_deref());
+                log_request(method.as_str(), &final_endpoint_url, log_model);
 
-                log_request(
-                    &current_method,
-                    &final_endpoint_url,
-                    current_original_model_name.as_deref(),
-                );
+                let is_streaming = current_body.as_ref().is_some_and(is_streaming_request);
 
-                let request_method = match current_method.as_str() {
-                    "GET" => reqwest::Method::GET,
-                    "POST" => reqwest::Method::POST,
-                    "PUT" => reqwest::Method::PUT,
-                    "DELETE" => reqwest::Method::DELETE,
-                    _ => {
-                        return Err(ProxyError::bad_request(&format!(
-                            "Unsupported method: {}",
-                            current_method
-                        )));
-                    }
-                };
-
-                let request =
-                    CancellableRequest::new(context.clone(), current_cancellation_token.clone());
-
-                let request_body_opt = if current_method == "GET" || current_method == "DELETE" {
-                    None
-                } else {
-                    Some(current_body.clone())
-                };
+                let prepared_body = prepare_request_body(current_body, &body_bytes)?;
+                let forward_headers = build_forward_headers(&headers, prepared_body.is_json);
 
                 let lm_studio_request_start = Instant::now();
-                let response = request
-                    .make_request(request_method, &final_endpoint_url, request_body_opt)
-                    .await?;
+                let response = send_raw_request(
+                    context.client,
+                    method.clone(),
+                    &final_endpoint_url,
+                    forward_headers,
+                    prepared_body.bytes,
+                    cancellation_token.clone(),
+                )
+                .await?;
 
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_message = match status.as_u16() {
-                        404 => {
-                            // Provide helpful message for native API 404s
-                            if current_endpoint.starts_with("/v1/")
-                                && matches!(model_resolver, ModelResolverType::Native(_))
-                            {
-                                format!(
-                                    "LM Studio endpoint not found: {}. Note: Using native API mode, which targets /api/v0/ endpoints. Error from: {}",
-                                    current_endpoint, final_endpoint_url
-                                )
-                            } else if current_endpoint.starts_with("/api/v0/")
-                                && matches!(model_resolver, ModelResolverType::Legacy(_))
-                            {
-                                format!(
-                                    "LM Studio native API endpoint not available: {}. Try removing --legacy flag or update to LM Studio 0.3.6+. Error from: {}",
-                                    current_endpoint, final_endpoint_url
-                                )
-                            } else {
-                                format!("LM Studio endpoint not found: {}", final_endpoint_url)
-                            }
-                        }
-                        503 => ERROR_LM_STUDIO_UNAVAILABLE.to_string(),
-                        400 => "Bad request to LM Studio".to_string(),
-                        401 | 403 => {
-                            "Authentication/Authorization error with LM Studio".to_string()
-                        }
-                        500 => "LM Studio internal error".to_string(),
-                        _ => format!("LM Studio error ({})", status),
-                    };
-                    return Err(ProxyError::new(error_message, status.as_u16()));
-                }
-
-                // Log LM Studio response time for completions only
-                if current_original_model_name.is_some()
-                    && (current_endpoint.contains("completion")
-                        || current_endpoint.contains("chat"))
+                if original_model_name.is_some()
+                    && (endpoint.contains("completion") || endpoint.contains("chat"))
                 {
                     log_timed(
                         LOG_PREFIX_INFO,
@@ -164,22 +152,33 @@ pub async fn handle_lmstudio_passthrough(
                 }
 
                 if is_streaming {
-                    handle_passthrough_streaming_response(
-                        response,
-                        current_cancellation_token.clone(),
-                        60,
-                    )
-                    .await
+                    if debug {
+                        println!("[DEBUG] Passthrough Response: (Streaming)");
+                    }
+                    handle_passthrough_streaming_response(response, cancellation_token, 60).await
                 } else {
-                    let json_data =
-                        handle_json_response(response, current_cancellation_token).await?;
-                    Ok(json_response(&json_data))
+                    let is_json_response = response_is_json(&response);
+                    if is_json_response {
+                        let json_body = handle_json_response(response, cancellation_token).await?;
+                        if debug {
+                            println!(
+                                "[DEBUG] Passthrough Response: {}",
+                                serde_json::to_string_pretty(&json_body).unwrap_or_default()
+                            );
+                        }
+                        Ok(json_response(&json_body))
+                    } else {
+                        if debug {
+                            println!("[DEBUG] Passthrough Response: (Raw/Non-JSON)");
+                        }
+                        forward_raw_response(response).await
+                    }
                 }
             }
         }
     };
 
-    let result = if let Some(model) = original_model_name {
+    let result = if let Some(ref model) = original_model_name {
         with_retry_and_cancellation(
             &context,
             model,
@@ -204,158 +203,224 @@ fn determine_passthrough_endpoint_url(
 ) -> String {
     match model_resolver {
         ModelResolverType::Native(_) => {
-            // For native mode, convert v1 endpoints to v0 endpoints
-            let converted_endpoint = if requested_endpoint.starts_with("/v1/") {
-                requested_endpoint.replace("/v1/", "/api/v0/")
-            } else {
-                requested_endpoint.to_string()
-            };
-            format!("{}{}", lmstudio_base_url, converted_endpoint)
-        }
-        ModelResolverType::Legacy(_) => {
-            // For legacy mode, keep v1 endpoints as-is, convert v0 to v1
-            let converted_endpoint = if requested_endpoint.starts_with("/api/v0/") {
-                requested_endpoint.replace("/api/v0/", "/v1/")
-            } else {
-                requested_endpoint.to_string()
-            };
-            format!("{}{}", lmstudio_base_url, converted_endpoint)
+            // For native mode, we now use v1 endpoints for inference (OpenAI compat)
+            // because the new native API (v1) is stateful and different.
+            // So we keep /v1/ endpoints as is.
+            // If we receive /api/v0/ (old native), we might want to warn or try to convert,
+            // but for now let's just pass through what we have if it's not v1.
+            format!("{}{}", lmstudio_base_url, requested_endpoint)
         }
     }
 }
 
-/// Get LM Studio server status for health checks
-pub async fn get_lmstudio_status(
-    context: RequestContext<'_>,
-    model_resolver: Option<&ModelResolverType>,
-    cancellation_token: CancellationToken,
-) -> Result<Value, ProxyError> {
-    let endpoint = match model_resolver {
-        Some(ModelResolverType::Native(_)) => "/api/v0/models",
-        _ => "/v1/models", // Default to legacy for health checks
-    };
-
-    let url = format!("{}{}", context.lmstudio_url, endpoint);
-    let request = CancellableRequest::new(context.clone(), cancellation_token.clone());
-
-    let health_check_start = Instant::now();
-
-    match request
-        .make_request(reqwest::Method::GET, &url, None::<Value>)
-        .await
+fn append_query_params(mut base: String, query: Option<&str>) -> String {
+    if let Some(qs) = query
+        && !qs.is_empty()
     {
-        Ok(response) => {
-            let status = response.status();
-            let is_healthy = status.is_success();
-            let mut additional_info = serde_json::Map::new();
-
-            if is_healthy
-                && let Ok(models_response) = response.json::<Value>().await {
-                    let model_count = models_response
-                        .get("data")
-                        .and_then(|d| d.as_array())
-                        .map(|arr| arr.len())
-                        .unwrap_or(0);
-                    additional_info
-                        .insert("model_count".to_string(), serde_json::json!(model_count));
-
-                    // For native API, include additional metadata
-                    if endpoint.starts_with("/api/v0/")
-                        && let Some(data) = models_response.get("data").and_then(|d| d.as_array())
-                    {
-                        let loaded_count = data
-                            .iter()
-                            .filter(|model| {
-                                model.get("state").and_then(|s| s.as_str()) == Some("loaded")
-                            })
-                            .count();
-                        additional_info
-                            .insert("loaded_models".to_string(), serde_json::json!(loaded_count));
-                    }
-                }
-
-            let response_time = health_check_start.elapsed();
-            let mut result = serde_json::json!({
-                "status": if is_healthy { "healthy" } else { "unhealthy" },
-                "lmstudio_url": context.lmstudio_url,
-                "http_status": status.as_u16(),
-                "api_endpoint": endpoint,
-                "response_time_ms": response_time.as_millis(),
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            });
-
-            // Add additional info if available
-            if !additional_info.is_empty()
-                && let Some(result_obj) = result.as_object_mut()
-            {
-                for (key, value) in additional_info {
-                    result_obj.insert(key, value);
-                }
-            }
-
-            log_timed(LOG_PREFIX_SUCCESS, "Health check", health_check_start);
-            Ok(result)
+        if base.contains('?') {
+            base.push('&');
+        } else {
+            base.push('?');
         }
-        Err(_) => {
-            let status_message = if endpoint.starts_with("/api/v0/") {
-                "unreachable_native_api"
-            } else {
-                "unreachable"
-            };
+        base.push_str(qs);
+    }
+    base
+}
 
-            let result = serde_json::json!({
-                "status": status_message,
-                "lmstudio_url": context.lmstudio_url,
-                "error": ERROR_LM_STUDIO_UNAVAILABLE,
-                "api_endpoint": endpoint,
-                "response_time_ms": health_check_start.elapsed().as_millis(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "suggestion": if endpoint.starts_with("/api/v0/") {
-                    "Update to LM Studio 0.3.6+ or use --legacy flag"
-                } else {
-                    "Check LM Studio availability"
-                }
-            });
+fn parse_json_body_template(
+    headers: &http::HeaderMap,
+    body: &Bytes,
+) -> Result<Option<Value>, ProxyError> {
+    if body.is_empty() {
+        return Ok(None);
+    }
 
-            log_timed(LOG_PREFIX_ERROR, "Health check failed", health_check_start);
-            Ok(result)
-        }
+    if !should_parse_as_json(headers, body) {
+        return Ok(None);
+    }
+
+    serde_json::from_slice::<Value>(body)
+        .map(Some)
+        .map_err(|e| ProxyError::bad_request(&format!("Invalid JSON payload: {}", e)))
+}
+
+fn should_parse_as_json(headers: &http::HeaderMap, body: &Bytes) -> bool {
+    contains_json_content_type(headers) || body_looks_like_json(body)
+}
+
+fn contains_json_content_type(headers: &http::HeaderMap) -> bool {
+    headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .map(|ct| ct.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false)
+}
+
+fn body_looks_like_json(body: &Bytes) -> bool {
+    body.iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .map(|byte| matches!(byte, b'{' | b'['))
+        .unwrap_or(false)
+}
+
+struct PreparedBody {
+    bytes: Option<Vec<u8>>,
+    is_json: bool,
+}
+
+fn prepare_request_body(
+    json_body: Option<Value>,
+    original_bytes: &Bytes,
+) -> Result<PreparedBody, ProxyError> {
+    if let Some(value) = json_body {
+        let serialized = serde_json::to_vec(&value).map_err(|e| {
+            ProxyError::internal_server_error(&format!(
+                "Failed to serialize LM Studio request body: {}",
+                e
+            ))
+        })?;
+        Ok(PreparedBody {
+            bytes: Some(serialized),
+            is_json: true,
+        })
+    } else if !original_bytes.is_empty() {
+        Ok(PreparedBody {
+            bytes: Some(original_bytes.to_vec()),
+            is_json: false,
+        })
+    } else {
+        Ok(PreparedBody {
+            bytes: None,
+            is_json: false,
+        })
     }
 }
 
-/// Helper to convert between API endpoint formats
-pub fn convert_endpoint_for_api_type(
-    endpoint: &str,
-    target_api_type: &ModelResolverType,
-) -> String {
-    match target_api_type {
-        ModelResolverType::Native(_) => {
-            if endpoint.starts_with("/v1/") {
-                endpoint.replace("/v1/", "/api/v0/")
-            } else {
-                endpoint.to_string()
-            }
+fn build_forward_headers(original: &http::HeaderMap, force_json: bool) -> ReqHeaderMap {
+    let mut filtered = ReqHeaderMap::new();
+
+    for (name, value) in original.iter() {
+        let name_str = name.as_str();
+        if name_str.eq_ignore_ascii_case("host")
+            || name_str.eq_ignore_ascii_case("content-length")
+            || name_str.eq_ignore_ascii_case("transfer-encoding")
+        {
+            continue;
         }
-        ModelResolverType::Legacy(_) => {
-            if endpoint.starts_with("/api/v0/") {
-                endpoint.replace("/api/v0/", "/v1/")
-            } else {
-                endpoint.to_string()
-            }
+        if force_json && name_str.eq_ignore_ascii_case("content-type") {
+            continue;
         }
+
+        if let (Ok(req_name), Ok(req_value)) = (
+            name_str.parse::<ReqHeaderName>(),
+            ReqHeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            filtered.append(req_name, req_value);
+        }
+    }
+
+    if force_json {
+        filtered.insert(
+            header::CONTENT_TYPE,
+            ReqHeaderValue::from_static(CONTENT_TYPE_JSON),
+        );
+    }
+
+    filtered
+}
+
+async fn send_raw_request(
+    client: &reqwest::Client,
+    method: http::Method,
+    url: &str,
+    headers: ReqHeaderMap,
+    body: Option<Vec<u8>>,
+    cancellation_token: CancellationToken,
+) -> Result<reqwest::Response, ProxyError> {
+    let req_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
+        .map_err(|_| ProxyError::bad_request("Unsupported HTTP method"))?;
+    let mut builder = client.request(req_method, url);
+
+    if !headers.is_empty() {
+        builder = builder.headers(headers);
+    }
+
+    if let Some(payload) = body {
+        builder = builder.body(payload);
+    }
+
+    tokio::select! {
+        resp = builder.send() => resp.map_err(map_reqwest_error),
+        _ = cancellation_token.cancelled() => Err(ProxyError::request_cancelled()),
     }
 }
 
-/// Check if endpoint is supported by the given API type
-pub fn is_endpoint_supported(endpoint: &str, api_type: &ModelResolverType) -> bool {
-    match api_type {
-        ModelResolverType::Native(_) => {
-            // Native API supports both v0 and v1 endpoints (with conversion)
-            endpoint.starts_with("/api/v0/") || endpoint.starts_with("/v1/")
+fn map_reqwest_error(err: reqwest::Error) -> ProxyError {
+    if err.is_connect() {
+        ProxyError::lm_studio_unavailable(ERROR_LM_STUDIO_UNAVAILABLE)
+    } else if err.is_timeout() {
+        ProxyError::lm_studio_unavailable(ERROR_TIMEOUT)
+    } else {
+        log_error("LM Studio passthrough", &err.to_string());
+        ProxyError::internal_server_error(&format!("LM Studio request failed: {}", err))
+    }
+}
+
+fn response_is_json(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|ct| ct.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false)
+}
+
+async fn forward_raw_response(
+    response: reqwest::Response,
+) -> Result<warp::reply::Response, ProxyError> {
+    let status = http::StatusCode::from_u16(response.status().as_u16())
+        .map_err(|_| ProxyError::internal_server_error("Invalid status code from LM Studio"))?;
+    let headers = response.headers().clone();
+    let stream = response
+        .bytes_stream()
+        .map_err(|err| io::Error::other(format!("LM Studio stream error: {}", err)));
+    let body = warp::hyper::Body::wrap_stream(stream);
+
+    let mut builder = WarpResponse::builder().status(status);
+    for (name, value) in headers.iter() {
+        if let (Ok(warp_name), Ok(warp_value)) = (
+            http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+            http::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            builder = builder.header(warp_name, warp_value);
         }
-        ModelResolverType::Legacy(_) => {
-            // Legacy API supports v1 endpoints and converts v0 to v1
-            endpoint.starts_with("/v1/") || endpoint.starts_with("/api/v0/")
-        }
+    }
+
+    builder
+        .body(body)
+        .map_err(|_| ProxyError::internal_server_error("Failed to build passthrough response"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_query_params;
+
+    #[test]
+    fn appends_query_when_missing() {
+        let result = append_query_params("/v1/models".to_string(), Some("limit=10"));
+        assert_eq!(result, "/v1/models?limit=10");
+    }
+
+    #[test]
+    fn appends_with_existing_query() {
+        let result = append_query_params("/v1/models?owner=local".to_string(), Some("limit=10"));
+        assert_eq!(result, "/v1/models?owner=local&limit=10");
+    }
+
+    #[test]
+    fn leaves_url_when_query_missing() {
+        let result = append_query_params("/v1/models".to_string(), None);
+        assert_eq!(result, "/v1/models");
     }
 }
