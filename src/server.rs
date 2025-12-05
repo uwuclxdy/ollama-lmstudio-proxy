@@ -1,4 +1,5 @@
-/// src/server.rs - High-performance server with native and legacy LM Studio API support
+use crate::handlers::helpers::json_response;
+use bytes::Bytes;
 use clap::Parser;
 use moka::future::Cache;
 use serde_json::Value;
@@ -7,15 +8,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use warp::http::HeaderMap;
 use warp::log::Info as LogInfo;
 use warp::{Filter, Rejection, Reply};
 
 use crate::common::RequestContext;
 use crate::constants::*;
 use crate::handlers;
-use crate::handlers::json_response;
+use crate::handlers::ollama::EmbeddingResponseMode;
 use crate::model::ModelResolver;
-use crate::model_legacy::ModelResolverLegacy;
+use crate::storage::{blob::BlobStore, virtual_models::VirtualModelStore};
 use crate::utils::{
     ProxyError, init_global_logger, is_logging_enabled, log_error, log_info, validate_config,
 };
@@ -33,12 +35,6 @@ pub struct Config {
         help = "LM Studio backend URL"
     )]
     pub lmstudio_url: String,
-
-    #[arg(
-        long,
-        help = "Use legacy OpenAI-compatible API instead of native LM Studio API"
-    )]
-    pub legacy: bool,
 
     #[arg(long, help = "Disable logging output")]
     pub no_log: bool,
@@ -66,13 +62,18 @@ pub struct Config {
         help = "TTL for model resolution cache in seconds"
     )]
     pub model_resolution_cache_ttl_seconds: u64,
+
+    #[arg(
+        long,
+        help = "Enable debug logging (prints full request/response bodies)"
+    )]
+    pub debug: bool,
 }
 
 /// Enum to hold either native or legacy model resolver
 #[derive(Clone)]
 pub enum ModelResolverType {
     Native(Arc<ModelResolver>),
-    Legacy(Arc<ModelResolverLegacy>),
 }
 
 /// Production-ready proxy server with dual API support
@@ -81,13 +82,26 @@ pub struct ProxyServer {
     pub client: reqwest::Client,
     pub config: Arc<Config>,
     pub model_resolver: ModelResolverType,
+    pub virtual_models: Arc<VirtualModelStore>,
+    pub blob_store: Arc<BlobStore>,
 }
 
-/// Wrapper for ollama version handler
-async fn handle_ollama_version_rejection_wrapper() -> Result<impl Reply, Rejection> {
-    handlers::ollama::handle_ollama_version()
-        .await
-        .map_err(warp::reject::custom)
+fn tolerant_json_body() -> impl Filter<Extract = (Value,), Error = Rejection> + Clone {
+    warp::body::content_length_limit(MAX_JSON_BODY_SIZE_BYTES)
+        .and(warp::body::bytes())
+        .and_then(|body: Bytes| async move {
+            if body.is_empty() {
+                return Err(warp::reject::custom(ProxyError::bad_request(
+                    "Missing JSON body",
+                )));
+            }
+            serde_json::from_slice::<Value>(&body).map_err(|err| {
+                warp::reject::custom(ProxyError::bad_request(&format!(
+                    "Invalid JSON payload: {}",
+                    err
+                )))
+            })
+        })
 }
 
 impl ProxyServer {
@@ -101,7 +115,6 @@ impl ProxyServer {
             } else {
                 usize::MAX
             },
-            max_partial_content_size: usize::MAX,
             string_buffer_size: 2048,
             enable_chunk_recovery: config.enable_chunk_recovery,
         };
@@ -119,25 +132,26 @@ impl ProxyServer {
             ))
             .build();
 
-        // Choose resolver based on legacy flag
-        let model_resolver = if config.legacy {
-            log_info("Using legacy OpenAI-compatible API mode");
-            ModelResolverType::Legacy(Arc::new(ModelResolverLegacy::new_legacy(
-                config.lmstudio_url.clone(),
-                model_cache,
-            )))
-        } else {
-            log_info("Using native LM Studio API mode");
-            ModelResolverType::Native(Arc::new(ModelResolver::new(
-                config.lmstudio_url.clone(),
-                model_cache,
-            )))
-        };
+        let data_root = dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("ollama-lmstudio-proxy");
+        let virtual_model_store = Arc::new(VirtualModelStore::load(
+            data_root.join("virtual_models.json"),
+        )?);
+        let blob_store = Arc::new(BlobStore::new(data_root.join("blobs"))?);
+
+        log_info("Using native LM Studio API mode");
+        let model_resolver = ModelResolverType::Native(Arc::new(ModelResolver::new(
+            config.lmstudio_url.clone(),
+            model_cache,
+        )));
 
         Ok(Self {
             client,
             config: Arc::new(config),
             model_resolver,
+            virtual_models: virtual_model_store,
+            blob_store,
         })
     }
 
@@ -194,21 +208,30 @@ impl ProxyServer {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
-                handlers::ollama::handle_ollama_tags(context, s.model_resolver.clone(), token)
-                    .await
-                    .map_err(warp::reject::custom)
+                handlers::ollama::handle_ollama_tags(
+                    context,
+                    s.model_resolver.clone(),
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_chat_route = warp::path!("api" / "chat")
             .and(warp::post())
-            .and(warp::body::json())
+            .and(tolerant_json_body())
             .and(with_server_state.clone())
             .and_then(|body: Value, s: Arc<ProxyServer>| async move {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
                 let config_ref = s.config.as_ref();
@@ -225,12 +248,14 @@ impl ProxyServer {
 
         let ollama_generate_route = warp::path!("api" / "generate")
             .and(warp::post())
-            .and(warp::body::json())
+            .and(tolerant_json_body())
             .and(with_server_state.clone())
             .and_then(|body: Value, s: Arc<ProxyServer>| async move {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
                 let config_ref = s.config.as_ref();
@@ -245,19 +270,134 @@ impl ProxyServer {
                 .map_err(warp::reject::custom)
             });
 
-        let ollama_embeddings_route = warp::path!("api" / "embeddings")
-            .or(warp::path!("api" / "embed"))
+        let embed_endpoint = warp::path!("api" / "embed").map(|| EmbeddingResponseMode::Embed);
+        let embeddings_endpoint =
+            warp::path!("api" / "embeddings").map(|| EmbeddingResponseMode::LegacyEmbeddings);
+
+        let ollama_embeddings_route = embed_endpoint
+            .or(embeddings_endpoint)
             .unify()
             .and(warp::post())
-            .and(warp::body::json())
+            .and(tolerant_json_body())
+            .and(with_server_state.clone())
+            .and_then(|mode, body: Value, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                let token = CancellationToken::new();
+                handlers::ollama::handle_ollama_embeddings(
+                    context,
+                    s.model_resolver.clone(),
+                    body,
+                    mode,
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
+            });
+
+        let ollama_pull_route = warp::path!("api" / "pull")
+            .and(warp::post())
+            .and(tolerant_json_body())
             .and(with_server_state.clone())
             .and_then(|body: Value, s: Arc<ProxyServer>| async move {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
-                handlers::ollama::handle_ollama_embeddings(
+                handlers::ollama::handle_ollama_pull(
+                    context,
+                    s.model_resolver.clone(),
+                    body,
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
+            });
+
+        let ollama_create_route = warp::path!("api" / "create")
+            .and(warp::post())
+            .and(tolerant_json_body())
+            .and(with_server_state.clone())
+            .and_then(|body: Value, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                let token = CancellationToken::new();
+                handlers::ollama::handle_ollama_create(
+                    context,
+                    s.model_resolver.clone(),
+                    body,
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
+            });
+
+        let ollama_copy_route = warp::path!("api" / "copy")
+            .and(warp::post())
+            .and(tolerant_json_body())
+            .and(with_server_state.clone())
+            .and_then(|body: Value, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                let token = CancellationToken::new();
+                handlers::ollama::handle_ollama_copy(
+                    context,
+                    s.model_resolver.clone(),
+                    body,
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
+            });
+
+        let ollama_delete_route = warp::path!("api" / "delete")
+            .and(warp::delete())
+            .and(tolerant_json_body())
+            .and(with_server_state.clone())
+            .and_then(|body: Value, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                handlers::ollama::handle_ollama_delete(context, body, s.config.as_ref())
+                    .await
+                    .map_err(warp::reject::custom)
+            });
+
+        let ollama_push_route = warp::path!("api" / "push")
+            .and(warp::post())
+            .and(tolerant_json_body())
+            .and(with_server_state.clone())
+            .and_then(|body: Value, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                let token = CancellationToken::new();
+                handlers::ollama::handle_ollama_push(
                     context,
                     s.model_resolver.clone(),
                     body,
@@ -270,12 +410,25 @@ impl ProxyServer {
 
         let ollama_show_route = warp::path!("api" / "show")
             .and(warp::post())
-            .and(warp::body::json())
+            .and(tolerant_json_body())
             .and(with_server_state.clone())
             .and_then(|body: Value, s: Arc<ProxyServer>| async move {
-                handlers::ollama::handle_ollama_show(body, s.model_resolver.clone())
-                    .await
-                    .map_err(warp::reject::custom)
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                let token = CancellationToken::new();
+                handlers::ollama::handle_ollama_show(
+                    context,
+                    s.model_resolver.clone(),
+                    body,
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_ps_route = warp::path!("api" / "ps")
@@ -285,45 +438,156 @@ impl ProxyServer {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
-                handlers::ollama::handle_ollama_ps(context, s.model_resolver.clone(), token)
-                    .await
-                    .map_err(warp::reject::custom)
+                handlers::ollama::handle_ollama_ps(
+                    context,
+                    s.model_resolver.clone(),
+                    token,
+                    s.config.as_ref(),
+                )
+                .await
+                .map_err(warp::reject::custom)
             });
 
         let ollama_version_route = warp::path!("api" / "version")
             .and(warp::get())
-            .and_then(handle_ollama_version_rejection_wrapper);
+            .and(with_server_state.clone())
+            .and_then(|s: Arc<ProxyServer>| async move {
+                handlers::ollama::handle_ollama_version(s.config.as_ref())
+                    .await
+                    .map_err(warp::reject::custom)
+            });
+
+        let blob_head_route = warp::path!("api" / "blobs" / String)
+            .and(warp::head())
+            .and(with_server_state.clone())
+            .and_then(|digest: String, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                handlers::ollama::handle_blob_head(context, digest, s.config.as_ref())
+                    .await
+                    .map_err(warp::reject::custom)
+            });
+
+        let blob_upload_route = warp::path!("api" / "blobs" / String)
+            .and(warp::post())
+            .and(warp::body::stream())
+            .and(with_server_state.clone())
+            .and_then(|digest: String, stream, s: Arc<ProxyServer>| async move {
+                let context = RequestContext {
+                    client: &s.client,
+                    lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
+                };
+                handlers::ollama::handle_blob_upload(context, digest, stream, s.config.as_ref())
+                    .await
+                    .map_err(warp::reject::custom)
+            });
 
         let lmstudio_passthrough_route = warp::path("v1")
             .and(warp::path::tail())
             .and(warp::method())
+            .and(warp::body::bytes())
+            .and(warp::header::headers_cloned())
             .and(
-                warp::body::json()
-                    .or(warp::any().map(|| Value::Null))
+                warp::query::raw()
+                    .map(Some)
+                    .or(warp::any().map(|| None))
                     .unify(),
             )
             .and(with_server_state.clone())
             .and_then(
                 |tail: warp::path::Tail,
                  method: warp::http::Method,
-                 body: Value,
+                 body_bytes: Bytes,
+                 headers: HeaderMap,
+                 query: Option<String>,
                  s: Arc<ProxyServer>| async move {
                     let context = RequestContext {
                         client: &s.client,
                         lmstudio_url: &s.config.lmstudio_url,
+                        virtual_models: s.virtual_models.clone(),
+                        blob_store: s.blob_store.clone(),
                     };
                     let token = CancellationToken::new();
                     let full_path = format!("/v1/{}", tail.as_str());
                     handlers::lmstudio::handle_lmstudio_passthrough(
                         context,
                         s.model_resolver.clone(),
-                        method.as_str(),
-                        &full_path,
-                        body,
+                        handlers::lmstudio::LmStudioPassthroughRequest {
+                            method,
+                            endpoint: full_path,
+                            body: body_bytes,
+                            headers,
+                            query,
+                        },
                         token,
                         s.config.load_timeout_seconds,
+                        s.config.debug,
+                    )
+                    .await
+                    .map_err(warp::reject::custom)
+                },
+            );
+
+        let lmstudio_native_passthrough_route = warp::path("api")
+            .and(warp::path::param::<String>())
+            .and(warp::path::tail())
+            .and(warp::method())
+            .and(warp::body::bytes())
+            .and(warp::header::headers_cloned())
+            .and(
+                warp::query::raw()
+                    .map(Some)
+                    .or(warp::any().map(|| None))
+                    .unify(),
+            )
+            .and(with_server_state.clone())
+            .and_then(
+                |version: String,
+                 tail: warp::path::Tail,
+                 method: warp::http::Method,
+                 body_bytes: Bytes,
+                 headers: HeaderMap,
+                 query: Option<String>,
+                 s: Arc<ProxyServer>| async move {
+                    let context = RequestContext {
+                        client: &s.client,
+                        lmstudio_url: &s.config.lmstudio_url,
+                        virtual_models: s.virtual_models.clone(),
+                        blob_store: s.blob_store.clone(),
+                    };
+                    let token = CancellationToken::new();
+                    if version != "v0" && version != "v1" {
+                        return Err(warp::reject::not_found());
+                    }
+                    let base_path = format!("/api/{}", version);
+                    let full_path = if tail.as_str().is_empty() {
+                        base_path
+                    } else {
+                        format!("{}/{}", base_path, tail.as_str())
+                    };
+                    handlers::lmstudio::handle_lmstudio_passthrough(
+                        context,
+                        s.model_resolver.clone(),
+                        handlers::lmstudio::LmStudioPassthroughRequest {
+                            method,
+                            endpoint: full_path,
+                            body: body_bytes,
+                            headers,
+                            query,
+                        },
+                        token,
+                        s.config.load_timeout_seconds,
+                        s.config.debug,
                     )
                     .await
                     .map_err(warp::reject::custom)
@@ -337,33 +601,36 @@ impl ProxyServer {
                 let context = RequestContext {
                     client: &s.client,
                     lmstudio_url: &s.config.lmstudio_url,
+                    virtual_models: s.virtual_models.clone(),
+                    blob_store: s.blob_store.clone(),
                 };
                 let token = CancellationToken::new();
-                match handlers::ollama::handle_health_check(context, token).await {
+                match handlers::ollama::handle_health_check(context, token, s.config.as_ref()).await
+                {
                     Ok(status_json) => Ok(json_response(&status_json)),
                     Err(e) => Err(warp::reject::custom(e)),
                 }
             });
-
-        let unsupported_ollama_route = warp::path("api").and(warp::path::full()).and_then(
-            |path: warp::path::FullPath| async move {
-                handlers::ollama::handle_unsupported(path.as_str())
-                    .await
-                    .map_err(warp::reject::custom)
-            },
-        );
 
         let app_routes = ollama_tags_route
             .boxed()
             .or(ollama_chat_route.boxed())
             .or(ollama_generate_route.boxed())
             .or(ollama_embeddings_route.boxed())
+            .or(ollama_pull_route.boxed())
+            .or(ollama_create_route.boxed())
+            .or(ollama_copy_route.boxed())
+            .or(ollama_delete_route.boxed())
+            .or(ollama_push_route.boxed())
             .or(ollama_show_route.boxed())
             .or(ollama_ps_route.boxed())
             .or(ollama_version_route.boxed())
+            .or(blob_head_route.boxed())
+            .or(blob_upload_route.boxed())
             .or(lmstudio_passthrough_route.boxed())
+            .or(lmstudio_native_passthrough_route.boxed())
             .or(health_route.boxed())
-            .or(unsupported_ollama_route.boxed());
+            .boxed();
 
         let final_routes = app_routes.recover(handle_rejection).with(log_filter);
 
@@ -384,7 +651,11 @@ impl ProxyServer {
             println!(
                 "📝 Logging: {}",
                 if is_logging_enabled() {
-                    "Enabled"
+                    if self.config.debug {
+                        "Enabled (Debug Mode)"
+                    } else {
+                        "Enabled"
+                    }
                 } else {
                     "Disabled"
                 }
@@ -409,17 +680,8 @@ impl ProxyServer {
                     "Disabled"
                 }
             );
-            println!(
-                "🔌 API Mode: {}",
-                if self.config.legacy {
-                    "Legacy (OpenAI-compatible)"
-                } else {
-                    "LM Studio Native REST API"
-                }
-            );
-            if !self.config.legacy {
-                println!("     • Requires LM Studio 0.3.6+ (use --legacy for older versions)");
-            }
+            println!("🔌 API Mode: LM Studio Native REST API");
+            println!("     • Requires LM Studio 0.3.6+");
 
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             println!(
@@ -489,4 +751,49 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
         warp::reply::json(&json_error),
         code,
     ))
+}
+
+#[cfg(test)]
+mod server_tests {
+    use warp::Filter;
+
+    #[tokio::test]
+    async fn native_prefix_filter_matches() {
+        let filter = warp::path("api")
+            .and(warp::path::param::<String>())
+            .and(warp::path::tail());
+        let (version, tail) = warp::test::request()
+            .method("GET")
+            .path("/api/v1/models")
+            .filter(&filter)
+            .await
+            .expect("filter should match");
+        assert_eq!(version, "v1");
+        assert_eq!(tail.as_str(), "models");
+    }
+
+    #[tokio::test]
+    async fn tolerant_json_accepts_missing_content_type() {
+        let filter = super::tolerant_json_body();
+        let value: serde_json::Value = warp::test::request()
+            .method("POST")
+            .path("/")
+            .body("{\"model\":\"demo\"}")
+            .filter(&filter)
+            .await
+            .expect("JSON should parse without header");
+        assert_eq!(value["model"], "demo");
+    }
+
+    #[tokio::test]
+    async fn tolerant_json_rejects_invalid_payload() {
+        let filter = super::tolerant_json_body();
+        let result = warp::test::request()
+            .method("POST")
+            .path("/")
+            .body("not-json")
+            .filter(&filter)
+            .await;
+        assert!(result.is_err());
+    }
 }

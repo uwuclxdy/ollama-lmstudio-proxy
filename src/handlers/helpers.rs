@@ -1,5 +1,5 @@
-/// src/handlers/helpers.rs - Enhanced request/response transformation with native API support
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
 use crate::common::{RequestBuilder, map_ollama_to_lmstudio_params};
@@ -156,24 +156,6 @@ impl TimingInfo {
             eval_duration: eval_duration_ns.max(1),
         }
     }
-
-    /// Calculate timing from text content (legacy fallback)
-    pub fn from_text_content(start_time: Instant, input_text: &str, output_text: &str) -> Self {
-        let input_tokens = estimate_token_count(input_text);
-        let output_tokens = estimate_token_count(output_text);
-        Self::calculate_legacy(start_time, input_tokens, output_tokens, None, None)
-    }
-
-    /// Calculate timing from message count (legacy fallback)
-    pub fn from_message_count(
-        start_time: Instant,
-        message_count: usize,
-        output_text: &str,
-    ) -> Self {
-        let input_tokens = (message_count * 10).max(1) as u64;
-        let output_tokens = estimate_token_count(output_text);
-        Self::calculate_legacy(start_time, input_tokens, output_tokens, None, None)
-    }
 }
 
 /// Enhanced response transformer with native API support
@@ -215,6 +197,7 @@ impl ResponseTransformer {
             )
         };
 
+        let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
         let mut ollama_message = json!({
             "role": "assistant",
             "content": content
@@ -237,6 +220,7 @@ impl ResponseTransformer {
             "created_at": chrono::Utc::now().to_rfc3339(),
             "message": ollama_message,
             "done": true,
+            "done_reason": done_reason,
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
@@ -281,11 +265,14 @@ impl ResponseTransformer {
             )
         };
 
+        let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
         json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
             "response": content,
             "done": true,
+            "done_reason": done_reason,
+            "context": [],
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
@@ -366,9 +353,18 @@ impl ResponseTransformer {
         lm_response
             .get("choices")
             .and_then(|c| c.as_array()?.first())
-            .and_then(|choice| choice.get("text")?.as_str())
-            .unwrap_or("")
-            .to_string()
+            .and_then(|choice| {
+                if let Some(text) = choice.get("text").and_then(|t| t.as_str()) {
+                    Some(text.to_string())
+                } else {
+                    choice
+                        .get("message")
+                        .and_then(|msg| msg.get("content"))
+                        .and_then(|content| content.as_str())
+                        .map(|content| content.to_string())
+                }
+            })
+            .unwrap_or_default()
     }
 
     /// Extract embeddings from response
@@ -408,26 +404,10 @@ pub fn build_lm_studio_request(
                 builder = builder.add_required("tools", tools_val.clone());
             }
         }
-        LMStudioRequestType::Completion {
-            prompt,
-            stream,
-            images,
-        } => {
-            // Vision support
-            if let Some(img_array) = images {
-                let chat_messages = json!([{
-                    "role": "user",
-                    "content": prompt,
-                    "images": img_array
-                }]);
-                builder = builder
-                    .add_required("messages", chat_messages)
-                    .add_required("stream", stream);
-            } else {
-                builder = builder
-                    .add_required("prompt", prompt)
-                    .add_required("stream", stream);
-            }
+        LMStudioRequestType::Completion { prompt, stream } => {
+            builder = builder
+                .add_required("prompt", prompt.as_ref())
+                .add_required("stream", stream);
         }
         LMStudioRequestType::Embeddings { input } => {
             builder = builder.add_required("input", input.clone());
@@ -448,43 +428,9 @@ pub fn build_lm_studio_request(
 
 /// Request type enumeration
 pub enum LMStudioRequestType<'a> {
-    Chat {
-        messages: &'a Value,
-        stream: bool,
-    },
-    Completion {
-        prompt: &'a str,
-        stream: bool,
-        images: Option<&'a Value>,
-    },
-    Embeddings {
-        input: &'a Value,
-    },
-}
-
-/// Extract content from streaming chunk
-pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
-    // Chat format
-    chunk
-        .get("choices")
-        .and_then(|c| c.as_array()?.first())
-        .and_then(|choice| choice.get("delta")?.get("content")?.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            // Completion format
-            chunk
-                .get("choices")
-                .and_then(|c| c.as_array()?.first())
-                .and_then(|choice| choice.get("text")?.as_str())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            // Ollama fallback
-            chunk
-                .get("response")
-                .and_then(|r| r.as_str())
-                .map(|s| s.to_string())
-        })
+    Chat { messages: &'a Value, stream: bool },
+    Completion { prompt: Cow<'a, str>, stream: bool },
+    Embeddings { input: &'a Value },
 }
 
 /// Create Ollama streaming chunk with enhanced metadata support
@@ -603,6 +549,7 @@ pub fn create_final_chunk(
     duration: Duration,
     chunk_count_for_token_estimation: u64,
     is_chat_endpoint: bool,
+    done_reason: Option<&str>,
 ) -> Value {
     let timing = TimingInfo::calculate_legacy(
         Instant::now() - duration,
@@ -616,6 +563,10 @@ pub fn create_final_chunk(
         create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
+        chunk_obj.insert(
+            "done_reason".to_string(),
+            json!(done_reason.unwrap_or("stop")),
+        );
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
         chunk_obj.insert(
@@ -628,6 +579,9 @@ pub fn create_final_chunk(
         );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
+        if !is_chat_endpoint {
+            chunk_obj.insert("context".to_string(), json!([]));
+        }
     }
     chunk
 }
@@ -638,6 +592,28 @@ fn estimate_token_count(text: &str) -> u64 {
         return 0;
     }
     ((text.len() as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
+}
+
+/// Extract finish_reason from an LM Studio response if present
+fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
+    lm_response
+        .get("choices")
+        .and_then(|c| c.as_array()?.first())
+        .and_then(|choice| choice.get("finish_reason"))
+        .and_then(|reason| reason.as_str())
+}
+
+/// Extract the optional system prompt from a request payload
+pub fn extract_system_prompt(body: &Value) -> Option<String> {
+    body.get("system")
+        .and_then(|value| value.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            body.get("options")
+                .and_then(|opts| opts.get("system"))
+                .and_then(|value| value.as_str())
+                .map(|s| s.to_string())
+        })
 }
 
 /// Execute request with optional retry logic (dual API support)
@@ -651,7 +627,7 @@ pub async fn execute_request_with_retry<F, Fut, T>(
 ) -> Result<T, crate::utils::ProxyError>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, crate::utils::ProxyError>>,
+    Fut: Future<Output = Result<T, crate::utils::ProxyError>>,
 {
     if use_model_retry {
         crate::handlers::retry::with_retry_and_cancellation(

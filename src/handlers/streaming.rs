@@ -1,4 +1,3 @@
-/// src/handlers/streaming.rs - Enhanced streaming with model loading detection and better timing
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,7 +48,7 @@ pub async fn handle_streaming_response(
         let mut stream = lm_studio_response.bytes_stream();
         let mut sse_buffer = String::with_capacity(runtime_config.max_buffer_size.min(1024 * 1024));
         let mut chunk_count = 0u64;
-        let mut accumulated_tool_calls: Option<Vec<Value>> = None;
+        let mut chunk_state = ChunkProcessingState::default();
         let mut first_chunk_received = false;
 
         let stream_result = 'stream_loop: loop {
@@ -98,22 +97,11 @@ pub async fn handle_streaming_response(
                                                 let mut content_to_send = String::new();
                                                 let mut tool_calls_delta: Option<Value> = None;
 
-                                                if let Some(choices) = lm_studio_json_chunk.get("choices").and_then(|c| c.as_array())
-                                                    && let Some(choice) = choices.first()
-                                                        && let Some(delta) = choice.get("delta") {
-                                                            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                                                content_to_send.push_str(content);
-                                                            }
-                                                            if let Some(reasoning) = delta.get("reasoning").and_then(|r| r.as_str()) {
-                                                                content_to_send.push_str(reasoning);
-                                                            }
-                                                            if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
-                                                                if accumulated_tool_calls.is_none() {
-                                                                    accumulated_tool_calls = Some(Vec::new());
-                                                                }
-                                                                tool_calls_delta = Some(json!(new_tool_calls));
-                                                            }
-                                                        }
+                                                if let Some(choice) = extract_first_choice(&lm_studio_json_chunk)
+                                                    && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
+                                                        content_to_send = delta_payload.content;
+                                                        tool_calls_delta = delta_payload.tool_calls_delta;
+                                                    }
 
                                                 if !content_to_send.is_empty() || tool_calls_delta.is_some() {
                                                     let ollama_chunk = create_ollama_streaming_chunk(
@@ -165,6 +153,7 @@ pub async fn handle_streaming_response(
                 start_time.elapsed(),
                 chunk_count,
                 is_chat_endpoint,
+                chunk_state.finish_reason(),
             );
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
@@ -177,6 +166,113 @@ pub async fn handle_streaming_response(
     });
 
     create_ollama_streaming_response_format(rx)
+}
+
+fn append_stream_content(content_value: &Value, buffer: &mut String) {
+    match content_value {
+        Value::String(text) => buffer.push_str(text),
+        Value::Array(items) => {
+            for item in items {
+                if let Some(piece_type) = item.get("type").and_then(|t| t.as_str()) {
+                    match piece_type {
+                        "text" | "reasoning" | "output_text" => {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                buffer.push_str(text);
+                            }
+                        }
+                        _ => {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                buffer.push_str(text);
+                            }
+                        }
+                    }
+                } else if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    buffer.push_str(text);
+                }
+            }
+        }
+        Value::Object(obj) => {
+            if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
+                buffer.push_str(text);
+            } else if let Some(nested) = obj.get("content") {
+                append_stream_content(nested, buffer);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Default)]
+struct ChunkProcessingState {
+    last_finish_reason: Option<String>,
+}
+
+impl ChunkProcessingState {
+    fn finish_reason(&self) -> Option<&str> {
+        self.last_finish_reason.as_deref()
+    }
+
+    fn update_finish_reason(&mut self, choice: &Value) {
+        if let Some(reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
+            self.last_finish_reason = Some(reason.to_string());
+        }
+    }
+}
+
+struct ChoiceDeltaPayload {
+    content: String,
+    tool_calls_delta: Option<Value>,
+}
+
+fn extract_first_choice(chunk: &Value) -> Option<&Value> {
+    chunk
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|array| array.first())
+}
+
+fn process_choice_delta(
+    choice: &Value,
+    state: &mut ChunkProcessingState,
+) -> Option<ChoiceDeltaPayload> {
+    state.update_finish_reason(choice);
+
+    let mut content = String::new();
+    let mut tool_calls_delta: Option<Value> = None;
+
+    if let Some(delta) = choice.get("delta") {
+        if let Some(content_value) = delta.get("content") {
+            append_stream_content(content_value, &mut content);
+        }
+        if let Some(reasoning_value) = delta.get("reasoning") {
+            append_stream_content(reasoning_value, &mut content);
+        }
+        if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
+            && !new_tool_calls.is_empty()
+        {
+            tool_calls_delta = Some(json!(new_tool_calls));
+        }
+    }
+
+    if content.is_empty() {
+        if let Some(text_value) = choice.get("text") {
+            append_stream_content(text_value, &mut content);
+        } else if let Some(message_content) = choice
+            .get("message")
+            .and_then(|message| message.get("content"))
+        {
+            append_stream_content(message_content, &mut content);
+        }
+    }
+
+    if content.is_empty() && tool_calls_delta.is_none() {
+        None
+    } else {
+        Some(ChoiceDeltaPayload {
+            content,
+            tool_calls_delta,
+        })
+    }
 }
 
 /// Handle passthrough streaming for direct LM Studio responses
@@ -238,7 +334,7 @@ pub async fn handle_passthrough_streaming_response(
     create_passthrough_streaming_response_format(rx)
 }
 
-/// Send Ollama chunk to client
+/// Send Ollama chunk to the client
 async fn send_ollama_chunk(
     tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
     chunk: &Value,
@@ -304,7 +400,7 @@ fn create_generic_streaming_response(
         .map_err(|_| ProxyError::internal_server_error(error_message_on_build_fail))
 }
 
-/// Create Ollama streaming response format
+/// Create an Ollama streaming response format
 fn create_ollama_streaming_response_format(
     rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
 ) -> Result<warp::reply::Response, ProxyError> {
@@ -323,5 +419,17 @@ fn create_passthrough_streaming_response_format(
         rx,
         CONTENT_TYPE_SSE,
         "Failed to create passthrough SSE streaming response",
+    )
+}
+
+/// Create generic NDJSON streaming response for progress-style endpoints
+pub fn create_ndjson_stream_response(
+    rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
+    error_message_on_build_fail: &str,
+) -> Result<warp::reply::Response, ProxyError> {
+    create_generic_streaming_response(
+        rx,
+        "application/x-ndjson; charset=utf-8",
+        error_message_on_build_fail,
     )
 }

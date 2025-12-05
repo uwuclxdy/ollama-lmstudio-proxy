@@ -1,11 +1,9 @@
-/// src/constants.rs - Runtime configurable constants and static values with native API support
 use std::sync::OnceLock;
 
 /// Global configuration that can be set at runtime
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub max_buffer_size: usize,
-    pub max_partial_content_size: usize,
     pub string_buffer_size: usize,
     pub enable_chunk_recovery: bool,
 }
@@ -13,8 +11,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_buffer_size: usize::MAX,          // No limit
-            max_partial_content_size: usize::MAX, // No limit
+            max_buffer_size: usize::MAX,
             string_buffer_size: 2048,
             enable_chunk_recovery: true,
         }
@@ -36,26 +33,22 @@ pub fn get_runtime_config() -> &'static RuntimeConfig {
     })
 }
 
-/// Legacy OpenAI-compatible endpoints
-pub const LM_STUDIO_LEGACY_MODELS: &str = "/v1/models";
-pub const LM_STUDIO_LEGACY_CHAT: &str = "/v1/chat/completions";
-pub const LM_STUDIO_LEGACY_COMPLETIONS: &str = "/v1/completions";
-pub const LM_STUDIO_LEGACY_EMBEDDINGS: &str = "/v1/embeddings";
-
 /// Native LM Studio API endpoints
-pub const LM_STUDIO_NATIVE_MODELS: &str = "/api/v0/models";
-pub const LM_STUDIO_NATIVE_CHAT: &str = "/api/v0/chat/completions";
-pub const LM_STUDIO_NATIVE_COMPLETIONS: &str = "/api/v0/completions";
-pub const LM_STUDIO_NATIVE_EMBEDDINGS: &str = "/api/v0/embeddings";
+pub const LM_STUDIO_NATIVE_MODELS: &str = "/api/v1/models";
+pub const LM_STUDIO_NATIVE_CHAT: &str = "/v1/chat/completions";
+pub const LM_STUDIO_NATIVE_COMPLETIONS: &str = "/v1/completions";
+pub const LM_STUDIO_NATIVE_EMBEDDINGS: &str = "/v1/embeddings";
+pub const LM_STUDIO_NATIVE_DOWNLOAD: &str = "/api/v1/models/download";
+pub const LM_STUDIO_NATIVE_DOWNLOAD_STATUS: &str = "/api/v1/models/download/status";
+
+/// Latest upstream Ollama server version for compatibility endpoints
+pub const OLLAMA_SERVER_VERSION: &str = "0.13.0";
 
 /// Timing and performance constants
 pub const TOKEN_TO_CHAR_RATIO: f64 = 0.25;
 pub const DEFAULT_LOAD_DURATION_NS: u64 = 1_000_000;
 pub const TIMING_EVAL_RATIO: u64 = 2;
 pub const TIMING_PROMPT_RATIO: u64 = 4;
-
-/// Default model size estimate
-pub const DEFAULT_MODEL_SIZE_BYTES: u64 = 4_000_000_000;
 
 /// Response headers
 pub const CONTENT_TYPE_JSON: &str = "application/json; charset=utf-8";
@@ -78,14 +71,9 @@ pub const ERROR_MISSING_MODEL: &str = "Missing 'model' field";
 pub const ERROR_MISSING_MESSAGES: &str = "Missing 'messages' field";
 pub const ERROR_MISSING_PROMPT: &str = "Missing 'prompt' field";
 pub const ERROR_MISSING_INPUT: &str = "Missing 'input' or 'prompt' field";
-pub const ERROR_BUFFER_OVERFLOW: &str = "Stream buffer overflow";
-pub const ERROR_CHUNK_LIMIT: &str = "Stream exceeded maximum chunk limit";
 pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
-pub const ERROR_REQUEST_TOO_LARGE: &str = "Request body too large";
-pub const ERROR_NATIVE_API_UNAVAILABLE: &str =
-    "LM Studio native API not available - use --legacy flag for older versions";
 
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";
@@ -97,6 +85,8 @@ pub const LOG_PREFIX_REQUEST: &str = "🔄";
 pub const LOG_PREFIX_SUCCESS: &str = "✅";
 pub const LOG_PREFIX_ERROR: &str = "❌";
 pub const LOG_PREFIX_WARNING: &str = "⚠️";
-pub const LOG_PREFIX_CANCEL: &str = "🚫";
 pub const LOG_PREFIX_INFO: &str = "ℹ️";
 pub const LOG_PREFIX_CONN: &str = "↔️";
+
+/// Maximum accepted JSON body size (bytes)
+pub const MAX_JSON_BODY_SIZE_BYTES: u64 = 16 * 1024 * 1024;

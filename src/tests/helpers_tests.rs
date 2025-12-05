@@ -1,23 +1,23 @@
 use crate::handlers::helpers::*;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 
 #[test]
-fn completion_with_images_becomes_chat_payload() {
-    let images = json!(["img-data"]);
+fn completion_request_sets_prompt_field() {
     let request = build_lm_studio_request(
         "test-model",
         LMStudioRequestType::Completion {
-            prompt: "describe the image",
+            prompt: Cow::Borrowed("describe the image"),
             stream: true,
-            images: Some(&images),
         },
         None,
         None,
         None,
     );
 
-    assert!(request.get("messages").is_some());
-    assert!(request.get("prompt").is_none());
+    assert_eq!(request["prompt"], json!("describe the image"));
+    assert_eq!(request["stream"], json!(true));
+    assert!(request.get("messages").is_none());
 }
 
 #[test]

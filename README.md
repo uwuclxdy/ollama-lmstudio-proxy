@@ -2,16 +2,18 @@
 
 Proxy server that bridges **Ollama API** and **LM Studio**
 
-Useful if you want to **connect models from LM Studio to applications that support only Ollama API** (such as Copilot in VS Code).
+Useful if you want to **connect models from LM Studio to applications that support only Ollama API** (such as Copilot in
+VS Code).
 
-> ⚠️ This project was in the majority vibe coded. I only want to let you know, despite me regularly using it. **Feel free to report any bugs or auditing code before use!**
+> ⚠️ This project was in the majority vibe coded. I only want to let you know, despite me regularly using it. **Feel
+free to report any bugs or auditing code before use!**
 
 ## Highlights
 
-- Supports both Native LM Studio REST API (`/api/v0/`) or legacy OpenAI endpoints (`/v1/`)
-- Automatic model name mapping to Ollama format
+- Native LM Studio REST API (`/api/v1/*`) plus OpenAI-compatible passthrough (`/v1/*`) mapped to Ollama endpoints
+- Automatic model name mapping to Ollama format (with virtual aliases stored on disk)
 - **Streaming**: Optimized SSE processing with chunk recovery and cancellation
-- Auto-retry and auto-load models in LM Studio
+- Auto-retry, model preload hints, and catalog-backed downloads via `/api/pull`
 
 ## Configuration
 
@@ -21,51 +23,63 @@ Useful if you want to **connect models from LM Studio to applications that suppo
 |----------------------------------------|-------------------------|--------------------------------|
 | `--listen`                             | `0.0.0.0:11434`         | Server bind address            |
 | `--lmstudio_url`                       | `http://localhost:1234` | LM Studio URL          |
-| `--legacy`                             | `false`                 | Use legacy OpenAI API mode (in LM Studio)     |
 | `--no_log`                             | `false`                 | Disable logging         |
 | `--load_timeout_seconds`               | `15`                    | Model loading timeout          |
 | `--model_resolution_cache_ttl_seconds` | `300`                   | Cache TTL for model resolution |
 | `--max_buffer_size`                    | `262144`                | Buffer size for streaming (bytes)        |
 | `--enable_chunk_recovery`              | `false`                 | Enable stream chunk recovery   |
+| `--debug`                              | `false`                 | Enable verbose request/response logging |
 
-## LM Studio API Comparison
+## LM Studio API Compatibility
 
-| Feature                   | Native API    | Legacy API  |
-|---------------------------|----------------|--------------|
-| **LM Studio Version**     | 0.3.6+         | 0.2.0+       |
-| **Model Loading State**   | ✅ Real-time    | ⚠️ Estimated  |
-| **Context Length Limits** | ✅ Accurate     | ⚠️ Generic    |
-| **Performance Metrics**   | ✅ Native stats | ⚠️ Calculated |
-| **Model Metadata**        | ✅ Rich details | ⚠️ Basic info |
-| **Publisher Info**        | ✅ Available    | ❌ Unknown    |
+Requires LM Studio **0.3.6+**. Legacy mode is removed; `/v1/*` requests are forwarded directly, while Ollama endpoints
+translate to LM Studio native APIs.
+
+| Feature                   | Native API    |
+|---------------------------|----------------|
+| **Model Loading State**   | ✅ Real-time    |
+| **Context Length Limits** | ✅ Accurate     |
+| **Performance Metrics**   | ✅ Native stats |
+| **Model Metadata**        | ✅ Rich details |
+| **Publisher Info**        | ✅ Available    |
 
 ### Endpoint Support
 
 | Ollama Endpoint      | Legacy API              | Native API                  | Notes                              |
 |----------------------|--------------------------|------------------------------|------------------------------------|
-| `GET /api/tags`      | ✅ `/v1/models`           | ✅ `/api/v0/models`           |                                    |
-| `GET /api/ps`        | ✅ `/v1/models`           | ✅ `/api/v0/models`           | Shows loaded models only           |
-| `POST /api/show`     | ⚠️ *Fabricated info*           | ⚠️ *Fabricated info*               | Generated from model name          |
-| `POST /api/chat`     | ✅ `/v1/chat/completions` | ✅ `/api/v0/chat/completions` |                                    |
-| `POST /api/generate` | ✅ `/v1/completions`      | ✅ `/api/v0/completions`      | Vision support via chat endpoint   |
-| `POST /api/embed`    | ✅ `/v1/embeddings`       | ✅ `/api/v0/embeddings`       | Also supports `/api/embeddings`    |
-| `GET /api/version`   | ✅ *Proxy response*       | ✅ *Proxy response*           |                                    |
-| `GET /health`        | ✅ *Health check*         | ✅ *Health check*             |                                    |
-| `POST /v1/*`         | ✅ *Direct passthrough*   | ✅ *Converts to /api/v0/*     |                                    |
-| `POST /api/create`   | ❌                        | ❌                            | Use LM Studio for model management |
-| `POST /api/pull`     | ❌                        | ❌                            |                                    |
-| `POST /api/push`     | ❌                        | ❌                            |                                    |
-| `POST /api/delete`   | ❌                        | ❌                            |                                    |
-| `POST /api/copy`     | ❌                        | ❌                            |                                    |
+| `GET /api/tags`      | —                        | ✅ `/api/v1/models`           | Includes proxy-managed aliases     |
+| `GET /api/ps`        | —                        | ✅ `/api/v1/models`           | Shows loaded models (plus aliases) |
+| `POST /api/show`     | —                        | ✅ *Real metadata*            | Adds alias metadata when present   |
+| `POST /api/chat`     | —                        | ✅ `/v1/chat/completions`     |                                    |
+| `POST /api/generate` | —                        | ✅ `/v1/completions`          | Vision support via chat endpoint   |
+| `POST /api/embed`    | —                        | ✅ `/v1/embeddings`           | Also supports `/api/embeddings`    |
+| `GET /api/version`   | —                        | ✅ *Proxy response*           |                                    |
+| `GET /health`        | —                        | ✅ *Health check*             | Validates LM Studio reachability   |
+| `POST /v1/*`         | ✅ *Direct passthrough*   | ✅ *Direct passthrough*       |                                    |
+| `POST /api/create`   | —                        | ✅ *Proxy alias*              | Creates virtual aliases (no custom blobs) |
+| `POST /api/pull`     | —                        | ✅ `/api/v1/models/download`  | Streams LM Studio catalog downloads |
+| `POST /api/push`     | —                        | ✅ *Acknowledged*             | No-op; validates target model      |
+| `POST /api/delete`   | —                        | ✅ *Proxy alias only*         | Removes proxy-managed aliases      |
+| `POST /api/copy`     | —                        | ✅ *Proxy alias*              | Duplicates aliases or targets LM Studio models |
+| `HEAD/POST /api/blobs/:digest` | —             | ✅ *Proxy storage*            | Stores/validates blobs for manifests |
 
-## Installation
+### Virtual model aliases
 
-### From Pre-built Binaries
+- `/api/create` and `/api/copy` manage aliases stored under
+  `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback: system temp). Metadata such as `system`,
+  `template`, `parameters`, `license`, `adapters`, and `messages` is merged into subsequent requests.
+- `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio metadata plus alias info when present.
+- `/api/pull` streams LM Studio catalog downloads (or blocks when `"stream": false`); optional `quantization` and
+  `source` fields are forwarded.
 
-1. Download latest release from the [Releases](https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases) page.
+## Installation options
+
+### 1. Pre-built Binaries
+
+1. Download the latest release from the [Releases](https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases) page.
 2. Extract and run the binary in terminal.
 
-### From Source
+### 2. Source
 
 ```bash
 # Clone the repository
@@ -79,7 +93,7 @@ cargo build --release
 ./target/release/ollama-lmstudio-proxy
 ```
 
-### Using Cargo
+### 3. Cargo
 
 ```bash
 cargo install --git https://github.com/uwuclxdy/ollama-lmstudio-proxy.git
@@ -93,9 +107,6 @@ cargo install --git https://github.com/uwuclxdy/ollama-lmstudio-proxy.git
 # Start with default settings (native API)
 ollama-lmstudio-proxy
 
-# Use legacy API for older LM Studio versions
-ollama-lmstudio-proxy --legacy
-
 # Custom configuration
 ollama-lmstudio-proxy \
   --listen 0.0.0.0:11434 \
@@ -103,21 +114,7 @@ ollama-lmstudio-proxy \
   --load_timeout_seconds 30
 ```
 
-### Test the Connection
-
-```bash
-# Check health status
-curl http://localhost:11434/health
-
-# List available models
-curl http://localhost:11434/api/tags
-
-# Send a chat request
-curl http://localhost:11434/api/chat -d '{
-  "model": "llama2",
-  "messages": [{"role": "user", "content": "Hello!"}]
-}'
-```
+**Make sure Ollama server is not running when using the proxy!**
 
 ## Request Shapes & Examples
 
@@ -126,9 +123,12 @@ The proxy understands two payload styles:
 - **Ollama-style**: advanced parameters belong in `options`. Use this when calling `/api/*` endpoints.
 - **OpenAI-style passthrough**: send OpenAI-compatible JSON to `/v1/*` and the proxy forwards it untouched.
 
-When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM Studio's native parameters. You can set `"format": "json"` for quick JSON responses or provide a JSON Schema object (also acceptable inside `options.format`) to take advantage of LM Studio's structured output enforcement.
+When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and
+structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM
+Studio's native parameters. You can set `"format": "json"` for quick JSON responses or provide a JSON Schema object (
+also acceptable inside `options.format`) to take advantage of LM Studio's structured output enforcement.
 
-### Option mapping cheat sheet
+### Option mappings
 
 The proxy automatically forwards or converts these knobs for you:
 
@@ -144,88 +144,5 @@ The proxy automatically forwards or converts these knobs for you:
 | `system` (in `options`)  | `system`                   | Injected as LM Studio system prompt |
 | `stop`, `seed`           | Same name                  | Direct passthrough |
 
-If you do not need structured output, you can still pass overrides such as `stop`, `seed`, or additional OpenAI-compatible payloads and the proxy will pass them through untouched.
-
-### Structured output via `/api/generate`
-
-```bash
-curl http://localhost:11434/api/generate -H "Content-Type: application/json" -d '{
-  "model": "llama3.1:8b",
-  "prompt": "Return a status payload for ACME widgets.",
-  "stream": false,
-  "format": {
-    "type": "object",
-    "properties": {
-      "status": {"type": "string"},
-      "checked_at": {"type": "string", "format": "date-time"}
-    },
-    "required": ["status", "checked_at"]
-  }
-}'
-```
-
-### Structured output via `/api/chat`
-
-```bash
-curl http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
-  "model": "llama3.1:8b",
-  "messages": [
-    {"role": "system", "content": "Answer with machine readable JSON"},
-    {"role": "user", "content": "List two tasks with priorities"}
-  ],
-  "stream": false,
-  "format": {
-    "type": "object",
-    "properties": {
-      "tasks": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "title": {"type": "string"},
-            "priority": {"type": "integer"}
-          },
-          "required": ["title", "priority"]
-        }
-      }
-    },
-    "required": ["tasks"]
-  }
-}'
-```
-
-### `logit_bias` (discourage/force tokens)
-
-```bash
-curl http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
-  "model": "llama3.1:8b",
-  "messages": [{"role": "user", "content": "Reply yes or no"}],
-  "options": {
-    "logit_bias": {
-      "464": -10,   // discourage "No"
-      "302": 15     // strongly prefer "Yes"
-    }
-  },
-  "stream": false
-}'
-```
-
-### `max_tokens` vs `num_predict`
-
-Both knobs map to LM Studio's `max_tokens`. Pick the style that matches your client.
-
-```bash
-# Ollama default knob
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.1:8b",
-  "prompt": "Write a haiku",
-  "options": {"num_predict": 64}
-}'
-
-# OpenAI-style knob (same effect)
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.1:8b",
-  "prompt": "Write a haiku",
-  "options": {"max_tokens": 64}
-}'
-```
+If you do not need structured output, you can still pass overrides such as `stop`, `seed`, or additional
+OpenAI-compatible payloads and the proxy will pass them through untouched.
