@@ -1,5 +1,5 @@
-/// Tests for LM Studio API passthrough and native/legacy endpoint handling
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod lmstudio_api_tests {
     use serde_json::json;
 
@@ -51,6 +51,29 @@ mod lmstudio_api_tests {
         // Check embeddings model
         let embed = &data[1];
         assert_eq!(embed["type"], "embeddings");
+    }
+
+    /// Test native LM Studio model detail response
+    #[test]
+    fn test_lmstudio_native_model_detail_response() {
+        // According to endpoints.md: GET /api/v0/models/{model} returns one object
+        let response = json!({
+            "id": "qwen2-vl-7b-instruct",
+            "object": "model",
+            "type": "vlm",
+            "publisher": "mlx-community",
+            "arch": "qwen2_vl",
+            "compatibility_type": "mlx",
+            "quantization": "4bit",
+            "state": "not-loaded",
+            "max_context_length": 32768
+        });
+
+        assert_eq!(response["id"], "qwen2-vl-7b-instruct");
+        assert_eq!(response["type"], "vlm");
+        assert!(response.get("publisher").is_some());
+        assert!(response.get("arch").is_some());
+        assert!(response.get("max_context_length").is_some());
     }
 
     /// Test native LM Studio chat completions response
@@ -106,6 +129,28 @@ mod lmstudio_api_tests {
         assert!(stats.get("tokens_per_second").is_some());
         assert!(stats.get("time_to_first_token").is_some());
         assert!(stats.get("generation_time").is_some());
+    }
+
+    /// Test native SSE chat chunk structure
+    #[test]
+    fn test_lmstudio_native_streaming_chat_chunk() {
+        let chunk = json!({
+            "id": "chatcmpl-native-1",
+            "object": "chat.completion.chunk",
+            "created": 1_732_000_000_u64,
+            "model": "granite-3.0-2b-instruct",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "Hello"},
+                    "finish_reason": null
+                }
+            ]
+        });
+
+        assert_eq!(chunk["object"], "chat.completion.chunk");
+        assert_eq!(chunk["choices"][0]["delta"]["content"], "Hello");
+        assert!(chunk["choices"][0]["finish_reason"].is_null());
     }
 
     /// Test legacy LM Studio API model list (v1)
@@ -168,6 +213,27 @@ mod lmstudio_api_tests {
 
         assert_eq!(request["model"], "granite-3.0-2b-instruct");
         assert!(request.get("prompt").is_some());
+    }
+
+    /// Test native SSE text completion chunk
+    #[test]
+    fn test_lmstudio_native_streaming_completion_chunk() {
+        let chunk = json!({
+            "id": "cmpl-native-1",
+            "object": "text_completion.chunk",
+            "model": "granite-3.0-2b-instruct",
+            "choices": [
+                {
+                    "index": 0,
+                    "text": "Hello",
+                    "finish_reason": null
+                }
+            ]
+        });
+
+        assert_eq!(chunk["object"], "text_completion.chunk");
+        assert_eq!(chunk["choices"][0]["text"], "Hello");
+        assert!(chunk["choices"][0]["finish_reason"].is_null());
     }
 
     /// Test native API embeddings endpoint
@@ -275,6 +341,51 @@ mod lmstudio_api_tests {
         assert_eq!(request["stream_options"]["include_usage"], true);
     }
 
+    /// Test OpenAI /v1/responses request fields
+    #[test]
+    fn test_lmstudio_openai_responses_request() {
+        let request = json!({
+            "model": "gpt-oss-20b",
+            "input": [{"role": "user", "content": "hi"}],
+            "previous_response_id": "resp_123",
+            "reasoning": {"effort": "medium"},
+            "stream": true
+        });
+
+        assert_eq!(request["previous_response_id"], "resp_123");
+        assert_eq!(request["reasoning"]["effort"], "medium");
+        assert_eq!(request["stream"], true);
+    }
+
+    /// Test OpenAI /v1/responses streaming chunk
+    #[test]
+    fn test_lmstudio_openai_responses_stream_chunk() {
+        let chunk = json!({
+            "id": "resp_123",
+            "object": "response.output_text.delta",
+            "model": "gpt-oss-20b",
+            "output": [
+                {"index": 0, "type": "output_text", "delta": "Hello"}
+            ]
+        });
+
+        assert_eq!(chunk["object"], "response.output_text.delta");
+        assert_eq!(chunk["output"][0]["delta"], "Hello");
+    }
+
+    /// Test response_format type "text" support
+    #[test]
+    fn test_lmstudio_response_format_text_type() {
+        // According to api-changelog.md: response_format.type accepts "text"
+        let request = json!({
+            "model": "granite-3.0-2b-instruct",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {"type": "text"}
+        });
+
+        assert_eq!(request["response_format"]["type"], "text");
+    }
+
     /// Test tool_choice parameter
     #[test]
     fn test_lmstudio_tool_choice() {
@@ -338,6 +449,95 @@ mod lmstudio_api_tests {
         });
 
         assert_eq!(_request["ttl"], 300);
+
+        let defaults = json!({
+            "default_ttl_seconds": 3600,
+            "auto_evict_enabled": true
+        });
+
+        assert_eq!(defaults["default_ttl_seconds"], 3600);
+        assert_eq!(defaults["auto_evict_enabled"], true);
+    }
+
+    /// Test OpenAI-compatible /v1/models response
+    #[test]
+    fn test_lmstudio_openai_models_response() {
+        let response = json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "test-model",
+                    "object": "model",
+                    "created": 1_731_990_317_u64,
+                    "owned_by": "lmstudio"
+                }
+            ]
+        });
+
+        assert_eq!(response["object"], "list");
+        let models = response["data"].as_array().unwrap();
+        assert_eq!(models[0]["object"], "model");
+        assert!(models[0].get("created").is_some());
+    }
+
+    /// Test OpenAI-compatible streaming chat chunk (/v1/chat/completions)
+    #[test]
+    fn test_lmstudio_openai_streaming_chat_chunk() {
+        let chunk = json!({
+            "id": "chatcmpl-xyz",
+            "object": "chat.completion.chunk",
+            "created": 1_731_990_317_u64,
+            "model": "granite-3.0-2b-instruct",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "Hello"},
+                    "finish_reason": null
+                }
+            ]
+        });
+
+        assert_eq!(chunk["object"], "chat.completion.chunk");
+        assert_eq!(chunk["choices"][0]["delta"]["content"], "Hello");
+        assert!(chunk["choices"][0]["finish_reason"].is_null());
+    }
+
+    /// Test OpenAI-compatible embeddings endpoint (/v1/embeddings)
+    #[test]
+    fn test_lmstudio_openai_embeddings_contract() {
+        let request = json!({
+            "model": "text-embedding-nomic-embed-text-v1.5",
+            "input": ["hello", "world"]
+        });
+
+        let response = json!({
+            "object": "list",
+            "data": [
+                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2]},
+                {"object": "embedding", "index": 1, "embedding": [0.3, 0.4]}
+            ],
+            "model": "text-embedding-nomic-embed-text-v1.5",
+            "usage": {"prompt_tokens": 2, "total_tokens": 2}
+        });
+
+        assert_eq!(request["input"].as_array().unwrap().len(), 2);
+        assert_eq!(response["data"].as_array().unwrap().len(), 2);
+        assert_eq!(response["data"][0]["object"], "embedding");
+    }
+
+    /// Test passthrough request shape for /v1/completions
+    #[test]
+    fn test_lmstudio_openai_completions_request() {
+        let request = json!({
+            "model": "granite-3.0-2b-instruct",
+            "prompt": "Once upon a time",
+            "max_tokens": 16,
+            "stream": true
+        });
+
+        assert_eq!(request["model"], "granite-3.0-2b-instruct");
+        assert_eq!(request["prompt"], "Once upon a time");
+        assert_eq!(request["stream"], true);
     }
 
     /// Test reasoning content separation

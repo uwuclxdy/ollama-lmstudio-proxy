@@ -1,5 +1,5 @@
-/// Tests for response transformation between LM Studio and Ollama formats
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod response_transformation_tests {
     use serde_json::json;
 
@@ -350,7 +350,7 @@ mod response_transformation_tests {
     #[test]
     fn test_finish_reason_mapping() {
         // OpenAI finish reasons to Ollama done_reason
-        let mappings = vec![
+        let mappings = [
             ("stop", "stop"),
             ("length", "length"),
             ("tool_calls", "tool_calls"),

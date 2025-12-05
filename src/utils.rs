@@ -1,4 +1,3 @@
-/// src/utils.rs - Enhanced centralized logging and utilities with model loading detection
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{self, Write};
@@ -28,7 +27,7 @@ pub fn is_logging_enabled() -> bool {
 }
 
 /// Centralized logging functions - use these throughout the application
-
+///
 /// Log informational message
 pub fn log_info(message: &str) {
     if is_logging_enabled() {
@@ -172,7 +171,6 @@ enum ProxyErrorKind {
     NotFound,
     NotImplemented,
     LMStudioUnavailable,
-    ModelLoading,
     Custom,
 }
 
@@ -240,15 +238,6 @@ impl ProxyError {
         }
     }
 
-    /// Create model loading error
-    pub fn model_loading(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 503,
-            kind: ProxyErrorKind::ModelLoading,
-        }
-    }
-
     /// Check if request is canceled
     pub fn is_cancelled(&self) -> bool {
         matches!(self.kind, ProxyErrorKind::RequestCancelled)
@@ -257,11 +246,6 @@ impl ProxyError {
     /// Check if LM Studio is unavailable
     pub fn is_lm_studio_unavailable(&self) -> bool {
         matches!(self.kind, ProxyErrorKind::LMStudioUnavailable)
-    }
-
-    /// Check if error is related to model loading
-    pub fn is_model_loading(&self) -> bool {
-        matches!(self.kind, ProxyErrorKind::ModelLoading) || is_model_loading_error(&self.message)
     }
 }
 
@@ -347,49 +331,6 @@ pub fn is_model_loading_error(message: &str) -> bool {
     (has_negative && has_model_ref) || has_lm_studio_loading
 }
 
-/// Detect if response time indicates model loading
-pub fn is_probable_model_loading_by_timing(duration: Duration, threshold_ms: u128) -> bool {
-    duration.as_millis() > threshold_ms
-}
-
-/// Classify model loading error type
-#[derive(Debug, PartialEq)]
-pub enum ModelLoadingErrorType {
-    ModelNotFound,
-    ModelNotLoaded,
-    ModelLoading,
-    ModelFailed,
-    ServiceUnavailable,
-    Unknown,
-}
-
-pub fn classify_model_loading_error(message: &str) -> ModelLoadingErrorType {
-    let lower = message.to_lowercase();
-
-    if lower.contains("not found")
-        || lower.contains("unknown model")
-        || lower.contains("invalid model")
-    {
-        ModelLoadingErrorType::ModelNotFound
-    } else if lower.contains("not loaded") || lower.contains("model unavailable") {
-        ModelLoadingErrorType::ModelNotLoaded
-    } else if lower.contains("loading")
-        || lower.contains("initializing")
-        || lower.contains("warming up")
-    {
-        ModelLoadingErrorType::ModelLoading
-    } else if lower.contains("failed to load") || lower.contains("loading failed") {
-        ModelLoadingErrorType::ModelFailed
-    } else if lower.contains("service unavailable")
-        || lower.contains("503")
-        || lower.contains("timeout")
-    {
-        ModelLoadingErrorType::ServiceUnavailable
-    } else {
-        ModelLoadingErrorType::Unknown
-    }
-}
-
 /// Fast duration formatting with better precision
 pub fn format_duration(duration: Duration) -> String {
     let total_nanos = duration.as_nanos();
@@ -421,11 +362,6 @@ pub fn validate_config(config: &crate::server::Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if endpoint requires authentication
-pub fn is_protected_endpoint(path: &str) -> bool {
-    matches!(path, "/admin/*" | "/config/*")
-}
-
 /// Sanitize log message to prevent log injection
 pub fn sanitize_log_message(message: &str) -> String {
     message
@@ -438,25 +374,4 @@ pub fn sanitize_log_message(message: &str) -> String {
             }
         })
         .collect()
-}
-
-/// Extract client IP from request headers
-pub fn extract_client_ip(headers: &warp::http::HeaderMap) -> Option<String> {
-    let ip_headers = [
-        "x-forwarded-for",
-        "x-real-ip",
-        "cf-connecting-ip",
-        "x-client-ip",
-    ];
-    for header_name in &ip_headers {
-        if let Some(header_value) = headers.get(*header_name)
-            && let Ok(ip_str) = header_value.to_str()
-        {
-            let ip = ip_str.split(',').next().unwrap_or(ip_str).trim();
-            if !ip.is_empty() {
-                return Some(ip.to_string());
-            }
-        }
-    }
-    None
 }

@@ -1,10 +1,11 @@
-/// src/common.rs - Enhanced infrastructure with centralized logging
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::check_cancelled;
 use crate::constants::*;
+use crate::storage::{blob::BlobStore, virtual_models::VirtualModelStore};
 use crate::utils::{ProxyError, log_error};
 
 /// Lightweight request context for concurrent request handling
@@ -12,18 +13,21 @@ use crate::utils::{ProxyError, log_error};
 pub struct RequestContext<'a> {
     pub client: &'a reqwest::Client,
     pub lmstudio_url: &'a str,
+    pub virtual_models: Arc<VirtualModelStore>,
+    #[allow(dead_code)]
+    pub blob_store: Arc<BlobStore>,
 }
 
 /// Optimized cancellable request handler
 pub struct CancellableRequest<'a> {
-    context: RequestContext<'a>,
+    client: &'a reqwest::Client,
     token: CancellationToken,
 }
 
 impl<'a> CancellableRequest<'a> {
     /// Create new cancellable request handler
-    pub fn new(context: RequestContext<'a>, token: CancellationToken) -> Self {
-        Self { context, token }
+    pub fn new(client: &'a reqwest::Client, token: CancellationToken) -> Self {
+        Self { client, token }
     }
 
     /// Make a cancellable HTTP request with proper error handling
@@ -36,7 +40,7 @@ impl<'a> CancellableRequest<'a> {
     ) -> Result<reqwest::Response, ProxyError> {
         check_cancelled!(self.token);
 
-        let mut request_builder = self.context.client.request(method, url);
+        let mut request_builder = self.client.request(method, url);
 
         if let Some(body_content) = body {
             request_builder = request_builder
@@ -86,11 +90,15 @@ pub async fn handle_json_response(
                 Ok(json_value) => {
                     if is_error {
                         // Pass through LM Studio errors as-is but in ProxyError format
-                        let error_message = json_value.get("error")
-                            .and_then(|e| e.get("message"))
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("LM Studio error: {}", status));
+                        let error_message = match json_value.get("error") {
+                            Some(Value::Object(obj)) => obj
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string()),
+                            Some(Value::String(message)) => Some(message.clone()),
+                            _ => None,
+                        }
+                        .unwrap_or_else(|| format!("LM Studio error: {}", status));
                         Err(ProxyError::new(error_message, status.as_u16()))
                     } else {
                         Ok(json_value)
@@ -137,22 +145,6 @@ impl RequestBuilder {
         self
     }
 
-    /// Add optional field
-    pub fn add_optional<T: Into<Value>>(mut self, key: &str, value: Option<T>) -> Self {
-        if let Some(v) = value {
-            self.body.insert(key.to_string(), v.into());
-        }
-        self
-    }
-
-    /// Add field from another JSON object if it exists
-    pub fn add_from_source(mut self, key: &str, source: &Value) -> Self {
-        if let Some(value) = source.get(key) {
-            self.body.insert(key.to_string(), value.clone());
-        }
-        self
-    }
-
     /// Build the JSON value
     pub fn build(self) -> Value {
         Value::Object(self.body)
@@ -182,6 +174,9 @@ pub fn map_ollama_to_lmstudio_params(
             "frequency_penalty",
             "seed",
             "stop",
+            // Embeddings parameters (doc: truncate, dimensions)
+            "truncate",
+            "dimensions",
         ];
 
         for param in DIRECT_MAPPINGS {
@@ -234,6 +229,7 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
         Value::String(mode) if mode.eq_ignore_ascii_case("json") => {
             Some(json!({ "type": "json_object" }))
         }
+        Value::String(mode) if mode.eq_ignore_ascii_case("text") => Some(json!({ "type": "text" })),
         Value::Object(_) => Some(json!({
             "type": "json_schema",
             "json_schema": {
@@ -243,15 +239,5 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
             }
         })),
         _ => None,
-    }
-}
-
-/// Utility function to merge JSON objects efficiently
-pub fn merge_json_objects(
-    base: &mut serde_json::Map<String, Value>,
-    overlay: serde_json::Map<String, Value>,
-) {
-    for (key, value) in overlay {
-        base.insert(key, value);
     }
 }

@@ -1,4 +1,3 @@
-/// src/handlers/retry.rs - Enhanced retry logic with model loading detection and timing
 use serde::Serialize;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -7,7 +6,6 @@ use tokio_util::sync::CancellationToken;
 use crate::check_cancelled;
 use crate::common::{CancellableRequest, RequestContext};
 use crate::constants::ERROR_LM_STUDIO_UNAVAILABLE;
-use crate::model_legacy::clean_model_name_legacy;
 use crate::utils::{ProxyError, is_model_loading_error, log_error, log_timed, log_warning};
 
 #[derive(Serialize)]
@@ -30,8 +28,8 @@ pub async fn trigger_model_loading(
     ollama_model_name: &str,
     cancellation_token: CancellationToken,
 ) -> Result<bool, ProxyError> {
-    let cleaned_ollama_model_for_logging = clean_model_name_legacy(ollama_model_name);
-    let model_for_lm_studio_trigger = cleaned_ollama_model_for_logging;
+    // Use the model name directly as we are in native mode
+    let model_for_lm_studio_trigger = ollama_model_name;
 
     let url = format!("{}/v1/chat/completions", context.lmstudio_url);
     let minimal_request_body = MinimalChatRequestPayload {
@@ -44,7 +42,7 @@ pub async fn trigger_model_loading(
         stream: false,
     };
 
-    let request = CancellableRequest::new(context.clone(), cancellation_token.clone());
+    let request = CancellableRequest::new(context.client, cancellation_token.clone());
 
     match request
         .make_request(reqwest::Method::POST, &url, Some(minimal_request_body))
@@ -99,7 +97,7 @@ pub async fn with_retry_and_cancellation<F, Fut, T>(
 ) -> Result<T, ProxyError>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, ProxyError>>,
+    Fut: Future<Output = Result<T, ProxyError>>,
 {
     check_cancelled!(cancellation_token);
 
@@ -178,104 +176,8 @@ pub async fn with_simple_retry<F, Fut, T>(
 ) -> Result<T, ProxyError>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, ProxyError>>,
+    Fut: Future<Output = Result<T, ProxyError>>,
 {
     check_cancelled!(cancellation_token);
     operation().await
-}
-
-/// Check LM Studio availability
-pub async fn check_lm_studio_availability(
-    context: &RequestContext<'_>,
-    cancellation_token: CancellationToken,
-) -> Result<(), ProxyError> {
-    let url = format!("{}/v1/models", context.lmstudio_url);
-    let request = CancellableRequest::new(context.clone(), cancellation_token);
-    let start_time = Instant::now();
-
-    match request
-        .make_request(reqwest::Method::GET, &url, None::<serde_json::Value>)
-        .await
-    {
-        Ok(response) => {
-            if response.status().is_success() {
-                log_timed(
-                    crate::constants::LOG_PREFIX_SUCCESS,
-                    "LM Studio availability check",
-                    start_time,
-                );
-                Ok(())
-            } else {
-                log_timed(
-                    crate::constants::LOG_PREFIX_ERROR,
-                    &format!("LM Studio health check failed: {}", response.status()),
-                    start_time,
-                );
-                Err(ProxyError::lm_studio_unavailable(&format!(
-                    "LM Studio health check failed: {}",
-                    response.status()
-                )))
-            }
-        }
-        Err(e) if e.is_cancelled() => Err(ProxyError::request_cancelled()),
-        Err(e) => {
-            log_timed(
-                crate::constants::LOG_PREFIX_ERROR,
-                &format!("{}: {}", ERROR_LM_STUDIO_UNAVAILABLE, e.message),
-                start_time,
-            );
-            Err(ProxyError::lm_studio_unavailable(&format!(
-                "{}: {}",
-                ERROR_LM_STUDIO_UNAVAILABLE, e.message
-            )))
-        }
-    }
-}
-
-/// Enhanced operation wrapper with optional health checking
-pub async fn with_health_check_and_retry<F, Fut, T>(
-    context: &RequestContext<'_>,
-    ollama_model_name: Option<&str>,
-    load_timeout_seconds: u64,
-    operation: F,
-    cancellation_token: CancellationToken,
-) -> Result<T, ProxyError>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, ProxyError>>,
-{
-    match ollama_model_name {
-        Some(model) => {
-            with_retry_and_cancellation(
-                context,
-                model,
-                load_timeout_seconds,
-                operation,
-                cancellation_token,
-            )
-            .await
-        }
-        None => with_simple_retry(operation, cancellation_token).await,
-    }
-}
-
-/// Determine if error is worth retrying
-pub fn should_retry_error(error: &ProxyError) -> bool {
-    if is_model_loading_error(&error.message) {
-        return true;
-    }
-    if error.is_cancelled() || error.is_lm_studio_unavailable() {
-        return false;
-    }
-    // Don't retry 4xx except 404
-    if error.status_code >= 400 && error.status_code < 500 && error.status_code != 404 {
-        return false;
-    }
-    false
-}
-
-/// Calculate exponential backoff delay
-pub fn calculate_backoff_delay(attempt: u32, base_delay_ms: u64) -> Duration {
-    let delay_ms = base_delay_ms * 2_u64.pow(attempt.min(5)); // Cap at 32x
-    Duration::from_millis(delay_ms.min(30_000)) // Cap at 30s
 }
