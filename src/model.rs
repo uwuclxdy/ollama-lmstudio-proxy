@@ -20,6 +20,16 @@ pub struct NativeModelData {
     pub quantization: Option<NativeQuantization>,
     pub max_context_length: u64,
     pub loaded_instances: Vec<NativeLoadedInstance>,
+    #[serde(default)]
+    pub capabilities: Option<NativeCapabilities>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeCapabilities {
+    #[serde(default)]
+    pub vision: Option<bool>,
+    #[serde(default)]
+    pub trained_for_tool_use: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -51,6 +61,8 @@ pub struct ModelInfo {
     pub state: String,
     pub max_context_length: u64,
     pub is_loaded: bool,
+    pub supports_vision: bool,
+    pub supports_tools: bool,
 }
 
 impl ModelInfo {
@@ -71,6 +83,18 @@ impl ModelInfo {
             .and_then(|q| q.name.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
+        let supports_vision = native_data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.vision)
+            .unwrap_or(false);
+
+        let supports_tools = native_data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.trained_for_tool_use)
+            .unwrap_or(false);
+
         Self {
             id: native_data.key.clone(),
             ollama_name,
@@ -88,6 +112,8 @@ impl ModelInfo {
             state: state.to_string(),
             max_context_length: native_data.max_context_length,
             is_loaded,
+            supports_vision,
+            supports_tools,
         }
     }
 
@@ -98,7 +124,7 @@ impl ModelInfo {
         cloned
     }
 
-    /// Determine model capabilities based on type and architecture
+    /// Determine model capabilities based on LM Studio data and model type
     fn determine_capabilities(&self) -> Vec<String> {
         let mut caps = Vec::new();
 
@@ -111,17 +137,32 @@ impl ModelInfo {
                 {
                     caps.push("chat".to_string());
                 }
+                if self.supports_vision {
+                    caps.push("vision".to_string());
+                }
+                if self.supports_tools {
+                    caps.push("tools".to_string());
+                }
             }
             "vlm" => {
                 caps.push("completion".to_string());
                 caps.push("chat".to_string());
                 caps.push("vision".to_string());
+                if self.supports_tools {
+                    caps.push("tools".to_string());
+                }
             }
-            "embeddings" => {
+            "embeddings" | "embedding" => {
                 caps.push("embedding".to_string());
             }
             _ => {
                 caps.push("completion".to_string());
+                if self.supports_vision {
+                    caps.push("vision".to_string());
+                }
+                if self.supports_tools {
+                    caps.push("tools".to_string());
+                }
             }
         }
 
@@ -244,7 +285,9 @@ impl ModelInfo {
                 "lmstudio.model_type": self.model_type,
                 "lmstudio.state": self.state,
                 "lmstudio.max_context_length": self.max_context_length,
-                "lmstudio.compatibility_type": self.compatibility_type
+                "lmstudio.compatibility_type": self.compatibility_type,
+                "lmstudio.supports_vision": self.supports_vision,
+                "lmstudio.supports_tools": self.supports_tools
             },
             "capabilities": capabilities,
             "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
