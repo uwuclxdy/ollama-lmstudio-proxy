@@ -223,8 +223,8 @@ mod model_resolution_tests {
         let prefix = candidates.iter().find(|&&c| c.starts_with(requested));
 
         // If exact exists, prefer it; otherwise prefix
-        if exact.is_some() {
-            assert_eq!(*exact.unwrap(), requested);
+        if let Some(&exact_match) = exact {
+            assert_eq!(exact_match, requested);
         } else {
             assert!(prefix.is_some());
         }
