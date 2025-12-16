@@ -1,46 +1,39 @@
-use std::path::{Path, PathBuf};
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
+use std::path::PathBuf;
 
 use futures_util::{Stream, StreamExt};
 use sha2::{Digest, Sha256};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
-use crate::utils::ProxyError;
+use crate::error::ProxyError;
 
-/// On-disk blob storage used to emulate Ollama's blob endpoints.
-#[allow(dead_code)]
 pub struct BlobStore {
     base_dir: PathBuf,
 }
 
-#[allow(dead_code)]
 impl BlobStore {
     pub fn new<P: Into<PathBuf>>(base_dir: P) -> Result<Self, ProxyError> {
         let dir = base_dir.into();
         std::fs::create_dir_all(&dir).map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to initialize blob storage directory: {}",
+                "failed to initialize blob storage directory: {}",
                 e
             ))
         })?;
         Ok(Self { base_dir: dir })
     }
 
-    pub fn base_dir(&self) -> &Path {
-        &self.base_dir
-    }
-
     fn digest_parts(digest: &str) -> Result<(&str, &str), ProxyError> {
         let Some((algo, hex)) = digest.split_once(':') else {
             return Err(ProxyError::bad_request(
-                "Invalid digest format. Expected algo:hex (e.g. sha256:abc)",
+                "invalid digest format. Expected algo:hex (e.g. sha256:abc)",
             ));
         };
         if algo != "sha256" {
-            return Err(ProxyError::bad_request("Only sha256 digests are supported"));
+            return Err(ProxyError::bad_request("only sha256 digests are supported"));
         }
         if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(ProxyError::bad_request("Invalid sha256 digest"));
+            return Err(ProxyError::bad_request("invalid sha256 digest"));
         }
         Ok((algo, hex))
     }
@@ -54,7 +47,7 @@ impl BlobStore {
         let path = self.blob_path(digest)?;
         tokio::fs::try_exists(path).await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to verify blob existence for {}: {}",
+                "failed to verify blob existence for {}: {}",
                 digest, e
             ))
         })
@@ -70,7 +63,7 @@ impl BlobStore {
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
                 ProxyError::internal_server_error(&format!(
-                    "Failed to prepare blob directory: {}",
+                    "failed to prepare blob directory: {}",
                     e
                 ))
             })?;
@@ -79,7 +72,7 @@ impl BlobStore {
         let tmp_path = final_path.with_extension(format!("{}.tmp", std::process::id()));
         let mut file = fs::File::create(&tmp_path).await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to create temporary blob file: {}",
+                "failed to create temporary blob file: {}",
                 e
             ))
         })?;
@@ -88,33 +81,33 @@ impl BlobStore {
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| {
-                ProxyError::internal_server_error(&format!("Blob upload error: {}", e))
+                ProxyError::internal_server_error(&format!("blob upload error: {}", e))
             })?;
             hasher.update(&chunk);
             file.write_all(&chunk).await.map_err(|e| {
-                ProxyError::internal_server_error(&format!("Failed writing blob chunk: {}", e))
+                ProxyError::internal_server_error(&format!("failed writing blob chunk: {}", e))
             })?;
             total_bytes = total_bytes.saturating_add(chunk.len() as u64);
         }
 
         file.flush().await.map_err(|e| {
-            ProxyError::internal_server_error(&format!("Failed to flush blob data: {}", e))
+            ProxyError::internal_server_error(&format!("failed to flush blob data: {}", e))
         })?;
 
         let actual_hex = format!("{:x}", hasher.finalize());
         if actual_hex != hex {
             let _ = fs::remove_file(&tmp_path).await;
             return Err(ProxyError::bad_request(&format!(
-                "Digest mismatch. Expected {}, computed {}",
+                "digest mismatch. Expected {}, computed {}",
                 hex, actual_hex
             )));
         }
 
         fs::rename(&tmp_path, &final_path).await.map_err(|e| {
-            ProxyError::internal_server_error(&format!("Failed to finalize blob file: {}", e))
+            ProxyError::internal_server_error(&format!("failed to finalize blob file: {}", e))
         })?;
 
-        crate::utils::log_info(&format!("Stored blob {} ({} bytes)", digest, total_bytes));
+        log::info!("stored blob {} ({} bytes)", digest, total_bytes);
         Ok(())
     }
 }

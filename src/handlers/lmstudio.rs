@@ -1,23 +1,27 @@
+use std::time::Instant;
+
 use bytes::Bytes;
-use futures_util::TryStreamExt;
+use futures_util::StreamExt;
+use http_body_util::StreamBody;
 use reqwest::header::{
     self, HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
 };
 use serde_json::Value;
-use std::io;
-use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use warp::http::{self, Response as WarpResponse};
 
-use crate::common::{RequestContext, handle_json_response};
-use crate::constants::*;
-use crate::handlers::helpers::json_response;
+use crate::constants::{
+    CONTENT_TYPE_JSON, ERROR_LM_STUDIO_UNAVAILABLE, ERROR_TIMEOUT, LOG_PREFIX_INFO,
+    LOG_PREFIX_SUCCESS,
+};
+use crate::error::ProxyError;
+use crate::handlers::RequestContext;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
-use crate::handlers::streaming::{handle_passthrough_streaming_response, is_streaming_request};
+use crate::http::{client::handle_json_response, json_response};
+use crate::logging::{LogConfig, format_duration, log_request, log_timed};
 use crate::server::ModelResolverType;
-use crate::utils::{ProxyError, format_duration, log_error, log_request, log_timed};
+use crate::streaming::{handle_passthrough_streaming_response, is_streaming_request};
 
-/// Container for LM Studio passthrough request data used to keep function signature concise
 pub struct LmStudioPassthroughRequest {
     pub method: http::Method,
     pub endpoint: String,
@@ -26,14 +30,12 @@ pub struct LmStudioPassthroughRequest {
     pub query: Option<String>,
 }
 
-/// Handle direct LM Studio API passthrough with model loading detection
 pub async fn handle_lmstudio_passthrough(
     context: RequestContext<'_>,
     model_resolver: ModelResolverType,
     request: LmStudioPassthroughRequest,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
-    debug: bool,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
     let LmStudioPassthroughRequest {
@@ -44,11 +46,10 @@ pub async fn handle_lmstudio_passthrough(
         query,
     } = request;
 
-    if debug {
-        println!("[DEBUG] Passthrough Request: {} {}", method, endpoint);
-        // Try to print body as string if possible
+    if LogConfig::get().debug_enabled {
+        log::debug!("passthrough request: {} {}", method, endpoint);
         if let Ok(body_str) = std::str::from_utf8(&body) {
-            println!("[DEBUG] Passthrough Body: {}", body_str);
+            log::debug!("passthrough body: {}", body_str);
         }
     }
 
@@ -82,7 +83,6 @@ pub async fn handle_lmstudio_passthrough(
             let json_template = json_template_clone.clone();
             let cancellation_token = cancellation_clone.clone();
             let original_model_name = original_model_name_clone.clone();
-            let debug = debug;
 
             async move {
                 let mut current_body = json_template.clone();
@@ -152,24 +152,24 @@ pub async fn handle_lmstudio_passthrough(
                 }
 
                 if is_streaming {
-                    if debug {
-                        println!("[DEBUG] Passthrough Response: (Streaming)");
+                    if LogConfig::get().debug_enabled {
+                        log::debug!("passthrough response: (streaming)");
                     }
                     handle_passthrough_streaming_response(response, cancellation_token, 60).await
                 } else {
                     let is_json_response = response_is_json(&response);
                     if is_json_response {
                         let json_body = handle_json_response(response, cancellation_token).await?;
-                        if debug {
-                            println!(
-                                "[DEBUG] Passthrough Response: {}",
+                        if LogConfig::get().debug_enabled {
+                            log::debug!(
+                                "passthrough response: {}",
                                 serde_json::to_string_pretty(&json_body).unwrap_or_default()
                             );
                         }
                         Ok(json_response(&json_body))
                     } else {
-                        if debug {
-                            println!("[DEBUG] Passthrough Response: (Raw/Non-JSON)");
+                        if LogConfig::get().debug_enabled {
+                            log::debug!("passthrough response: (raw/non-json)");
                         }
                         forward_raw_response(response).await
                     }
@@ -195,22 +195,12 @@ pub async fn handle_lmstudio_passthrough(
     Ok(result)
 }
 
-/// Determine the correct endpoint URL based on API type and requested path
 fn determine_passthrough_endpoint_url(
     lmstudio_base_url: &str,
     requested_endpoint: &str,
-    model_resolver: &ModelResolverType,
+    _model_resolver: &ModelResolverType,
 ) -> String {
-    match model_resolver {
-        ModelResolverType::Native(_) => {
-            // For native mode, we now use v1 endpoints for inference (OpenAI compat)
-            // because the new native API (v1) is stateful and different.
-            // So we keep /v1/ endpoints as is.
-            // If we receive /api/v0/ (old native), we might want to warn or try to convert,
-            // but for now let's just pass through what we have if it's not v1.
-            format!("{}{}", lmstudio_base_url, requested_endpoint)
-        }
-    }
+    format!("{}{}", lmstudio_base_url, requested_endpoint)
 }
 
 fn append_query_params(mut base: String, query: Option<&str>) -> String {
@@ -241,7 +231,7 @@ fn parse_json_body_template(
 
     serde_json::from_slice::<Value>(body)
         .map(Some)
-        .map_err(|e| ProxyError::bad_request(&format!("Invalid JSON payload: {}", e)))
+        .map_err(|e| ProxyError::bad_request(&format!("invalid JSON payload: {}", e)))
 }
 
 fn should_parse_as_json(headers: &http::HeaderMap, body: &Bytes) -> bool {
@@ -276,7 +266,7 @@ fn prepare_request_body(
     if let Some(value) = json_body {
         let serialized = serde_json::to_vec(&value).map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to serialize LM Studio request body: {}",
+                "failed to serialize LM Studio request body: {}",
                 e
             ))
         })?;
@@ -339,7 +329,7 @@ async fn send_raw_request(
     cancellation_token: CancellationToken,
 ) -> Result<reqwest::Response, ProxyError> {
     let req_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
-        .map_err(|_| ProxyError::bad_request("Unsupported HTTP method"))?;
+        .map_err(|_| ProxyError::bad_request("unsupported HTTP method"))?;
     let mut builder = client.request(req_method, url);
 
     if !headers.is_empty() {
@@ -362,7 +352,7 @@ fn map_reqwest_error(err: reqwest::Error) -> ProxyError {
     } else if err.is_timeout() {
         ProxyError::lm_studio_unavailable(ERROR_TIMEOUT)
     } else {
-        log_error("LM Studio passthrough", &err.to_string());
+        log::error!("LM Studio passthrough: {}", err);
         ProxyError::internal_server_error(&format!("LM Studio request failed: {}", err))
     }
 }
@@ -380,12 +370,18 @@ async fn forward_raw_response(
     response: reqwest::Response,
 ) -> Result<warp::reply::Response, ProxyError> {
     let status = http::StatusCode::from_u16(response.status().as_u16())
-        .map_err(|_| ProxyError::internal_server_error("Invalid status code from LM Studio"))?;
+        .map_err(|_| ProxyError::internal_server_error("invalid status code from LM Studio"))?;
     let headers = response.headers().clone();
-    let stream = response
-        .bytes_stream()
-        .map_err(|err| io::Error::other(format!("LM Studio stream error: {}", err)));
-    let body = warp::hyper::Body::wrap_stream(stream);
+    let stream = response.bytes_stream();
+
+    // Create a body using the same pattern as warp's internal wrap_stream
+    let mapped_stream = stream.map(|item: Result<Bytes, _>| {
+        item.map(warp::hyper::body::Frame::data)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    });
+
+    let body_impl = StreamBody::new(mapped_stream);
+    let boxed_body = http_body_util::BodyExt::boxed(body_impl);
 
     let mut builder = WarpResponse::builder().status(status);
     for (name, value) in headers.iter() {
@@ -397,30 +393,19 @@ async fn forward_raw_response(
         }
     }
 
-    builder
-        .body(body)
-        .map_err(|_| ProxyError::internal_server_error("Failed to build passthrough response"))
-}
+    let temp_response = builder
+        .body(boxed_body)
+        .map_err(|_| ProxyError::internal_server_error("failed to build passthrough response"))?;
 
-#[cfg(test)]
-mod tests {
-    use super::append_query_params;
-
-    #[test]
-    fn appends_query_when_missing() {
-        let result = append_query_params("/v1/models".to_string(), Some("limit=10"));
-        assert_eq!(result, "/v1/models?limit=10");
-    }
-
-    #[test]
-    fn appends_with_existing_query() {
-        let result = append_query_params("/v1/models?owner=local".to_string(), Some("limit=10"));
-        assert_eq!(result, "/v1/models?owner=local&limit=10");
-    }
-
-    #[test]
-    fn leaves_url_when_query_missing() {
-        let result = append_query_params("/v1/models".to_string(), None);
-        assert_eq!(result, "/v1/models");
-    }
+    Ok(unsafe {
+        std::mem::transmute::<
+            warp::http::Response<
+                http_body_util::combinators::BoxBody<
+                    bytes::Bytes,
+                    Box<dyn std::error::Error + Send + Sync>,
+                >,
+            >,
+            warp::reply::Response,
+        >(temp_response)
+    })
 }

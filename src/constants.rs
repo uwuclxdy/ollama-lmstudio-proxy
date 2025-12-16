@@ -1,38 +1,3 @@
-use std::sync::OnceLock;
-
-/// Global configuration that can be set at runtime
-#[derive(Debug, Clone)]
-pub struct RuntimeConfig {
-    pub max_buffer_size: usize,
-    pub string_buffer_size: usize,
-    pub enable_chunk_recovery: bool,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        Self {
-            max_buffer_size: usize::MAX,
-            string_buffer_size: 2048,
-            enable_chunk_recovery: true,
-        }
-    }
-}
-
-static RUNTIME_CONFIG: OnceLock<RuntimeConfig> = OnceLock::new();
-
-/// Initialize runtime configuration
-pub fn init_runtime_config(config: RuntimeConfig) {
-    RUNTIME_CONFIG.set(config).ok();
-}
-
-/// Get current runtime configuration
-pub fn get_runtime_config() -> &'static RuntimeConfig {
-    RUNTIME_CONFIG.get().unwrap_or_else(|| {
-        static DEFAULT: OnceLock<RuntimeConfig> = OnceLock::new();
-        DEFAULT.get_or_init(RuntimeConfig::default)
-    })
-}
-
 /// Native LM Studio API endpoints
 pub const LM_STUDIO_NATIVE_MODELS: &str = "/api/v1/models";
 pub const LM_STUDIO_NATIVE_CHAT: &str = "/v1/chat/completions";
@@ -81,7 +46,6 @@ pub const SSE_DONE_MESSAGE: &str = "[DONE]";
 pub const SSE_MESSAGE_BOUNDARY: &str = "\n\n";
 
 /// Logging prefixes
-pub const LOG_PREFIX_REQUEST: &str = "🔄";
 pub const LOG_PREFIX_SUCCESS: &str = "✅";
 pub const LOG_PREFIX_ERROR: &str = "❌";
 pub const LOG_PREFIX_WARNING: &str = "⚠️";
