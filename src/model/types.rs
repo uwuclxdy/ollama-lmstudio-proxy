@@ -1,14 +1,11 @@
-use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::Instant;
-use tokio_util::sync::CancellationToken;
 
-use crate::common::CancellableRequest;
-use crate::constants::*;
-use crate::utils::{ProxyError, log_timed, log_warning};
+use crate::constants::{
+    DEFAULT_KEEP_ALIVE_MINUTES, DEFAULT_REPEAT_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
+    DEFAULT_TOP_P,
+};
 
-/// Native LM Studio model data from /api/v1/models
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeModelData {
     pub key: String,
@@ -42,13 +39,11 @@ pub struct NativeLoadedInstance {
     pub id: String,
 }
 
-/// Native LM Studio models response
 #[derive(Debug, Deserialize)]
 pub struct NativeModelsResponse {
     pub models: Vec<NativeModelData>,
 }
 
-/// Enhanced model information using real LM Studio data
 #[derive(Debug, Clone)]
 pub struct ModelInfo {
     pub id: String,
@@ -66,7 +61,6 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
-    /// Create model info from native LM Studio data
     pub fn from_native_data(native_data: &NativeModelData) -> Self {
         let is_loaded = !native_data.loaded_instances.is_empty();
         let state = if is_loaded { "loaded" } else { "not-loaded" };
@@ -117,14 +111,12 @@ impl ModelInfo {
         }
     }
 
-    /// Clone model info but override the Ollama-visible name
     pub fn with_alias_name(&self, alias_name: &str) -> Self {
         let mut cloned = self.clone();
         cloned.ollama_name = alias_name.to_string();
         cloned
     }
 
-    /// Determine model capabilities based on LM Studio data and model type
     fn determine_capabilities(&self) -> Vec<String> {
         let mut caps = Vec::new();
 
@@ -173,9 +165,7 @@ impl ModelInfo {
         caps
     }
 
-    /// Calculate estimated file size based on architecture and quantization
     fn calculate_estimated_size(&self) -> u64 {
-        // Extract parameter count from model ID if possible
         let lower_id = self.id.to_lowercase();
         let base_params: u64 = if lower_id.contains("0.5b") || lower_id.contains("500m") {
             500_000_000
@@ -194,10 +184,9 @@ impl ModelInfo {
         } else if lower_id.contains("70b") {
             70_000_000_000
         } else {
-            4_000_000_000 // Default estimate
+            4_000_000_000
         };
 
-        // Apply quantization factor
         let multiplier = match self.quantization.to_lowercase().as_str() {
             q if q.contains("2bit") || q.contains("q2") => 0.35,
             q if q.contains("3bit") || q.contains("q3") => 0.45,
@@ -207,13 +196,12 @@ impl ModelInfo {
             q if q.contains("8bit") || q.contains("q8") => 1.0,
             q if q.contains("f16") || q.contains("fp16") => 2.0,
             q if q.contains("f32") || q.contains("fp32") => 4.0,
-            _ => 0.55, // Default to Q4 estimate
+            _ => 0.55,
         };
 
         ((base_params as f64) * multiplier) as u64
     }
 
-    /// Generate Ollama-compatible model entry for /api/tags
     pub fn to_ollama_tags_model(&self) -> Value {
         let estimated_size = self.calculate_estimated_size();
 
@@ -234,7 +222,6 @@ impl ModelInfo {
         })
     }
 
-    /// Generate Ollama-compatible model entry for /api/ps (running models)
     pub fn to_ollama_ps_model(&self) -> Value {
         let estimated_size = self.calculate_estimated_size();
 
@@ -256,7 +243,6 @@ impl ModelInfo {
         })
     }
 
-    /// Generate model show response for /api/show
     pub fn to_show_response(&self) -> Value {
         let estimated_size = self.calculate_estimated_size();
         let capabilities = self.determine_capabilities();
@@ -296,7 +282,6 @@ impl ModelInfo {
         })
     }
 
-    /// Extract parameter size string from model ID
     fn extract_parameter_size_string(&self) -> String {
         let lower_id = self.id.to_lowercase();
 
@@ -319,285 +304,5 @@ impl ModelInfo {
         } else {
             "unknown".to_string()
         }
-    }
-}
-
-/// Optimized model name cleaning
-pub fn clean_model_name(name: &str) -> &str {
-    if name.is_empty() {
-        return name;
-    }
-    let after_latest = if let Some(pos) = name.rfind(":latest") {
-        &name[..pos]
-    } else {
-        name
-    };
-    if let Some(colon_pos) = after_latest.rfind(':') {
-        let suffix = &after_latest[colon_pos + 1..];
-        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) && colon_pos > 0 {
-            return &after_latest[..colon_pos];
-        }
-    }
-    after_latest
-}
-
-/// ModelResolver for handling model resolution with native LM Studio API
-pub struct ModelResolver {
-    lmstudio_url: String,
-    cache: Cache<String, String>,
-}
-
-impl ModelResolver {
-    /// Create new model resolver for native API
-    pub fn new(lmstudio_url: String, cache: Cache<String, String>) -> Self {
-        Self {
-            lmstudio_url,
-            cache,
-        }
-    }
-
-    /// Direct model resolution using native API with strict error handling
-    pub async fn resolve_model_name(
-        &self,
-        ollama_model_name_requested: &str,
-        client: &reqwest::Client,
-        cancellation_token: CancellationToken,
-    ) -> Result<String, ProxyError> {
-        let start_time = Instant::now();
-        let cleaned_ollama_request = clean_model_name(ollama_model_name_requested).to_string();
-
-        // Check cache first
-        if let Some(cached_lm_studio_id) = self.cache.get(&cleaned_ollama_request).await {
-            log_timed(
-                LOG_PREFIX_SUCCESS,
-                &format!(
-                    "Cache hit: '{}' -> '{}'",
-                    cleaned_ollama_request, cached_lm_studio_id
-                ),
-                start_time,
-            );
-            return Ok(cached_lm_studio_id);
-        }
-
-        log_warning(
-            "Cache miss",
-            &format!("Fetching '{}' from LM Studio", cleaned_ollama_request),
-        );
-
-        match self
-            .get_available_lm_studio_models_native(client, cancellation_token)
-            .await
-        {
-            Ok(available_models) => {
-                if let Some(matched_model) =
-                    self.find_best_match_native(&cleaned_ollama_request, &available_models)
-                {
-                    // Check if model is loaded for strict error handling
-                    if !matched_model.is_loaded {
-                        log_warning(
-                            "Model state",
-                            &format!(
-                                "'{}' found but not loaded (state: {})",
-                                matched_model.id, matched_model.state
-                            ),
-                        );
-                    }
-
-                    self.cache
-                        .insert(cleaned_ollama_request.clone(), matched_model.id.clone())
-                        .await;
-                    log_timed(
-                        LOG_PREFIX_SUCCESS,
-                        &format!(
-                            "Resolved: '{}' -> '{}' ({})",
-                            cleaned_ollama_request, matched_model.id, matched_model.state
-                        ),
-                        start_time,
-                    );
-                    Ok(matched_model.id)
-                } else {
-                    // Strict error handling - don't allow unknown models
-                    Err(ProxyError::not_found(&format!(
-                        "Model '{}' not found in LM Studio. Available models can be listed via /api/tags",
-                        cleaned_ollama_request
-                    )))
-                }
-            }
-            Err(e) => {
-                // Provide helpful error message for native API issues
-                if e.message.contains("404") || e.message.contains("not found") {
-                    Err(ProxyError::new(
-                        format!(
-                            "LM Studio native API not available. Please update to LM Studio 0.3.6+ (legacy mode has been removed). Original error: {}",
-                            e.message
-                        ),
-                        503,
-                    ))
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    /// Get available models from LM Studio native API
-    async fn get_available_lm_studio_models_native(
-        &self,
-        client: &reqwest::Client,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<ModelInfo>, ProxyError> {
-        let url = format!("{}{}", self.lmstudio_url, LM_STUDIO_NATIVE_MODELS);
-
-        let request = CancellableRequest::new(client, cancellation_token);
-
-        let response = request
-            .make_request(reqwest::Method::GET, &url, None::<Value>)
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(ProxyError::new(
-                format!(
-                    "Native API error ({}): {}. Ensure LM Studio 0.3.6+ is installed",
-                    response.status(),
-                    ERROR_LM_STUDIO_UNAVAILABLE
-                ),
-                response.status().as_u16(),
-            ));
-        }
-
-        let native_response = response.json::<NativeModelsResponse>().await.map_err(|e| {
-            ProxyError::internal_server_error(&format!(
-                "Invalid JSON from {}: {}. Ensure LM Studio 0.3.6+ is running",
-                LM_STUDIO_NATIVE_MODELS, e
-            ))
-        })?;
-
-        let models = native_response
-            .models
-            .iter()
-            .map(ModelInfo::from_native_data)
-            .collect();
-
-        Ok(models)
-    }
-
-    /// Find best matching model using native model data
-    fn find_best_match_native(
-        &self,
-        ollama_name_cleaned: &str,
-        available_models: &[ModelInfo],
-    ) -> Option<ModelInfo> {
-        let lower_ollama = ollama_name_cleaned.to_lowercase();
-
-        // Exact match first
-        for model in available_models {
-            if model.id.to_lowercase() == lower_ollama {
-                return Some(model.clone());
-            }
-        }
-
-        // Substring match
-        for model in available_models {
-            if model.id.to_lowercase().contains(&lower_ollama)
-                && (lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10)
-            {
-                return Some(model.clone());
-            }
-        }
-
-        // Enhanced scoring match
-        let mut best_match = None;
-        let mut best_score = 0;
-        for model in available_models {
-            let score = self.calculate_match_score_native(&lower_ollama, model);
-            if score > best_score && score >= 3 {
-                best_score = score;
-                best_match = Some(model.clone());
-            }
-        }
-
-        best_match
-    }
-
-    /// Calculate match score using native model data
-    fn calculate_match_score_native(&self, ollama_name: &str, model: &ModelInfo) -> usize {
-        let model_name_lower = model.id.to_lowercase();
-        let ollama_parts: Vec<&str> = ollama_name
-            .split(&['-', '_', ':', '.', '/', ' '])
-            .filter(|s| !s.is_empty() && s.len() > 1)
-            .collect();
-        let model_parts: Vec<&str> = model_name_lower
-            .split(&['-', '_', ':', '.', '/', ' '])
-            .filter(|s| !s.is_empty() && s.len() > 1)
-            .collect();
-
-        let mut score = 0;
-
-        // Part matching
-        for ollama_part in &ollama_parts {
-            for model_part in &model_parts {
-                if ollama_part == model_part {
-                    score += ollama_part.len() * 2; // Exact part match
-                } else if model_part.contains(ollama_part) || ollama_part.contains(model_part) {
-                    score += ollama_part.len().min(model_part.len()); // Partial match
-                }
-            }
-        }
-
-        // Architecture matching bonus
-        if model
-            .arch
-            .to_lowercase()
-            .contains(&ollama_name.to_lowercase())
-        {
-            score += 5;
-        }
-
-        // Model type matching bonus
-        if model.model_type == "llm"
-            && (ollama_name.contains("chat") || ollama_name.contains("instruct"))
-        {
-            score += 3;
-        }
-        if model.model_type == "vlm"
-            && (ollama_name.contains("vision") || ollama_name.contains("llava"))
-        {
-            score += 3;
-        }
-        if model.model_type == "embeddings" && ollama_name.contains("embed") {
-            score += 3;
-        }
-
-        // Loaded model bonus (prefer loaded models)
-        if model.is_loaded {
-            score += 2;
-        }
-
-        // Prefix matching bonus
-        if model_name_lower.starts_with(ollama_name) {
-            score += ollama_name.len();
-        }
-
-        score
-    }
-
-    /// Get all available models (for /api/tags and /api/ps)
-    pub async fn get_all_models(
-        &self,
-        client: &reqwest::Client,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<ModelInfo>, ProxyError> {
-        self.get_available_lm_studio_models_native(client, cancellation_token)
-            .await
-    }
-
-    /// Get only loaded models (for /api/ps)
-    pub async fn get_loaded_models(
-        &self,
-        client: &reqwest::Client,
-        cancellation_token: CancellationToken,
-    ) -> Result<Vec<ModelInfo>, ProxyError> {
-        let all_models = self.get_all_models(client, cancellation_token).await?;
-        Ok(all_models.into_iter().filter(|m| m.is_loaded).collect())
     }
 }

@@ -8,8 +8,8 @@ use serde_json::Value;
 use tokio::fs;
 use tokio::sync::RwLock;
 
+use crate::error::ProxyError;
 use crate::model::clean_model_name;
-use crate::utils::ProxyError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VirtualModelMetadata {
@@ -31,20 +31,18 @@ pub struct VirtualModelEntry {
     pub metadata: VirtualModelMetadata,
 }
 
-#[allow(dead_code)]
 pub struct VirtualModelStore {
     path: PathBuf,
     entries: RwLock<HashMap<String, VirtualModelEntry>>,
 }
 
-#[allow(dead_code)]
 impl VirtualModelStore {
     pub fn load<P: Into<PathBuf>>(path: P) -> Result<Self, ProxyError> {
         let path = path.into();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 ProxyError::internal_server_error(&format!(
-                    "Failed to create state directory: {}",
+                    "failed to create state directory: {}",
                     e
                 ))
             })?;
@@ -58,7 +56,7 @@ impl VirtualModelStore {
                 Ok(_) => HashMap::new(),
                 Err(e) => {
                     return Err(ProxyError::internal_server_error(&format!(
-                        "Failed to read {}: {}",
+                        "failed to read {}: {}",
                         path.display(),
                         e
                     )));
@@ -100,7 +98,7 @@ impl VirtualModelStore {
         let mut guard = self.entries.write().await;
         if guard.contains_key(&alias_key) {
             return Err(ProxyError::bad_request(&format!(
-                "Model '{}' already exists",
+                "model '{}' already exists",
                 alias
             )));
         }
@@ -119,49 +117,14 @@ impl VirtualModelStore {
         Ok(entry)
     }
 
-    pub async fn update_alias(
-        &self,
-        alias: &str,
-        metadata: VirtualModelMetadata,
-    ) -> Result<VirtualModelEntry, ProxyError> {
-        let alias_key = Self::canonical(alias).into_owned();
-        let mut guard = self.entries.write().await;
-        let entry = guard.get_mut(&alias_key).ok_or_else(|| {
-            ProxyError::not_found(&format!("Model '{}' not registered via proxy", alias))
-        })?;
-        entry.metadata = metadata;
-        entry.updated_at = Utc::now();
-        let clone = entry.clone();
-        self.persist_locked(&guard).await?;
-        Ok(clone)
-    }
-
     pub async fn delete(&self, alias: &str) -> Result<VirtualModelEntry, ProxyError> {
         let alias_key = Self::canonical(alias).into_owned();
         let mut guard = self.entries.write().await;
         let removed = guard.remove(&alias_key).ok_or_else(|| {
-            ProxyError::not_found(&format!("Model '{}' not managed by proxy", alias))
+            ProxyError::not_found(&format!("model '{}' not managed by proxy", alias))
         })?;
         self.persist_locked(&guard).await?;
         Ok(removed)
-    }
-
-    pub async fn copy_alias(
-        &self,
-        source: &str,
-        destination: &str,
-    ) -> Result<VirtualModelEntry, ProxyError> {
-        let source_entry = self
-            .get(source)
-            .await
-            .ok_or_else(|| ProxyError::not_found(&format!("Model '{}' not found", source)))?;
-        self.create_alias(
-            destination,
-            source_entry.source_model.clone(),
-            source_entry.target_model_id.clone(),
-            source_entry.metadata.clone(),
-        )
-        .await
     }
 
     pub async fn list(&self) -> Vec<VirtualModelEntry> {
@@ -175,18 +138,18 @@ impl VirtualModelStore {
     ) -> Result<(), ProxyError> {
         let tmp_path = self.path.with_extension("tmp");
         let data = serde_json::to_vec_pretty(entries).map_err(|e| {
-            ProxyError::internal_server_error(&format!("Failed to serialize store: {}", e))
+            ProxyError::internal_server_error(&format!("failed to serialize store: {}", e))
         })?;
         fs::write(&tmp_path, data).await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to write {}: {}",
+                "failed to write {}: {}",
                 tmp_path.display(),
                 e
             ))
         })?;
         fs::rename(&tmp_path, &self.path).await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "Failed to atomic write {}: {}",
+                "failed to atomic write {}: {}",
                 self.path.display(),
                 e
             ))
