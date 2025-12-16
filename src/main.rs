@@ -10,12 +10,17 @@ mod model;
 mod server;
 mod storage;
 mod streaming;
+mod update;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::parse();
+
+    if cfg.update {
+        return update::check_and_update().await;
+    }
 
     config::validate_config(&cfg)?;
 
