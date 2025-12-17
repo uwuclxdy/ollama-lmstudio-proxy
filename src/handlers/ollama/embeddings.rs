@@ -15,8 +15,7 @@ use crate::logging::{LogConfig, log_request, log_timed};
 use crate::server::ModelResolverType;
 
 use super::utils::{
-    apply_keep_alive_ttl, extract_model_name, merge_option_maps, parse_keep_alive_seconds,
-    resolve_model_target,
+    apply_keep_alive_ttl, extract_model_name, parse_keep_alive_seconds, resolve_model_with_context,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -61,31 +60,22 @@ pub async fn handle_ollama_embeddings(
                 .cloned()
                 .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_INPUT))?;
 
-            let (lm_studio_model_id, virtual_model_entry) = resolve_model_target(
+            let resolution_ctx = resolve_model_with_context(
                 &context,
                 &model_resolver,
                 current_ollama_model_name,
+                &body_clone,
                 cancellation_token_clone.clone(),
             )
             .await?;
             let endpoint_url = format!("{}{}", context.lmstudio_url, LM_STUDIO_NATIVE_EMBEDDINGS);
 
-            let merged_options_owned = merge_option_maps(
-                virtual_model_entry
-                    .as_ref()
-                    .and_then(|entry| entry.metadata.parameters.as_ref()),
-                body_clone.get("options"),
-            );
-            let effective_options_ref = merged_options_owned
-                .as_ref()
-                .or_else(|| body_clone.get("options"));
-
             let mut lm_request = build_lm_studio_request(
-                &lm_studio_model_id,
+                &resolution_ctx.lm_studio_model_id,
                 LMStudioRequestType::Embeddings {
                     input: &input_value,
                 },
-                effective_options_ref,
+                resolution_ctx.effective_options.as_ref(),
                 None,
                 None,
             );
@@ -93,7 +83,11 @@ pub async fn handle_ollama_embeddings(
 
             let request_obj =
                 CancellableRequest::new(context.client, cancellation_token_clone.clone());
-            log_request("POST", &endpoint_url, Some(&lm_studio_model_id));
+            log_request(
+                "POST",
+                &endpoint_url,
+                Some(&resolution_ctx.lm_studio_model_id),
+            );
 
             let response = request_obj
                 .make_request(reqwest::Method::POST, &endpoint_url, Some(lm_request))
