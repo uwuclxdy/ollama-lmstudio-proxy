@@ -7,10 +7,25 @@ use tokio_util::sync::CancellationToken;
 use crate::constants::ERROR_MISSING_MODEL;
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
+use crate::handlers::transform::extract_system_prompt;
 use crate::model::{ModelInfo, clean_model_name};
 use crate::server::ModelResolverType;
 use crate::storage::{VirtualModelEntry, VirtualModelMetadata};
 use crate::streaming::create_ndjson_stream_response;
+
+/// Unified model resolution result containing the resolved LM Studio model ID
+/// and merged metadata from virtual model aliases and request parameters.
+///
+/// Fields are merged with request parameters taking precedence:
+/// - `effective_options`: Virtual model parameters merged with request `options`
+/// - `effective_format`: Virtual model format merged with request `format`
+/// - `system_prompt`: Request system prompt or virtual model system prompt
+pub struct ModelResolutionContext {
+    pub lm_studio_model_id: String,
+    pub effective_options: Option<Value>,
+    pub effective_format: Option<Value>,
+    pub system_prompt: Option<String>,
+}
 
 pub fn extract_model_name<'a>(body: &'a Value, field_name: &str) -> Result<&'a str, ProxyError> {
     body.get(field_name)
@@ -38,6 +53,47 @@ pub async fn resolve_model_target<'a>(
             .await
             .map(|id| (id, None)),
     }
+}
+
+pub async fn resolve_model_with_context<'a>(
+    context: &RequestContext<'a>,
+    model_resolver: &ModelResolverType,
+    requested_model: &str,
+    request_body: &Value,
+    cancellation_token: CancellationToken,
+) -> Result<ModelResolutionContext, ProxyError> {
+    let (lm_studio_model_id, virtual_entry) =
+        resolve_model_target(context, model_resolver, requested_model, cancellation_token).await?;
+
+    let request_options = request_body.get("options");
+    let request_format = request_body.get("format");
+
+    let effective_options = merge_option_maps(
+        virtual_entry
+            .as_ref()
+            .and_then(|entry| entry.metadata.parameters.as_ref()),
+        request_options,
+    );
+
+    let effective_format = virtual_entry
+        .as_ref()
+        .and_then(|entry| entry.metadata.parameters.as_ref())
+        .and_then(|params| params.get("format"))
+        .cloned()
+        .or_else(|| request_format.cloned());
+
+    let system_from_body = extract_system_prompt(request_body);
+    let system_from_virtual = virtual_entry
+        .as_ref()
+        .and_then(|entry| entry.metadata.system_prompt.clone());
+    let system_prompt = system_from_body.or(system_from_virtual);
+
+    Ok(ModelResolutionContext {
+        lm_studio_model_id,
+        effective_options,
+        effective_format,
+        system_prompt,
+    })
 }
 
 pub fn parse_keep_alive_seconds(raw_value: Option<&Value>) -> Result<Option<i64>, ProxyError> {

@@ -10,7 +10,7 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
-use crate::handlers::transform::{ResponseTransformer, extract_system_prompt};
+use crate::handlers::transform::ResponseTransformer;
 use crate::http::client::handle_json_response;
 use crate::http::request::{LMStudioRequestType, build_lm_studio_request};
 use crate::http::{CancellableRequest, json_response};
@@ -19,8 +19,7 @@ use crate::server::ModelResolverType;
 use crate::streaming::handle_streaming_response;
 
 use super::utils::{
-    apply_keep_alive_ttl, extract_model_name, merge_option_maps, parse_keep_alive_seconds,
-    resolve_model_target,
+    apply_keep_alive_ttl, extract_model_name, parse_keep_alive_seconds, resolve_model_with_context,
 };
 
 pub async fn handle_ollama_generate(
@@ -63,39 +62,16 @@ pub async fn handle_ollama_generate(
                 .and_then(|s| s.as_bool())
                 .unwrap_or(false);
 
-            let ollama_options = body_clone.get("options");
             let current_images = body_clone.get("images");
-            let structured_format = body_clone.get("format");
 
-            let (lm_studio_model_id, virtual_model_entry) = resolve_model_target(
+            let resolution_ctx = resolve_model_with_context(
                 &context,
                 &model_resolver,
                 current_ollama_model_name,
+                &body_clone,
                 cancellation_token_clone.clone(),
             )
             .await?;
-
-            let merged_options_owned = merge_option_maps(
-                virtual_model_entry
-                    .as_ref()
-                    .and_then(|entry| entry.metadata.parameters.as_ref()),
-                ollama_options,
-            );
-            let effective_options_value = merged_options_owned.clone();
-
-            let merged_format_owned = virtual_model_entry
-                .as_ref()
-                .and_then(|entry| entry.metadata.parameters.as_ref())
-                .and_then(|params| params.get("format"))
-                .cloned()
-                .or_else(|| structured_format.cloned());
-            let effective_format_value = merged_format_owned;
-
-            let system_from_body = extract_system_prompt(&body_clone);
-            let system_from_virtual = virtual_model_entry
-                .as_ref()
-                .and_then(|entry| entry.metadata.system_prompt.clone());
-            let applied_system_prompt = system_from_body.or(system_from_virtual);
 
             let endpoint_url_base = context.lmstudio_url;
             let mut prompt_for_estimation = current_prompt;
@@ -104,7 +80,7 @@ pub async fn handle_ollama_generate(
 
             let (lm_studio_target_url, lm_request_type) = if current_images.is_some() {
                 let mut message_list = Vec::new();
-                if let Some(system_text) = applied_system_prompt.as_deref() {
+                if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
                     message_list.push(json!({
                         "role": "system",
                         "content": system_text,
@@ -133,7 +109,7 @@ pub async fn handle_ollama_generate(
                     },
                 )
             } else {
-                if let Some(system_text) = applied_system_prompt.as_deref() {
+                if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
                     let trimmed = system_text.trim();
                     if !trimmed.is_empty() {
                         let combined = if current_prompt.is_empty() {
@@ -163,23 +139,22 @@ pub async fn handle_ollama_generate(
 
             let _ = &chat_messages_payload;
 
-            let effective_options_ref: Option<&Value> =
-                effective_options_value.as_ref().or(ollama_options);
-            let effective_format_ref: Option<&Value> =
-                effective_format_value.as_ref().or(structured_format);
-
             let mut lm_request = build_lm_studio_request(
-                &lm_studio_model_id,
+                &resolution_ctx.lm_studio_model_id,
                 lm_request_type,
-                effective_options_ref,
+                resolution_ctx.effective_options.as_ref(),
                 None,
-                effective_format_ref,
+                resolution_ctx.effective_format.as_ref(),
             );
             apply_keep_alive_ttl(&mut lm_request, keep_alive_seconds_for_request);
 
             let request_obj =
                 CancellableRequest::new(context.client, cancellation_token_clone.clone());
-            log_request("POST", &lm_studio_target_url, Some(&lm_studio_model_id));
+            log_request(
+                "POST",
+                &lm_studio_target_url,
+                Some(&resolution_ctx.lm_studio_model_id),
+            );
 
             let response = request_obj
                 .make_request(
