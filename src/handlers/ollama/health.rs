@@ -37,7 +37,7 @@ pub async fn handle_health_check(
     if LogConfig::get().debug_enabled {
         log::debug!("health check request");
     }
-    let url = format!("{}{}", context.lmstudio_url, LM_STUDIO_NATIVE_MODELS);
+    let url = context.endpoint_url(LM_STUDIO_NATIVE_MODELS);
     let request = CancellableRequest::new(context.client, cancellation_token.clone());
 
     match request.make_request(Method::GET, &url, None::<Value>).await {

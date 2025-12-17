@@ -9,13 +9,14 @@ use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
 use crate::handlers::transform::ResponseTransformer;
 use crate::http::client::handle_json_response;
-use crate::http::request::{LMStudioRequestType, build_lm_studio_request};
-use crate::http::{CancellableRequest, json_response};
-use crate::logging::{LogConfig, log_request, log_timed};
+use crate::http::json_response;
+use crate::http::request::LMStudioRequestType;
+use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
 use super::utils::{
-    apply_keep_alive_ttl, extract_model_name, parse_keep_alive_seconds, resolve_model_with_context,
+    LMStudioRequestParams, execute_lmstudio_request, extract_model_name, parse_keep_alive_seconds,
+    resolve_model_with_context,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -68,30 +69,23 @@ pub async fn handle_ollama_embeddings(
                 cancellation_token_clone.clone(),
             )
             .await?;
-            let endpoint_url = format!("{}{}", context.lmstudio_url, LM_STUDIO_NATIVE_EMBEDDINGS);
 
-            let mut lm_request = build_lm_studio_request(
-                &resolution_ctx.lm_studio_model_id,
-                LMStudioRequestType::Embeddings {
-                    input: &input_value,
+            let response = execute_lmstudio_request(
+                &context,
+                LMStudioRequestParams {
+                    endpoint: LM_STUDIO_NATIVE_EMBEDDINGS,
+                    model_id: &resolution_ctx.lm_studio_model_id,
+                    request_type: LMStudioRequestType::Embeddings {
+                        input: &input_value,
+                    },
+                    options: resolution_ctx.effective_options.as_ref(),
+                    tools: None,
+                    format: None,
+                    keep_alive: keep_alive_seconds_for_request,
                 },
-                resolution_ctx.effective_options.as_ref(),
-                None,
-                None,
-            );
-            apply_keep_alive_ttl(&mut lm_request, keep_alive_seconds_for_request);
-
-            let request_obj =
-                CancellableRequest::new(context.client, cancellation_token_clone.clone());
-            log_request(
-                "POST",
-                &endpoint_url,
-                Some(&resolution_ctx.lm_studio_model_id),
-            );
-
-            let response = request_obj
-                .make_request(reqwest::Method::POST, &endpoint_url, Some(lm_request))
-                .await?;
+                cancellation_token_clone.clone(),
+            )
+            .await?;
             let lm_response_value =
                 handle_json_response(response, cancellation_token_clone).await?;
 
