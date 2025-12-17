@@ -6,7 +6,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::check_cancelled;
-use crate::constants::{ERROR_LM_STUDIO_UNAVAILABLE, LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS};
+use crate::constants::{ERROR_LM_STUDIO_UNAVAILABLE, LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS, LM_STUDIO_NATIVE_CHAT};
 use crate::error::{ProxyError, is_model_loading_error};
 use crate::handlers::RequestContext;
 use crate::http::CancellableRequest;
@@ -33,7 +33,7 @@ pub async fn trigger_model_loading(
 ) -> Result<bool, ProxyError> {
     let model_for_lm_studio_trigger = ollama_model_name;
 
-    let url = format!("{}/v1/chat/completions", context.lmstudio_url);
+    let url = context.endpoint_url(LM_STUDIO_NATIVE_CHAT);
     let minimal_request_body = MinimalChatRequestPayload {
         model: model_for_lm_studio_trigger,
         messages: vec![MinimalChatMessage {

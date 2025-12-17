@@ -12,14 +12,15 @@ use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
 use crate::handlers::transform::ResponseTransformer;
 use crate::http::client::handle_json_response;
-use crate::http::request::{LMStudioRequestType, build_lm_studio_request};
-use crate::http::{CancellableRequest, json_response};
-use crate::logging::{LogConfig, log_request, log_timed};
+use crate::http::json_response;
+use crate::http::request::LMStudioRequestType;
+use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 use crate::streaming::handle_streaming_response;
 
 use super::utils::{
-    apply_keep_alive_ttl, extract_model_name, parse_keep_alive_seconds, resolve_model_with_context,
+    LMStudioRequestParams, execute_lmstudio_request, extract_model_name, parse_keep_alive_seconds,
+    resolve_model_with_context,
 };
 
 pub async fn handle_ollama_generate(
@@ -73,12 +74,11 @@ pub async fn handle_ollama_generate(
             )
             .await?;
 
-            let endpoint_url_base = context.lmstudio_url;
             let mut prompt_for_estimation = current_prompt;
             let mut prompt_override_storage: Option<String> = None;
             let mut chat_messages_payload: Option<Value> = None;
 
-            let (lm_studio_target_url, lm_request_type) = if current_images.is_some() {
+            let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
                 let mut message_list = Vec::new();
                 if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
                     message_list.push(json!({
@@ -100,9 +100,8 @@ pub async fn handle_ollama_generate(
                 chat_messages_payload = Some(Value::Array(message_list));
                 let messages_ref = chat_messages_payload.as_ref().unwrap();
 
-                let chat_endpoint = LM_STUDIO_NATIVE_CHAT;
                 (
-                    format!("{}{}", endpoint_url_base, chat_endpoint),
+                    LM_STUDIO_NATIVE_CHAT,
                     LMStudioRequestType::Chat {
                         messages: messages_ref,
                         stream,
@@ -127,9 +126,8 @@ pub async fn handle_ollama_generate(
 
                 let effective_prompt = prompt_override_storage.as_deref().unwrap_or(current_prompt);
 
-                let completions_endpoint = LM_STUDIO_NATIVE_COMPLETIONS;
                 (
-                    format!("{}{}", endpoint_url_base, completions_endpoint),
+                    LM_STUDIO_NATIVE_COMPLETIONS,
                     LMStudioRequestType::Completion {
                         prompt: Cow::Borrowed(effective_prompt),
                         stream,
@@ -139,30 +137,20 @@ pub async fn handle_ollama_generate(
 
             let _ = &chat_messages_payload;
 
-            let mut lm_request = build_lm_studio_request(
-                &resolution_ctx.lm_studio_model_id,
-                lm_request_type,
-                resolution_ctx.effective_options.as_ref(),
-                None,
-                resolution_ctx.effective_format.as_ref(),
-            );
-            apply_keep_alive_ttl(&mut lm_request, keep_alive_seconds_for_request);
-
-            let request_obj =
-                CancellableRequest::new(context.client, cancellation_token_clone.clone());
-            log_request(
-                "POST",
-                &lm_studio_target_url,
-                Some(&resolution_ctx.lm_studio_model_id),
-            );
-
-            let response = request_obj
-                .make_request(
-                    reqwest::Method::POST,
-                    &lm_studio_target_url,
-                    Some(lm_request),
-                )
-                .await?;
+            let response = execute_lmstudio_request(
+                &context,
+                LMStudioRequestParams {
+                    endpoint: lm_studio_endpoint,
+                    model_id: &resolution_ctx.lm_studio_model_id,
+                    request_type: lm_request_type,
+                    options: resolution_ctx.effective_options.as_ref(),
+                    tools: None,
+                    format: resolution_ctx.effective_format.as_ref(),
+                    keep_alive: keep_alive_seconds_for_request,
+                },
+                cancellation_token_clone.clone(),
+            )
+            .await?;
 
             if stream {
                 handle_streaming_response(

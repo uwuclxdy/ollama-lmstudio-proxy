@@ -8,6 +8,9 @@ use crate::constants::ERROR_MISSING_MODEL;
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::transform::extract_system_prompt;
+use crate::http::CancellableRequest;
+use crate::http::request::{LMStudioRequestType, build_lm_studio_request};
+use crate::logging::log_request;
 use crate::model::{ModelInfo, clean_model_name};
 use crate::server::ModelResolverType;
 use crate::storage::{VirtualModelEntry, VirtualModelMetadata};
@@ -408,6 +411,39 @@ pub async fn determine_download_identifier(
     }
 
     Ok(requested_model.to_string())
+}
+
+pub struct LMStudioRequestParams<'a> {
+    pub endpoint: &'a str,
+    pub model_id: &'a str,
+    pub request_type: LMStudioRequestType<'a>,
+    pub options: Option<&'a Value>,
+    pub tools: Option<&'a Value>,
+    pub format: Option<&'a Value>,
+    pub keep_alive: Option<i64>,
+}
+
+pub async fn execute_lmstudio_request(
+    context: &RequestContext<'_>,
+    params: LMStudioRequestParams<'_>,
+    cancellation_token: CancellationToken,
+) -> Result<reqwest::Response, ProxyError> {
+    let endpoint_url = context.endpoint_url(params.endpoint);
+    let mut lm_request = build_lm_studio_request(
+        params.model_id,
+        params.request_type,
+        params.options,
+        params.tools,
+        params.format,
+    );
+    apply_keep_alive_ttl(&mut lm_request, params.keep_alive);
+
+    let request_obj = CancellableRequest::new(context.client, cancellation_token);
+    log_request("POST", &endpoint_url, Some(params.model_id));
+
+    request_obj
+        .make_request(reqwest::Method::POST, &endpoint_url, Some(lm_request))
+        .await
 }
 
 pub async fn create_virtual_model_alias(
