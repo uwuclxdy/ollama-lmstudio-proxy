@@ -1,4 +1,5 @@
 pub mod chunks;
+pub mod recovery;
 pub mod response;
 pub mod sse;
 

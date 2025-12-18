@@ -1,20 +1,24 @@
+use std::time::Instant;
+
 use bytes::Bytes;
 use humantime::parse_duration;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::constants::ERROR_MISSING_MODEL;
+use crate::constants::{DEFAULT_STREAM_TIMEOUT_SECONDS, ERROR_MISSING_MODEL};
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
-use crate::handlers::transform::extract_system_prompt;
+use crate::handlers::transform::{ResponseTransformer, extract_system_prompt};
 use crate::http::CancellableRequest;
+use crate::http::client::handle_json_response;
+use crate::http::json_response;
 use crate::http::request::{LMStudioRequestType, build_lm_studio_request};
-use crate::logging::log_request;
+use crate::logging::{LogConfig, log_request};
 use crate::model::{ModelInfo, clean_model_name};
 use crate::server::ModelResolverType;
 use crate::storage::{VirtualModelEntry, VirtualModelMetadata};
-use crate::streaming::create_ndjson_stream_response;
+use crate::streaming::{create_ndjson_stream_response, handle_streaming_response};
 
 /// Unified model resolution result containing the resolved LM Studio model ID
 /// and merged metadata from virtual model aliases and request parameters.
@@ -446,6 +450,79 @@ pub async fn execute_lmstudio_request(
         .await
 }
 
+pub enum ResponseContext {
+    Chat { message_count: usize },
+    Generate { prompt: String },
+}
+
+pub struct ResponseParams<'a> {
+    pub response: reqwest::Response,
+    pub stream: bool,
+    pub is_chat: bool,
+    pub model_name: &'a str,
+    pub start_time: Instant,
+    pub context: ResponseContext,
+    pub model_resolver: &'a ModelResolverType,
+    pub cancellation_token: CancellationToken,
+}
+
+pub async fn handle_response(
+    params: ResponseParams<'_>,
+) -> Result<warp::reply::Response, ProxyError> {
+    let ResponseParams {
+        response,
+        stream,
+        is_chat,
+        model_name,
+        start_time,
+        context,
+        model_resolver,
+        cancellation_token,
+    } = params;
+    if stream {
+        handle_streaming_response(
+            response,
+            is_chat,
+            model_name,
+            start_time,
+            cancellation_token,
+            DEFAULT_STREAM_TIMEOUT_SECONDS,
+        )
+        .await
+    } else {
+        let lm_response_value = handle_json_response(response, cancellation_token).await?;
+        let use_native_stats = matches!(model_resolver, ModelResolverType::Native(_));
+
+        let ollama_response = match context {
+            ResponseContext::Chat { message_count } => ResponseTransformer::convert_to_ollama_chat(
+                &lm_response_value,
+                model_name,
+                message_count,
+                start_time,
+                use_native_stats,
+            ),
+            ResponseContext::Generate { prompt } => {
+                ResponseTransformer::convert_to_ollama_generate(
+                    &lm_response_value,
+                    model_name,
+                    &prompt,
+                    start_time,
+                    use_native_stats,
+                )
+            }
+        };
+
+        if LogConfig::get().debug_enabled {
+            log::debug!(
+                "{} response: {}",
+                if is_chat { "chat" } else { "generate" },
+                serde_json::to_string_pretty(&ollama_response).unwrap_or_default()
+            );
+        }
+        Ok(json_response(&ollama_response))
+    }
+}
+
 pub async fn create_virtual_model_alias(
     context: &RequestContext<'_>,
     model_resolver: &ModelResolverType,
@@ -484,4 +561,48 @@ pub async fn create_virtual_model_alias(
         .virtual_models
         .create_alias(alias_name, source_name.to_string(), resolved_id, metadata)
         .await
+}
+
+pub fn build_model_list_with_virtuals<F>(
+    base_models: &[ModelInfo],
+    virtual_entries: &[VirtualModelEntry],
+    transform_fn: F,
+) -> Vec<Value>
+where
+    F: Fn(&ModelInfo) -> Value,
+{
+    let mut result: Vec<_> = base_models.iter().map(&transform_fn).collect();
+
+    for entry in virtual_entries {
+        if let Some(base_model) = base_models.iter().find(|m| m.id == entry.target_model_id) {
+            let aliased = base_model.with_alias_name(&entry.name);
+            result.push(transform_fn(&aliased));
+        }
+    }
+
+    result
+}
+
+pub fn log_lifecycle_request(body: &Value, endpoint: &str) {
+    if LogConfig::get().debug_enabled {
+        log::debug!(
+            "{} request: {}",
+            endpoint,
+            serde_json::to_string_pretty(body).unwrap_or_default()
+        );
+    }
+}
+
+pub fn log_lifecycle_response(response: &Value, endpoint: &str, streaming: bool) {
+    if LogConfig::get().debug_enabled {
+        if streaming {
+            log::debug!("{} response: (streaming)", endpoint);
+        } else {
+            log::debug!(
+                "{} response: {}",
+                endpoint,
+                serde_json::to_string_pretty(response).unwrap_or_default()
+            );
+        }
+    }
 }

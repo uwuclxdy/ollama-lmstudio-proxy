@@ -18,9 +18,8 @@ use crate::streaming::chunks::{
     create_cancellation_chunk, create_error_chunk, create_final_chunk,
     create_ollama_streaming_chunk,
 };
-use crate::streaming::response::{
-    create_ollama_streaming_response, create_passthrough_streaming_response,
-};
+use crate::streaming::recovery::recover_json_from_chunk;
+use crate::streaming::response::{StreamContentType, create_streaming_response};
 
 static STREAM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -229,7 +228,7 @@ pub async fn handle_streaming_response(
         );
     });
 
-    create_ollama_streaming_response(rx)
+    create_streaming_response(rx, StreamContentType::Ndjson)
 }
 
 pub async fn handle_passthrough_streaming_response(
@@ -287,7 +286,7 @@ pub async fn handle_passthrough_streaming_response(
         );
     });
 
-    create_passthrough_streaming_response(rx)
+    create_streaming_response(rx, StreamContentType::Sse)
 }
 
 #[derive(Default)]
@@ -426,64 +425,4 @@ async fn send_error_and_close(
 ) {
     let error_chunk = create_error_chunk(model_ollama_name, error_message, is_chat_endpoint);
     send_chunk_and_close_channel(tx, error_chunk).await;
-}
-
-fn recover_json_from_chunk(chunk_data: &str) -> Option<Value> {
-    // Try to find valid JSON within the chunk by looking for common patterns
-    // 1. Try to find JSON objects/arrays within the text
-    // 2. Try to extract the core structure even if there are extra characters
-
-    // First, try to find the first '{' and last '}' to extract a potential JSON object
-    if let Some(start_brace) = chunk_data.find('{')
-        && let Some(end_brace) = chunk_data.rfind('}')
-        && start_brace < end_brace
-    {
-        let potential_json = &chunk_data[start_brace..=end_brace];
-        if let Ok(parsed) = serde_json::from_str::<Value>(potential_json) {
-            return Some(parsed);
-        }
-    }
-
-    // Try to find JSON array pattern
-    if let Some(start_bracket) = chunk_data.find('[')
-        && let Some(end_bracket) = chunk_data.rfind(']')
-        && start_bracket < end_bracket
-    {
-        let potential_json = &chunk_data[start_bracket..=end_bracket];
-        if let Ok(parsed) = serde_json::from_str::<Value>(potential_json) {
-            return Some(parsed);
-        }
-    }
-
-    // Try to clean up common issues:
-    // - Remove trailing commas
-    // - Fix missing quotes
-    // - Remove extra whitespace
-    let cleaned_data = chunk_data
-        .replace(",\n}", "\n}") // Remove trailing commas before closing braces
-        .replace(",\n]", "\n]") // Remove trailing commas before closing brackets
-        .replace(":\n", ": \"\""); // Add missing values for empty fields
-
-    // Try parsing the cleaned version
-    if let Ok(parsed) = serde_json::from_str::<Value>(&cleaned_data) {
-        return Some(parsed);
-    }
-
-    // Try to extract just the choices array if it exists
-    if let Some(choices_start) = chunk_data.find("\"choices\":")
-        && let Some(array_start) = chunk_data[choices_start..].find('[')
-    {
-        let choices_start_pos = choices_start + array_start;
-        if let Some(array_end) = chunk_data[choices_start_pos..].rfind(']') {
-            let choices_json = &chunk_data[choices_start_pos..=choices_start_pos + array_end];
-            if let Ok(parsed) = serde_json::from_str::<Value>(choices_json) {
-                // Wrap the choices array in a proper response object
-                let mut result = json!({});
-                result["choices"] = parsed;
-                return Some(result);
-            }
-        }
-    }
-
-    None
 }

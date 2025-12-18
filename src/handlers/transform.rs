@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -64,7 +64,7 @@ impl TimingInfo {
             };
         }
 
-        Self::calculate_legacy(
+        Self::from_legacy_estimation(
             Instant::now(),
             estimated_input_tokens,
             estimated_output_tokens,
@@ -79,7 +79,7 @@ impl TimingInfo {
         )
     }
 
-    pub fn calculate_legacy(
+    pub fn from_legacy_estimation(
         start_time: Instant,
         input_tokens_estimate: u64,
         output_tokens_estimate: u64,
@@ -87,7 +87,37 @@ impl TimingInfo {
         actual_completion_tokens: Option<u64>,
     ) -> Self {
         let total_duration_ns = start_time.elapsed().as_nanos() as u64;
+        Self::from_duration_and_tokens(
+            total_duration_ns,
+            input_tokens_estimate,
+            output_tokens_estimate,
+            actual_prompt_tokens,
+            actual_completion_tokens,
+        )
+    }
 
+    pub fn from_stream_chunks(
+        duration: Duration,
+        chunk_count_estimate: u64,
+        actual_completion_tokens: Option<u64>,
+    ) -> Self {
+        let total_duration_ns = duration.as_nanos() as u64;
+        Self::from_duration_and_tokens(
+            total_duration_ns,
+            10,
+            chunk_count_estimate.max(1),
+            None,
+            actual_completion_tokens,
+        )
+    }
+
+    fn from_duration_and_tokens(
+        total_duration_ns: u64,
+        input_tokens_estimate: u64,
+        output_tokens_estimate: u64,
+        actual_prompt_tokens: Option<u64>,
+        actual_completion_tokens: Option<u64>,
+    ) -> Self {
         let final_prompt_tokens = actual_prompt_tokens.unwrap_or(input_tokens_estimate).max(1);
         let final_eval_tokens = actual_completion_tokens
             .unwrap_or(output_tokens_estimate)
@@ -148,7 +178,7 @@ impl ResponseTransformer {
                 .and_then(|u| u.get("completion_tokens"))
                 .and_then(|t| t.as_u64());
 
-            TimingInfo::calculate_legacy(
+            TimingInfo::from_legacy_estimation(
                 start_time,
                 (message_count_for_estimation * 10).max(1) as u64,
                 estimate_token_count(&content),
@@ -214,7 +244,7 @@ impl ResponseTransformer {
                 .and_then(|u| u.get("completion_tokens"))
                 .and_then(|t| t.as_u64());
 
-            TimingInfo::calculate_legacy(
+            TimingInfo::from_legacy_estimation(
                 start_time,
                 estimate_token_count(prompt_for_estimation),
                 estimate_token_count(&content),
@@ -263,7 +293,7 @@ impl ResponseTransformer {
                 .and_then(|u| u.get("prompt_tokens"))
                 .and_then(|t| t.as_u64());
 
-            TimingInfo::calculate_legacy(
+            TimingInfo::from_legacy_estimation(
                 start_time,
                 estimated_input_tokens,
                 estimated_output_tokens,

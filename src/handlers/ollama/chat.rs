@@ -8,17 +8,14 @@ use crate::constants::{ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
-use crate::handlers::transform::ResponseTransformer;
-use crate::http::client::handle_json_response;
-use crate::http::json_response;
 use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
-use crate::streaming::handle_streaming_response;
 
 use super::utils::{
-    LMStudioRequestParams, execute_lmstudio_request, extract_model_name, normalize_chat_messages,
-    parse_keep_alive_seconds, resolve_model_with_context,
+    LMStudioRequestParams, ResponseContext, ResponseParams, execute_lmstudio_request,
+    extract_model_name, handle_response, normalize_chat_messages, parse_keep_alive_seconds,
+    resolve_model_with_context,
 };
 
 pub async fn handle_ollama_chat(
@@ -102,34 +99,17 @@ pub async fn handle_ollama_chat(
             )
             .await?;
 
-            if stream {
-                handle_streaming_response(
-                    response,
-                    true,
-                    &ollama_model_name_clone,
-                    start_time,
-                    cancellation_token_clone.clone(),
-                    60,
-                )
-                .await
-            } else {
-                let lm_response_value =
-                    handle_json_response(response, cancellation_token_clone).await?;
-                let ollama_response = ResponseTransformer::convert_to_ollama_chat(
-                    &lm_response_value,
-                    &ollama_model_name_clone,
-                    message_count,
-                    start_time,
-                    matches!(model_resolver, ModelResolverType::Native(_)),
-                );
-                if LogConfig::get().debug_enabled {
-                    log::debug!(
-                        "chat response: {}",
-                        serde_json::to_string_pretty(&ollama_response).unwrap_or_default()
-                    );
-                }
-                Ok(json_response(&ollama_response))
-            }
+            handle_response(ResponseParams {
+                response,
+                stream,
+                is_chat: true,
+                model_name: &ollama_model_name_clone,
+                start_time,
+                context: ResponseContext::Chat { message_count },
+                model_resolver: &model_resolver,
+                cancellation_token: cancellation_token_clone,
+            })
+            .await
         }
     };
 

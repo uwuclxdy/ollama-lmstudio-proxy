@@ -10,17 +10,13 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
-use crate::handlers::transform::ResponseTransformer;
-use crate::http::client::handle_json_response;
-use crate::http::json_response;
 use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
-use crate::streaming::handle_streaming_response;
 
 use super::utils::{
-    LMStudioRequestParams, execute_lmstudio_request, extract_model_name, parse_keep_alive_seconds,
-    resolve_model_with_context,
+    LMStudioRequestParams, ResponseContext, ResponseParams, execute_lmstudio_request,
+    extract_model_name, handle_response, parse_keep_alive_seconds, resolve_model_with_context,
 };
 
 pub async fn handle_ollama_generate(
@@ -152,34 +148,19 @@ pub async fn handle_ollama_generate(
             )
             .await?;
 
-            if stream {
-                handle_streaming_response(
-                    response,
-                    false,
-                    &ollama_model_name_clone,
-                    start_time,
-                    cancellation_token_clone.clone(),
-                    60,
-                )
-                .await
-            } else {
-                let lm_response_value =
-                    handle_json_response(response, cancellation_token_clone).await?;
-                let ollama_response = ResponseTransformer::convert_to_ollama_generate(
-                    &lm_response_value,
-                    &ollama_model_name_clone,
-                    prompt_for_estimation,
-                    start_time,
-                    matches!(model_resolver, ModelResolverType::Native(_)),
-                );
-                if LogConfig::get().debug_enabled {
-                    log::debug!(
-                        "generate response: {}",
-                        serde_json::to_string_pretty(&ollama_response).unwrap_or_default()
-                    );
-                }
-                Ok(json_response(&ollama_response))
-            }
+            handle_response(ResponseParams {
+                response,
+                stream,
+                is_chat: false,
+                model_name: &ollama_model_name_clone,
+                start_time,
+                context: ResponseContext::Generate {
+                    prompt: prompt_for_estimation.to_string(),
+                },
+                model_resolver: &model_resolver,
+                cancellation_token: cancellation_token_clone,
+            })
+            .await
         }
     };
 

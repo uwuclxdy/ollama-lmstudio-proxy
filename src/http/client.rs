@@ -3,7 +3,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::check_cancelled;
-use crate::constants::{CONTENT_TYPE_JSON, ERROR_LM_STUDIO_UNAVAILABLE};
+use crate::constants::CONTENT_TYPE_JSON;
 use crate::error::ProxyError;
 
 pub struct CancellableRequest<'a> {
@@ -34,20 +34,7 @@ impl<'a> CancellableRequest<'a> {
 
         tokio::select! {
             result = request_builder.send() => {
-                match result {
-                    Ok(response) => Ok(response),
-                    Err(err) => {
-                        let error_msg = if err.is_connect() {
-                            ERROR_LM_STUDIO_UNAVAILABLE
-                        } else if err.is_request() {
-                            "invalid request"
-                        } else {
-                            "request failed"
-                        };
-                        log::error!("HTTP request failed: {}: {:?}", error_msg, err);
-                        Err(ProxyError::internal_server_error(error_msg))
-                    }
-                }
+                result.map_err(crate::http::error::map_reqwest_error)
             }
             _ = self.token.cancelled() => {
                 Err(ProxyError::request_cancelled())

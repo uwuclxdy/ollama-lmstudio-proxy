@@ -12,7 +12,8 @@ use crate::logging::{LogConfig, log_request, log_timed};
 use crate::server::ModelResolverType;
 
 use super::utils::{
-    extract_model_name, keep_alive_requests_unload, parse_keep_alive_seconds, resolve_model_target,
+    build_model_list_with_virtuals, extract_model_name, keep_alive_requests_unload,
+    log_lifecycle_response, parse_keep_alive_seconds, resolve_model_target,
 };
 
 pub async fn handle_ollama_show(
@@ -84,14 +85,7 @@ pub async fn handle_ollama_show(
     }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama show", start_time);
-
-    if LogConfig::get().debug_enabled {
-        log::debug!(
-            "show response: {}",
-            serde_json::to_string_pretty(&response).unwrap_or_default()
-        );
-    }
-
+    log_lifecycle_response(&response, "show", false);
     Ok(json_response(&response))
 }
 
@@ -111,31 +105,17 @@ pub async fn handle_ollama_ps(
     };
 
     let virtual_entries = context.virtual_models.list().await;
-
-    let mut ollama_models: Vec<_> = loaded_models
-        .iter()
-        .map(|m| m.to_ollama_ps_model())
+    let loaded_virtuals: Vec<_> = virtual_entries
+        .into_iter()
+        .filter(|entry| loaded_models.iter().any(|m| m.id == entry.target_model_id))
         .collect();
 
-    for entry in &virtual_entries {
-        if loaded_models.iter().any(|m| m.id == entry.target_model_id)
-            && let Some(base_model) = loaded_models.iter().find(|m| m.id == entry.target_model_id)
-        {
-            let aliased = base_model.with_alias_name(&entry.name);
-            ollama_models.push(aliased.to_ollama_ps_model());
-        }
-    }
+    let ollama_models = build_model_list_with_virtuals(&loaded_models, &loaded_virtuals, |m| {
+        m.to_ollama_ps_model()
+    });
 
     let response = json!({ "models": ollama_models });
-
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
-
-    if LogConfig::get().debug_enabled {
-        log::debug!(
-            "ps response: {}",
-            serde_json::to_string_pretty(&response).unwrap_or_default()
-        );
-    }
-
+    log_lifecycle_response(&response, "ps", false);
     Ok(json_response(&response))
 }

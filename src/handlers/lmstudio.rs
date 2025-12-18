@@ -3,21 +3,16 @@ use std::time::Instant;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::StreamBody;
-use reqwest::header::{
-    self, HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
-};
+use reqwest::header::{self, HeaderMap as ReqHeaderMap};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use warp::http::{self, Response as WarpResponse};
 
-use crate::constants::{
-    CONTENT_TYPE_JSON, ERROR_LM_STUDIO_UNAVAILABLE, ERROR_TIMEOUT, LOG_PREFIX_INFO,
-    LOG_PREFIX_SUCCESS,
-};
+use crate::constants::{LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
-use crate::http::{client::handle_json_response, json_response};
+use crate::http::{build_forward_headers, client::handle_json_response, json_response};
 use crate::logging::{LogConfig, format_duration, log_request, log_timed};
 use crate::server::ModelResolverType;
 use crate::streaming::{handle_passthrough_streaming_response, is_streaming_request};
@@ -287,39 +282,6 @@ fn prepare_request_body(
     }
 }
 
-fn build_forward_headers(original: &http::HeaderMap, force_json: bool) -> ReqHeaderMap {
-    let mut filtered = ReqHeaderMap::new();
-
-    for (name, value) in original.iter() {
-        let name_str = name.as_str();
-        if name_str.eq_ignore_ascii_case("host")
-            || name_str.eq_ignore_ascii_case("content-length")
-            || name_str.eq_ignore_ascii_case("transfer-encoding")
-        {
-            continue;
-        }
-        if force_json && name_str.eq_ignore_ascii_case("content-type") {
-            continue;
-        }
-
-        if let (Ok(req_name), Ok(req_value)) = (
-            name_str.parse::<ReqHeaderName>(),
-            ReqHeaderValue::from_bytes(value.as_bytes()),
-        ) {
-            filtered.append(req_name, req_value);
-        }
-    }
-
-    if force_json {
-        filtered.insert(
-            header::CONTENT_TYPE,
-            ReqHeaderValue::from_static(CONTENT_TYPE_JSON),
-        );
-    }
-
-    filtered
-}
-
 async fn send_raw_request(
     client: &reqwest::Client,
     method: http::Method,
@@ -341,19 +303,8 @@ async fn send_raw_request(
     }
 
     tokio::select! {
-        resp = builder.send() => resp.map_err(map_reqwest_error),
+        resp = builder.send() => resp.map_err(crate::http::error::map_reqwest_error),
         _ = cancellation_token.cancelled() => Err(ProxyError::request_cancelled()),
-    }
-}
-
-fn map_reqwest_error(err: reqwest::Error) -> ProxyError {
-    if err.is_connect() {
-        ProxyError::lm_studio_unavailable(ERROR_LM_STUDIO_UNAVAILABLE)
-    } else if err.is_timeout() {
-        ProxyError::lm_studio_unavailable(ERROR_TIMEOUT)
-    } else {
-        log::error!("LM Studio passthrough: {}", err);
-        ProxyError::internal_server_error(&format!("LM Studio request failed: {}", err))
     }
 }
 
@@ -386,8 +337,8 @@ async fn forward_raw_response(
     let mut builder = WarpResponse::builder().status(status);
     for (name, value) in headers.iter() {
         if let (Ok(warp_name), Ok(warp_value)) = (
-            http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
-            http::header::HeaderValue::from_bytes(value.as_bytes()),
+            header::HeaderName::from_bytes(name.as_str().as_bytes()),
+            header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
             builder = builder.header(warp_name, warp_value);
         }
@@ -399,9 +350,9 @@ async fn forward_raw_response(
 
     Ok(unsafe {
         std::mem::transmute::<
-            warp::http::Response<
+            http::Response<
                 http_body_util::combinators::BoxBody<
-                    bytes::Bytes,
+                    Bytes,
                     Box<dyn std::error::Error + Send + Sync>,
                 >,
             >,
