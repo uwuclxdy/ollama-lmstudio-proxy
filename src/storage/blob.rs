@@ -23,7 +23,7 @@ impl BlobStore {
         Ok(Self { base_dir: dir })
     }
 
-    fn digest_parts(digest: &str) -> Result<(&str, &str), ProxyError> {
+    fn validated_blob_path(&self, digest: &str) -> Result<PathBuf, ProxyError> {
         let Some((algo, hex)) = digest.split_once(':') else {
             return Err(ProxyError::bad_request(
                 "invalid digest format. Expected algo:hex (e.g. sha256:abc)",
@@ -35,16 +35,11 @@ impl BlobStore {
         if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(ProxyError::bad_request("invalid sha256 digest"));
         }
-        Ok((algo, hex))
-    }
-
-    fn blob_path(&self, digest: &str) -> Result<PathBuf, ProxyError> {
-        let (algo, hex) = Self::digest_parts(digest)?;
         Ok(self.base_dir.join(algo).join(hex))
     }
 
     pub async fn exists(&self, digest: &str) -> Result<bool, ProxyError> {
-        let path = self.blob_path(digest)?;
+        let path = self.validated_blob_path(digest)?;
         tokio::fs::try_exists(path).await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
                 "failed to verify blob existence for {}: {}",
@@ -57,8 +52,8 @@ impl BlobStore {
     where
         S: Stream<Item = Result<bytes::Bytes, warp::Error>> + Unpin,
     {
-        let (_algo, hex) = Self::digest_parts(digest)?;
-        let final_path = self.blob_path(digest)?;
+        let final_path = self.validated_blob_path(digest)?;
+        let hex = digest.split_once(':').map(|(_, h)| h).unwrap();
 
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {

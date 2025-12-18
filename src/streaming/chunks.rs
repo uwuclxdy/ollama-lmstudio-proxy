@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -65,11 +65,9 @@ pub fn create_cancellation_chunk(
     tokens_generated_estimate: u64,
     is_chat_endpoint: bool,
 ) -> Value {
-    let timing = TimingInfo::calculate_legacy(
-        Instant::now() - duration,
-        10,
+    let timing = TimingInfo::from_stream_chunks(
+        duration,
         tokens_generated_estimate,
-        None,
         Some(tokens_generated_estimate),
     );
 
@@ -118,13 +116,7 @@ pub fn create_final_chunk(
     is_chat_endpoint: bool,
     done_reason: Option<&str>,
 ) -> Value {
-    let timing = TimingInfo::calculate_legacy(
-        Instant::now() - duration,
-        10,
-        chunk_count_for_token_estimation.max(1),
-        None,
-        None,
-    );
+    let timing = TimingInfo::from_stream_chunks(duration, chunk_count_for_token_estimation, None);
 
     let mut chunk =
         create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);

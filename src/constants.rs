@@ -14,6 +14,7 @@ pub const TOKEN_TO_CHAR_RATIO: f64 = 0.25;
 pub const DEFAULT_LOAD_DURATION_NS: u64 = 1_000_000;
 pub const TIMING_EVAL_RATIO: u64 = 2;
 pub const TIMING_PROMPT_RATIO: u64 = 4;
+pub const DEFAULT_STREAM_TIMEOUT_SECONDS: u64 = 60;
 
 /// Response headers
 pub const CONTENT_TYPE_JSON: &str = "application/json; charset=utf-8";

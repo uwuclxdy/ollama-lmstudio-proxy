@@ -9,6 +9,11 @@ use crate::constants::{
 };
 use crate::error::ProxyError;
 
+pub enum StreamContentType {
+    Ndjson,
+    Sse,
+}
+
 pub fn is_streaming_request(body: &Value) -> bool {
     body.get("stream")
         .and_then(|s| s.as_bool())
@@ -65,33 +70,30 @@ fn create_generic_streaming_response(
     })
 }
 
-pub fn create_ollama_streaming_response(
+pub fn create_streaming_response(
     rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
+    content_type: StreamContentType,
 ) -> Result<warp::reply::Response, ProxyError> {
-    create_generic_streaming_response(
-        rx,
-        "application/x-ndjson; charset=utf-8",
-        "failed to create Ollama streaming response",
-    )
-}
+    let (content_type_str, error_message) = match content_type {
+        StreamContentType::Ndjson => (
+            "application/x-ndjson; charset=utf-8",
+            "failed to create NDJSON streaming response",
+        ),
+        StreamContentType::Sse => (CONTENT_TYPE_SSE, "failed to create SSE streaming response"),
+    };
 
-pub fn create_passthrough_streaming_response(
-    rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
-) -> Result<warp::reply::Response, ProxyError> {
-    create_generic_streaming_response(
-        rx,
-        CONTENT_TYPE_SSE,
-        "failed to create passthrough SSE streaming response",
-    )
+    create_generic_streaming_response(rx, content_type_str, error_message)
 }
 
 pub fn create_ndjson_stream_response(
     rx: mpsc::UnboundedReceiver<Result<bytes::Bytes, std::io::Error>>,
     error_message_on_build_fail: &str,
 ) -> Result<warp::reply::Response, ProxyError> {
-    create_generic_streaming_response(
-        rx,
-        "application/x-ndjson; charset=utf-8",
-        error_message_on_build_fail,
-    )
+    let result = create_streaming_response(rx, StreamContentType::Ndjson);
+    if result.is_err() {
+        return Err(ProxyError::internal_server_error(
+            error_message_on_build_fail,
+        ));
+    }
+    result
 }

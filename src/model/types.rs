@@ -6,6 +6,11 @@ use crate::constants::{
     DEFAULT_TOP_P,
 };
 
+#[derive(Debug, Clone)]
+pub struct ModelParameters {
+    pub size_string: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeModelData {
     pub key: String,
@@ -202,90 +207,10 @@ impl ModelInfo {
         ((base_params as f64) * multiplier) as u64
     }
 
-    pub fn to_ollama_tags_model(&self) -> Value {
-        let estimated_size = self.calculate_estimated_size();
-
-        json!({
-            "name": self.ollama_name,
-            "model": self.ollama_name,
-            "modified_at": chrono::Utc::now().to_rfc3339(),
-            "size": estimated_size,
-            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
-            "details": {
-                "parent_model": "",
-                "format": self.compatibility_type,
-                "family": self.arch,
-                "families": [self.arch],
-                "parameter_size": self.extract_parameter_size_string(),
-                "quantization_level": self.quantization
-            }
-        })
-    }
-
-    pub fn to_ollama_ps_model(&self) -> Value {
-        let estimated_size = self.calculate_estimated_size();
-
-        json!({
-            "name": self.ollama_name,
-            "model": self.ollama_name,
-            "size": estimated_size,
-            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
-            "details": {
-                "parent_model": "",
-                "format": self.compatibility_type,
-                "family": self.arch,
-                "families": [self.arch],
-                "parameter_size": self.extract_parameter_size_string(),
-                "quantization_level": self.quantization
-            },
-            "expires_at": (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES)).to_rfc3339(),
-            "size_vram": estimated_size
-        })
-    }
-
-    pub fn to_show_response(&self) -> Value {
-        let estimated_size = self.calculate_estimated_size();
-        let capabilities = self.determine_capabilities();
-        let param_size_str = self.extract_parameter_size_string();
-
-        json!({
-            "modelfile": format!("# Modelfile for {}\nFROM {} # (Real data from LM Studio)\n\nPARAMETER temperature {}\nPARAMETER top_p {}\nPARAMETER top_k {}\n\nTEMPLATE \"\"\"{{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}\"\"\"",
-                self.ollama_name, self.ollama_name, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K
-            ),
-            "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}",
-                DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
-            "template": "{{ if .System }}{{ .System }}\\n{{ end }}{{ .Prompt }}",
-            "details": {
-                "parent_model": "",
-                "format": self.compatibility_type,
-                "family": self.arch,
-                "families": [self.arch],
-                "parameter_size": param_size_str,
-                "quantization_level": self.quantization
-            },
-            "model_info": {
-                "general.architecture": self.arch,
-                "general.file_type": 2,
-                "general.quantization_version": 2,
-                "lmstudio.publisher": self.publisher,
-                "lmstudio.model_type": self.model_type,
-                "lmstudio.state": self.state,
-                "lmstudio.max_context_length": self.max_context_length,
-                "lmstudio.compatibility_type": self.compatibility_type,
-                "lmstudio.supports_vision": self.supports_vision,
-                "lmstudio.supports_tools": self.supports_tools
-            },
-            "capabilities": capabilities,
-            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
-            "size": estimated_size,
-            "modified_at": chrono::Utc::now().to_rfc3339()
-        })
-    }
-
-    fn extract_parameter_size_string(&self) -> String {
+    fn parse_parameters(&self) -> ModelParameters {
         let lower_id = self.id.to_lowercase();
 
-        if lower_id.contains("0.5b") || lower_id.contains("500m") {
+        let size_string = if lower_id.contains("0.5b") || lower_id.contains("500m") {
             "0.5B".to_string()
         } else if lower_id.contains("1b") && !lower_id.contains("11b") {
             "1B".to_string()
@@ -303,6 +228,87 @@ impl ModelInfo {
             "70B".to_string()
         } else {
             "unknown".to_string()
+        };
+
+        ModelParameters { size_string }
+    }
+
+    fn base_ollama_representation(&self) -> Value {
+        let estimated_size = self.calculate_estimated_size();
+        let params = self.parse_parameters();
+
+        json!({
+            "name": self.ollama_name,
+            "model": self.ollama_name,
+            "size": estimated_size,
+            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
+            "details": {
+                "parent_model": "",
+                "format": self.compatibility_type,
+                "family": self.arch,
+                "families": [self.arch],
+                "parameter_size": params.size_string,
+                "quantization_level": self.quantization
+            }
+        })
+    }
+
+    pub fn to_ollama_tags_model(&self) -> Value {
+        let mut base = self.base_ollama_representation();
+
+        if let Some(obj) = base.as_object_mut() {
+            obj.insert(
+                "modified_at".to_string(),
+                chrono::Utc::now().to_rfc3339().into(),
+            );
         }
+
+        base
+    }
+
+    pub fn to_ollama_ps_model(&self) -> Value {
+        let mut base = self.base_ollama_representation();
+
+        if let Some(obj) = base.as_object_mut() {
+            obj.insert(
+                "expires_at".to_string(),
+                (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
+                    .to_rfc3339()
+                    .into(),
+            );
+            obj.insert("size_vram".to_string(), obj["size"].clone());
+        }
+
+        base
+    }
+
+    pub fn to_show_response(&self) -> Value {
+        let capabilities = self.determine_capabilities();
+
+        json!({
+            "modelfile": format!("# Modelfile for {}\nFROM {} # (Real data from LM Studio)\n\nPARAMETER temperature {}\nPARAMETER top_p {}\nPARAMETER top_k {}\n\nTEMPLATE \"\"\"{{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}\"\"\"",
+                self.ollama_name, self.ollama_name, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K
+            ),
+            "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}",
+                DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
+            "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
+            "details": self.base_ollama_representation()["details"].clone(),
+            "model_info": {
+                "general.architecture": self.arch,
+                "general.file_type": 2,
+                "general.quantization_version": 2,
+                "lmstudio.publisher": self.publisher,
+                "lmstudio.model_type": self.model_type,
+                "lmstudio.state": self.state,
+                "lmstudio.max_context_length": self.max_context_length,
+                "lmstudio.compatibility_type": self.compatibility_type,
+                "lmstudio.supports_vision": self.supports_vision,
+                "lmstudio.supports_tools": self.supports_tools
+            },
+            "capabilities": capabilities,
+            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
+            "size": self.base_ollama_representation()["size"].as_u64().unwrap_or(0),
+            "modified_at": chrono::Utc::now().to_rfc3339()
+        })
     }
 }

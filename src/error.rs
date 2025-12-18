@@ -175,3 +175,13 @@ macro_rules! check_cancelled {
         }
     };
 }
+
+/// Async variant of check_cancelled that can be used in async contexts
+#[macro_export]
+macro_rules! check_cancelled_async {
+    ($token:expr) => {
+        if $token.is_cancelled() {
+            return Err($crate::error::ProxyError::request_cancelled());
+        }
+    };
+}

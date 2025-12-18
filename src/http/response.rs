@@ -1,4 +1,5 @@
 use serde_json::Value;
+use warp::http::HeaderMap;
 
 use crate::constants::{
     CONTENT_TYPE_JSON, HEADER_ACCESS_CONTROL_ALLOW_HEADERS, HEADER_ACCESS_CONTROL_ALLOW_METHODS,
@@ -33,4 +34,43 @@ pub fn json_response(value: &Value) -> warp::reply::Response {
                 .body("Internal Server Error".into())
                 .unwrap()
         })
+}
+
+/// Build forward headers for requests, filtering out hop-by-hop headers
+pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> reqwest::header::HeaderMap {
+    use reqwest::header::{
+        HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
+    };
+    use warp::http::header;
+
+    let mut filtered = ReqHeaderMap::new();
+
+    for (name, value) in original.iter() {
+        let name_str = name.as_str();
+        if name_str.eq_ignore_ascii_case("host")
+            || name_str.eq_ignore_ascii_case("content-length")
+            || name_str.eq_ignore_ascii_case("transfer-encoding")
+        {
+            continue;
+        }
+        if force_json && name_str.eq_ignore_ascii_case("content-type") {
+            continue;
+        }
+
+        if let (Ok(req_name), Ok(req_value)) = (
+            name_str.parse::<ReqHeaderName>(),
+            ReqHeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            filtered.append(req_name, req_value);
+        }
+    }
+
+    if force_json {
+        filtered.insert(
+            header::CONTENT_TYPE,
+            ReqHeaderValue::from_static(CONTENT_TYPE_JSON),
+        );
+    }
+
+    filtered
 }

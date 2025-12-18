@@ -7,8 +7,10 @@ use crate::constants::LOG_PREFIX_SUCCESS;
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::http::json_response;
-use crate::logging::{LogConfig, log_timed};
+use crate::logging::log_timed;
 use crate::server::ModelResolverType;
+
+use super::utils::{build_model_list_with_virtuals, log_lifecycle_response};
 
 pub async fn handle_ollama_tags(
     context: RequestContext<'_>,
@@ -26,14 +28,11 @@ pub async fn handle_ollama_tags(
     };
 
     let virtual_entries = context.virtual_models.list().await;
-
-    let mut ollama_models: Vec<_> = models.iter().map(|m| m.to_ollama_tags_model()).collect();
+    let mut ollama_models =
+        build_model_list_with_virtuals(&models, &virtual_entries, |m| m.to_ollama_tags_model());
 
     for entry in &virtual_entries {
-        if let Some(base_model) = models.iter().find(|m| m.id == entry.target_model_id) {
-            let aliased = base_model.with_alias_name(&entry.name);
-            ollama_models.push(aliased.to_ollama_tags_model());
-        } else {
+        if models.iter().all(|m| m.id != entry.target_model_id) {
             ollama_models.push(json!({
                 "name": entry.name,
                 "model": entry.name,
@@ -53,15 +52,7 @@ pub async fn handle_ollama_tags(
     }
 
     let response = json!({ "models": ollama_models });
-
     log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
-
-    if LogConfig::get().debug_enabled {
-        log::debug!(
-            "tags response: {}",
-            serde_json::to_string_pretty(&response).unwrap_or_default()
-        );
-    }
-
+    log_lifecycle_response(&response, "tags", false);
     Ok(json_response(&response))
 }

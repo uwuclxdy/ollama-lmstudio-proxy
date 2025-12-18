@@ -6,7 +6,9 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::check_cancelled;
-use crate::constants::{ERROR_LM_STUDIO_UNAVAILABLE, LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS, LM_STUDIO_NATIVE_CHAT};
+use crate::constants::{
+    ERROR_LM_STUDIO_UNAVAILABLE, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS,
+};
 use crate::error::{ProxyError, is_model_loading_error};
 use crate::handlers::RequestContext;
 use crate::http::CancellableRequest;
