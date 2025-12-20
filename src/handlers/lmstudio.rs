@@ -3,7 +3,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::StreamBody;
-use reqwest::header::{self, HeaderMap as ReqHeaderMap};
+use reqwest::header::{self};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use warp::http::{self, Response as WarpResponse};
@@ -12,7 +12,13 @@ use crate::constants::{LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
-use crate::http::{build_forward_headers, client::handle_json_response, json_response};
+use crate::http::{
+    build_forward_headers,
+    client::{CancellableRequest, handle_json_response},
+    json_response,
+    parsing::parse_json_body_template,
+    request::prepare_request_body,
+};
 use crate::logging::{LogConfig, format_duration, log_request, log_timed};
 use crate::server::ModelResolverType;
 use crate::streaming::{handle_passthrough_streaming_response, is_streaming_request};
@@ -48,11 +54,12 @@ pub async fn handle_lmstudio_passthrough(
         }
     }
 
-    let json_body_template = parse_json_body_template(&headers, &body)?;
+    let json_body_template = parse_json_body_template(&headers, &body)
+        .map_err(|e| ProxyError::bad_request(&format!("Failed to parse JSON body: {}", e)))?;
     let original_model_name = json_body_template
         .as_ref()
-        .and_then(|value| value.get("model"))
-        .and_then(|value| value.as_str())
+        .and_then(|value: &Value| value.get("model"))
+        .and_then(|value: &Value| value.as_str())
         .map(|s| s.to_string());
 
     let operation = {
@@ -84,7 +91,8 @@ pub async fn handle_lmstudio_passthrough(
                 let mut resolved_model_name: Option<String> = None;
 
                 if let Some(ref mut body_json) = current_body
-                    && let Some(model_name) = body_json.get("model").and_then(|m| m.as_str())
+                    && let Some(model_name) =
+                        body_json.get("model").and_then(|m: &Value| m.as_str())
                 {
                     let resolved_model = match &model_resolver {
                         ModelResolverType::Native(resolver) => {
@@ -103,7 +111,7 @@ pub async fn handle_lmstudio_passthrough(
                     }
                 }
 
-                let final_endpoint_url = append_query_params(
+                let final_endpoint_url = context.append_query_params(
                     determine_passthrough_endpoint_url(
                         context.lmstudio_url,
                         &endpoint,
@@ -117,57 +125,87 @@ pub async fn handle_lmstudio_passthrough(
                     .or(original_model_name.as_deref());
                 log_request(method.as_str(), &final_endpoint_url, log_model);
 
-                let is_streaming = current_body.as_ref().is_some_and(is_streaming_request);
+                if let Some(ref body_json) = current_body {
+                    let is_streaming = is_streaming_request(body_json);
+                    let prepared_body = prepare_request_body(Some(body_json.clone()), &body_bytes)
+                        .map_err(|e| {
+                            ProxyError::bad_request(&format!(
+                                "Failed to prepare request body: {}",
+                                e
+                            ))
+                        })?;
 
-                let prepared_body = prepare_request_body(current_body, &body_bytes)?;
-                let forward_headers = build_forward_headers(&headers, prepared_body.is_json);
+                    let forward_headers = build_forward_headers(&headers, prepared_body.is_json);
 
-                let lm_studio_request_start = Instant::now();
-                let response = send_raw_request(
-                    context.client,
-                    method.clone(),
-                    &final_endpoint_url,
-                    forward_headers,
-                    prepared_body.bytes,
-                    cancellation_token.clone(),
-                )
-                .await?;
+                    let lm_studio_request_start = Instant::now();
+                    let cancellable_request =
+                        CancellableRequest::new(context.client, cancellation_token.clone());
+                    let response = cancellable_request
+                        .make_raw_request(
+                            method.clone(),
+                            &final_endpoint_url,
+                            forward_headers,
+                            prepared_body.bytes,
+                        )
+                        .await?;
 
-                if original_model_name.is_some()
-                    && (endpoint.contains("completion") || endpoint.contains("chat"))
-                {
-                    log_timed(
-                        LOG_PREFIX_INFO,
-                        &format!(
-                            "LM Studio responded | {}",
-                            format_duration(lm_studio_request_start.elapsed())
-                        ),
-                        lm_studio_request_start,
-                    );
-                }
-
-                if is_streaming {
-                    if LogConfig::get().debug_enabled {
-                        log::debug!("passthrough response: (streaming)");
+                    if original_model_name.is_some()
+                        && (endpoint.contains("completion") || endpoint.contains("chat"))
+                    {
+                        log_timed(
+                            LOG_PREFIX_INFO,
+                            &format!(
+                                "LM Studio responded | {}",
+                                format_duration(lm_studio_request_start.elapsed())
+                            ),
+                            lm_studio_request_start,
+                        );
                     }
-                    handle_passthrough_streaming_response(response, cancellation_token, 60).await
-                } else {
-                    let is_json_response = response_is_json(&response);
-                    if is_json_response {
-                        let json_body = handle_json_response(response, cancellation_token).await?;
+
+                    if is_streaming {
                         if LogConfig::get().debug_enabled {
-                            log::debug!(
-                                "passthrough response: {}",
-                                serde_json::to_string_pretty(&json_body).unwrap_or_default()
-                            );
+                            log::debug!("passthrough response: (streaming)");
                         }
-                        Ok(json_response(&json_body))
+                        handle_passthrough_streaming_response(response, cancellation_token, 60)
+                            .await
                     } else {
-                        if LogConfig::get().debug_enabled {
-                            log::debug!("passthrough response: (raw/non-json)");
+                        let is_json_response = crate::http::response::is_json_response(&response);
+                        if is_json_response {
+                            let json_body =
+                                handle_json_response(response, cancellation_token).await?;
+                            if LogConfig::get().debug_enabled {
+                                log::debug!(
+                                    "passthrough response: {}",
+                                    serde_json::to_string_pretty(&json_body).unwrap_or_default()
+                                );
+                            }
+                            Ok(json_response(&json_body))
+                        } else {
+                            if LogConfig::get().debug_enabled {
+                                log::debug!("passthrough response: (raw/non-json)");
+                            }
+                            forward_raw_response(response).await
                         }
-                        forward_raw_response(response).await
                     }
+                } else {
+                    // Handle non-JSON body case
+                    let forward_headers = build_forward_headers(&headers, false);
+                    let prepared_body = prepare_request_body(None, &body_bytes).map_err(|e| {
+                        ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
+                    })?;
+
+                    let cancellable_request =
+                        CancellableRequest::new(context.client, cancellation_token.clone());
+                    let response = cancellable_request
+                        .make_raw_request(
+                            method.clone(),
+                            &final_endpoint_url,
+                            forward_headers,
+                            prepared_body.bytes,
+                        )
+                        .await?;
+
+                    forward_raw_response(response).await
                 }
             }
         }
@@ -176,7 +214,7 @@ pub async fn handle_lmstudio_passthrough(
     let result = if let Some(ref model) = original_model_name {
         with_retry_and_cancellation(
             &context,
-            model,
+            model.as_str(),
             load_timeout_seconds,
             operation,
             cancellation_token,
@@ -196,125 +234,6 @@ fn determine_passthrough_endpoint_url(
     _model_resolver: &ModelResolverType,
 ) -> String {
     format!("{}{}", lmstudio_base_url, requested_endpoint)
-}
-
-fn append_query_params(mut base: String, query: Option<&str>) -> String {
-    if let Some(qs) = query
-        && !qs.is_empty()
-    {
-        if base.contains('?') {
-            base.push('&');
-        } else {
-            base.push('?');
-        }
-        base.push_str(qs);
-    }
-    base
-}
-
-fn parse_json_body_template(
-    headers: &http::HeaderMap,
-    body: &Bytes,
-) -> Result<Option<Value>, ProxyError> {
-    if body.is_empty() {
-        return Ok(None);
-    }
-
-    if !should_parse_as_json(headers, body) {
-        return Ok(None);
-    }
-
-    serde_json::from_slice::<Value>(body)
-        .map(Some)
-        .map_err(|e| ProxyError::bad_request(&format!("invalid JSON payload: {}", e)))
-}
-
-fn should_parse_as_json(headers: &http::HeaderMap, body: &Bytes) -> bool {
-    contains_json_content_type(headers) || body_looks_like_json(body)
-}
-
-fn contains_json_content_type(headers: &http::HeaderMap) -> bool {
-    headers
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .map(|ct| ct.to_ascii_lowercase().contains("json"))
-        .unwrap_or(false)
-}
-
-fn body_looks_like_json(body: &Bytes) -> bool {
-    body.iter()
-        .copied()
-        .find(|byte| !byte.is_ascii_whitespace())
-        .map(|byte| matches!(byte, b'{' | b'['))
-        .unwrap_or(false)
-}
-
-struct PreparedBody {
-    bytes: Option<Vec<u8>>,
-    is_json: bool,
-}
-
-fn prepare_request_body(
-    json_body: Option<Value>,
-    original_bytes: &Bytes,
-) -> Result<PreparedBody, ProxyError> {
-    if let Some(value) = json_body {
-        let serialized = serde_json::to_vec(&value).map_err(|e| {
-            ProxyError::internal_server_error(&format!(
-                "failed to serialize LM Studio request body: {}",
-                e
-            ))
-        })?;
-        Ok(PreparedBody {
-            bytes: Some(serialized),
-            is_json: true,
-        })
-    } else if !original_bytes.is_empty() {
-        Ok(PreparedBody {
-            bytes: Some(original_bytes.to_vec()),
-            is_json: false,
-        })
-    } else {
-        Ok(PreparedBody {
-            bytes: None,
-            is_json: false,
-        })
-    }
-}
-
-async fn send_raw_request(
-    client: &reqwest::Client,
-    method: http::Method,
-    url: &str,
-    headers: ReqHeaderMap,
-    body: Option<Vec<u8>>,
-    cancellation_token: CancellationToken,
-) -> Result<reqwest::Response, ProxyError> {
-    let req_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
-        .map_err(|_| ProxyError::bad_request("unsupported HTTP method"))?;
-    let mut builder = client.request(req_method, url);
-
-    if !headers.is_empty() {
-        builder = builder.headers(headers);
-    }
-
-    if let Some(payload) = body {
-        builder = builder.body(payload);
-    }
-
-    tokio::select! {
-        resp = builder.send() => resp.map_err(crate::http::error::map_reqwest_error),
-        _ = cancellation_token.cancelled() => Err(ProxyError::request_cancelled()),
-    }
-}
-
-fn response_is_json(response: &reqwest::Response) -> bool {
-    response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|ct| ct.to_ascii_lowercase().contains("json"))
-        .unwrap_or(false)
 }
 
 async fn forward_raw_response(

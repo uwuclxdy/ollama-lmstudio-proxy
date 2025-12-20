@@ -16,6 +16,10 @@ impl<'a> CancellableRequest<'a> {
         Self { client, token }
     }
 
+    pub fn token(&self) -> &CancellationToken {
+        &self.token
+    }
+
     pub async fn make_request<B: Serialize>(
         &self,
         method: reqwest::Method,
@@ -34,6 +38,45 @@ impl<'a> CancellableRequest<'a> {
 
         tokio::select! {
             result = request_builder.send() => {
+                result.map_err(crate::http::error::map_reqwest_error)
+            }
+            _ = self.token.cancelled() => {
+                Err(ProxyError::request_cancelled())
+            }
+        }
+    }
+
+    pub async fn make_request_with_response(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Option<impl Serialize>,
+    ) -> Result<reqwest::Response, ProxyError> {
+        self.make_request(method, url, body).await
+    }
+
+    /// Make a raw HTTP request with custom headers and optional body
+    pub async fn make_raw_request(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        headers: reqwest::header::HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, ProxyError> {
+        check_cancelled!(self.token);
+
+        let mut builder = self.client.request(method, url);
+
+        if !headers.is_empty() {
+            builder = builder.headers(headers);
+        }
+
+        if let Some(payload) = body {
+            builder = builder.body(payload);
+        }
+
+        tokio::select! {
+            result = builder.send() => {
                 result.map_err(crate::http::error::map_reqwest_error)
             }
             _ = self.token.cancelled() => {

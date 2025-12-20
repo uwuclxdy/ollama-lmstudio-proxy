@@ -9,19 +9,19 @@ use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::http::json_response;
 use crate::logging::{log_request, log_timed};
+use crate::model::utils::extract_required_model_name;
 use crate::server::ModelResolverType;
-use crate::storage::VirtualModelMetadata;
-use crate::streaming::create_ndjson_stream_response;
+use crate::storage::virtual_models::VirtualModelMetadata;
 
 use super::download::{
     initiate_lmstudio_download, stream_download_status_updates, wait_for_download_completion,
 };
 use super::utils::{
-    build_virtual_model_response, create_virtual_model_alias, determine_download_identifier,
-    extract_model_name, log_lifecycle_request, log_lifecycle_response,
-    looks_like_remote_identifier, resolve_model_target, send_status_error_chunk,
-    stream_status_messages,
+    determine_download_identifier, looks_like_remote_identifier, resolve_model_target,
+    send_status_error_chunk, stream_status_messages,
 };
+use crate::logging::log_handler_io;
+use crate::streaming::create_ndjson_stream_response;
 
 pub async fn handle_ollama_pull(
     context: RequestContext<'_>,
@@ -30,8 +30,8 @@ pub async fn handle_ollama_pull(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_lifecycle_request(&body, "pull");
-    let requested_model = extract_model_name(&body, "model")?;
+    log_handler_io("pull", Some(&body), None, false);
+    let requested_model = extract_required_model_name(&body)?;
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
     let quantization = body
         .get("quantization")
@@ -93,7 +93,7 @@ pub async fn handle_ollama_pull(
 
         let response_body = final_status.into_final_response(requested_model)?;
         log_timed(LOG_PREFIX_SUCCESS, "Ollama pull", start_time);
-        log_lifecycle_response(&response_body, "pull", false);
+        log_handler_io("pull", None, Some(&response_body), false);
         return Ok(json_response(&response_body));
     }
 
@@ -121,7 +121,7 @@ pub async fn handle_ollama_pull(
 
     let response = create_ndjson_stream_response(rx, "failed to create pull streaming response")?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama pull stream open", start_time);
-    log_lifecycle_response(&json!({}), "pull", true);
+    log_handler_io("pull", None, None, true);
     Ok(response)
 }
 
@@ -132,8 +132,8 @@ pub async fn handle_ollama_create(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_lifecycle_request(&body, "create");
-    let new_model_name = extract_model_name(&body, "model")?;
+    log_handler_io("create", Some(&body), None, false);
+    let new_model_name = extract_required_model_name(&body)?;
     let source_model_name = body
         .get("from")
         .and_then(|value| value.as_str())
@@ -142,15 +142,17 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
-    let entry = create_virtual_model_alias(
-        &context,
-        &model_resolver,
-        new_model_name,
-        source_model_name,
-        &body,
-        cancellation_token,
-    )
-    .await?;
+    let entry = context
+        .virtual_models
+        .create_from_request(
+            &context,
+            &model_resolver,
+            new_model_name,
+            source_model_name,
+            &body,
+            cancellation_token,
+        )
+        .await?;
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama create", start_time);
 
@@ -166,12 +168,12 @@ pub async fn handle_ollama_create(
             json!({"status": "writing manifest", "model": new_model_name}),
             json!({"status": "success", "model": new_model_name, "virtual": true}),
         ];
-        log_lifecycle_response(&json!({}), "create", true);
+        log_handler_io("create", None, None, true);
         return stream_status_messages(statuses, "failed to create model alias stream");
     }
 
-    let response = build_virtual_model_response(&entry);
-    log_lifecycle_response(&response, "create", false);
+    let response = entry.to_response();
+    log_handler_io("create", None, Some(&response), false);
     Ok(json_response(&response))
 }
 
@@ -182,7 +184,7 @@ pub async fn handle_ollama_copy(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_lifecycle_request(&body, "copy");
+    log_handler_io("copy", Some(&body), None, false);
     let source = body
         .get("source")
         .and_then(|value| value.as_str())
@@ -220,8 +222,8 @@ pub async fn handle_ollama_copy(
     };
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama copy", start_time);
-    let response = build_virtual_model_response(&entry);
-    log_lifecycle_response(&response, "copy", false);
+    let response = entry.to_response();
+    log_handler_io("copy", None, Some(&response), false);
     Ok(json_response(&response))
 }
 
@@ -230,8 +232,8 @@ pub async fn handle_ollama_delete(
     body: Value,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_lifecycle_request(&body, "delete");
-    let model_name = extract_model_name(&body, "model")?;
+    log_handler_io("delete", Some(&body), None, false);
+    let model_name = extract_required_model_name(&body)?;
     log_request("DELETE", "/api/delete", Some(model_name));
 
     if context.virtual_models.get(model_name).await.is_none() {
@@ -243,8 +245,8 @@ pub async fn handle_ollama_delete(
 
     let removed = context.virtual_models.delete(model_name).await?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama delete", start_time);
-    let response = build_virtual_model_response(&removed);
-    log_lifecycle_response(&response, "delete", false);
+    let response = removed.to_response();
+    log_handler_io("delete", None, Some(&response), false);
     Ok(json_response(&response))
 }
 
@@ -255,8 +257,8 @@ pub async fn handle_ollama_push(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_lifecycle_request(&body, "push");
-    let model_name = extract_model_name(&body, "model")?;
+    log_handler_io("push", Some(&body), None, false);
+    let model_name = extract_required_model_name(&body)?;
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
 
     log_request("POST", "/api/push", Some(model_name));
@@ -281,7 +283,7 @@ pub async fn handle_ollama_push(
                 "detail": "push is a no-op when targeting LM Studio"
             }),
         ];
-        log_lifecycle_response(&json!({}), "push", true);
+        log_handler_io("push", None, None, true);
         return stream_status_messages(statuses, "failed to stream push status");
     }
 
@@ -291,6 +293,6 @@ pub async fn handle_ollama_push(
         "detail": "push is a no-op when targeting LM Studio",
         "target_model_id": resolved_model_id
     });
-    log_lifecycle_response(&response, "push", false);
+    log_handler_io("push", None, Some(&response), false);
     Ok(json_response(&response))
 }

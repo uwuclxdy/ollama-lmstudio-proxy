@@ -14,10 +14,8 @@ use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
-use super::utils::{
-    LMStudioRequestParams, execute_lmstudio_request, extract_model_name, parse_keep_alive_seconds,
-    resolve_model_with_context,
-};
+use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
+use crate::model::utils::extract_required_model_name;
 
 #[derive(Debug, Clone, Copy)]
 pub enum EmbeddingResponseMode {
@@ -34,7 +32,7 @@ pub async fn handle_ollama_embeddings(
     load_timeout_seconds: u64,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    let ollama_model_name = extract_model_name(&body, "model")?;
+    let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
     let operation = || {
@@ -54,7 +52,7 @@ pub async fn handle_ollama_embeddings(
                 );
             }
 
-            let current_ollama_model_name = extract_model_name(&body_clone, "model")?;
+            let current_ollama_model_name = extract_required_model_name(&body_clone)?;
             let input_value = body_clone
                 .get("input")
                 .or_else(|| body_clone.get("prompt"))
@@ -70,20 +68,30 @@ pub async fn handle_ollama_embeddings(
             )
             .await?;
 
-            let response = execute_lmstudio_request(
-                &context,
-                LMStudioRequestParams {
-                    endpoint: LM_STUDIO_NATIVE_EMBEDDINGS,
-                    model_id: &resolution_ctx.lm_studio_model_id,
-                    request_type: LMStudioRequestType::Embeddings {
-                        input: &input_value,
-                    },
-                    options: resolution_ctx.effective_options.as_ref(),
-                    tools: None,
-                    format: None,
-                    keep_alive: keep_alive_seconds_for_request,
+            let mut lm_request = crate::http::request::build_lm_studio_request(
+                &resolution_ctx.lm_studio_model_id,
+                LMStudioRequestType::Embeddings {
+                    input: &input_value,
                 },
+                resolution_ctx.effective_options.as_ref(),
+                None,
+                None,
+            );
+
+            // Apply keep-alive TTL
+            crate::handlers::ollama::keep_alive::apply_keep_alive_ttl(
+                &mut lm_request,
+                keep_alive_seconds_for_request,
+            );
+
+            let response = crate::http::client::CancellableRequest::new(
+                context.client,
                 cancellation_token_clone.clone(),
+            )
+            .make_request(
+                reqwest::Method::POST,
+                &context.endpoint_url(LM_STUDIO_NATIVE_EMBEDDINGS),
+                Some(lm_request),
             )
             .await?;
             let lm_response_value =

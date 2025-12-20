@@ -61,7 +61,7 @@ fn create_generic_streaming_response(
         std::mem::transmute::<
             warp::http::Response<
                 http_body_util::combinators::BoxBody<
-                    bytes::Bytes,
+                    Bytes,
                     Box<dyn std::error::Error + Send + Sync>,
                 >,
             >,

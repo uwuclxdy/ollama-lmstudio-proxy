@@ -11,10 +11,10 @@ use crate::http::json_response;
 use crate::logging::{LogConfig, log_request, log_timed};
 use crate::server::ModelResolverType;
 
-use super::utils::{
-    build_model_list_with_virtuals, extract_model_name, keep_alive_requests_unload,
-    log_lifecycle_response, parse_keep_alive_seconds, resolve_model_target,
-};
+use super::utils::{keep_alive_requests_unload, parse_keep_alive_seconds, resolve_model_target};
+use crate::logging::log_handler_io;
+use crate::model::types::ModelInfo;
+use crate::model::utils::extract_required_model_name;
 
 pub async fn handle_ollama_show(
     context: RequestContext<'_>,
@@ -30,7 +30,7 @@ pub async fn handle_ollama_show(
         );
     }
 
-    let ollama_model_name = extract_model_name(&body, "model")?;
+    let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
     log_request("POST", "/api/show", Some(ollama_model_name));
@@ -85,7 +85,7 @@ pub async fn handle_ollama_show(
     }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama show", start_time);
-    log_lifecycle_response(&response, "show", false);
+    log_handler_io("show", None, Some(&response), false);
     Ok(json_response(&response))
 }
 
@@ -110,12 +110,12 @@ pub async fn handle_ollama_ps(
         .filter(|entry| loaded_models.iter().any(|m| m.id == entry.target_model_id))
         .collect();
 
-    let ollama_models = build_model_list_with_virtuals(&loaded_models, &loaded_virtuals, |m| {
+    let ollama_models = ModelInfo::merge_with_virtuals(&loaded_models, &loaded_virtuals, |m| {
         m.to_ollama_ps_model()
     });
 
     let response = json!({ "models": ollama_models });
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
-    log_lifecycle_response(&response, "ps", false);
+    log_handler_io("ps", None, Some(&response), false);
     Ok(json_response(&response))
 }

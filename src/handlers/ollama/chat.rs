@@ -1,7 +1,6 @@
-use std::borrow::Cow;
 use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::constants::{ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX_SUCCESS};
@@ -12,11 +11,11 @@ use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
-use super::utils::{
-    LMStudioRequestParams, ResponseContext, ResponseParams, execute_lmstudio_request,
-    extract_model_name, handle_response, normalize_chat_messages, parse_keep_alive_seconds,
-    resolve_model_with_context,
-};
+use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
+use crate::handlers::ollama::images::inject_images_into_messages;
+use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
+use crate::handlers::transform::normalize_chat_messages;
+use crate::model::utils::extract_required_model_name;
 
 pub async fn handle_ollama_chat(
     context: RequestContext<'_>,
@@ -26,7 +25,7 @@ pub async fn handle_ollama_chat(
     load_timeout_seconds: u64,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    let ollama_model_name = extract_model_name(&body, "model")?;
+    let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
     let resolved_model_id_for_retry = ollama_model_name.to_string();
@@ -47,7 +46,7 @@ pub async fn handle_ollama_chat(
                 );
             }
 
-            let current_ollama_model_name = extract_model_name(&body_clone, "model")?;
+            let current_ollama_model_name = extract_required_model_name(&body_clone)?;
 
             let messages = body_clone
                 .get("messages")
@@ -81,21 +80,31 @@ pub async fn handle_ollama_chat(
                 normalized_messages
             };
 
-            let response = execute_lmstudio_request(
-                &context,
-                LMStudioRequestParams {
-                    endpoint: LM_STUDIO_NATIVE_CHAT,
-                    model_id: &resolution_ctx.lm_studio_model_id,
-                    request_type: LMStudioRequestType::Chat {
-                        messages: &messages_with_images,
-                        stream,
-                    },
-                    options: resolution_ctx.effective_options.as_ref(),
-                    tools: ollama_tools,
-                    format: resolution_ctx.effective_format.as_ref(),
-                    keep_alive: keep_alive_seconds_for_request,
+            let mut lm_request = crate::http::request::build_lm_studio_request(
+                &resolution_ctx.lm_studio_model_id,
+                LMStudioRequestType::Chat {
+                    messages: &messages_with_images,
+                    stream,
                 },
+                resolution_ctx.effective_options.as_ref(),
+                ollama_tools,
+                resolution_ctx.effective_format.as_ref(),
+            );
+
+            // Apply keep-alive TTL
+            crate::handlers::ollama::keep_alive::apply_keep_alive_ttl(
+                &mut lm_request,
+                keep_alive_seconds_for_request,
+            );
+
+            let response = crate::http::client::CancellableRequest::new(
+                context.client,
                 cancellation_token_clone.clone(),
+            )
+            .make_request(
+                reqwest::Method::POST,
+                &context.endpoint_url(LM_STUDIO_NATIVE_CHAT),
+                Some(lm_request),
             )
             .await?;
 
@@ -125,51 +134,4 @@ pub async fn handle_ollama_chat(
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama chat", start_time);
     Ok(result)
-}
-
-fn inject_images_into_messages(messages: Value, images: &Value) -> Value {
-    let Some(image_array) = images.as_array() else {
-        return messages;
-    };
-    if image_array.is_empty() {
-        return messages;
-    }
-
-    let Some(msg_array) = messages.as_array() else {
-        return messages;
-    };
-
-    let image_parts: Vec<Value> = image_array
-        .iter()
-        .filter_map(|img| {
-            img.as_str().map(|base64_data| {
-                json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": format!("data:image/jpeg;base64,{}", base64_data)
-                    }
-                })
-            })
-        })
-        .collect();
-
-    if image_parts.is_empty() {
-        return messages;
-    }
-
-    let mut updated = msg_array.clone();
-    if let Some(last_msg) = updated.last_mut()
-        && let Some(obj) = last_msg.as_object_mut()
-        && let Some(content) = obj.get("content")
-    {
-        let text_part = json!({
-            "type": "text",
-            "text": content.as_str().map(Cow::Borrowed).unwrap_or(Cow::Owned(content.to_string()))
-        });
-        let mut parts = vec![text_part];
-        parts.extend(image_parts);
-        obj.insert("content".to_string(), Value::Array(parts));
-    }
-
-    Value::Array(updated)
 }

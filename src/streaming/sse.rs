@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -15,8 +15,9 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::logging::log_timed;
 use crate::streaming::chunks::{
-    create_cancellation_chunk, create_error_chunk, create_final_chunk,
-    create_ollama_streaming_chunk,
+    ChunkProcessingState, create_cancellation_chunk, create_final_chunk,
+    create_ollama_streaming_chunk, extract_first_choice, process_choice_delta, send_chunk,
+    send_chunk_and_close_channel, send_error_and_close,
 };
 use crate::streaming::recovery::recover_json_from_chunk;
 use crate::streaming::response::{StreamContentType, create_streaming_response};
@@ -112,7 +113,7 @@ pub async fn handle_streaming_response(
                                                         tool_calls_delta.as_ref()
                                                     );
                                                     chunk_count += 1;
-                                                    if !send_ollama_chunk(&tx, &ollama_chunk).await {
+                                                    if !send_chunk(&tx, &ollama_chunk).await {
                                                         break 'stream_loop Ok(());
                                                     }
                                                 }
@@ -141,7 +142,7 @@ pub async fn handle_streaming_response(
                                                                 tool_calls_delta.as_ref()
                                                             );
                                                             chunk_count += 1;
-                                                            if !send_ollama_chunk(&tx, &ollama_chunk).await {
+                                                            if !send_chunk(&tx, &ollama_chunk).await {
                                                                 break 'stream_loop Ok(());
                                                             }
                                                         }
@@ -193,7 +194,7 @@ pub async fn handle_streaming_response(
                                             tool_calls_delta.as_ref()
                                         );
                                         chunk_count += 1;
-                                        if !send_ollama_chunk(&tx, &ollama_chunk).await {
+                                        if !send_chunk(&tx, &ollama_chunk).await {
                                             break 'stream_loop Ok(());
                                         }
                                     }
@@ -287,142 +288,4 @@ pub async fn handle_passthrough_streaming_response(
     });
 
     create_streaming_response(rx, StreamContentType::Sse)
-}
-
-#[derive(Default)]
-struct ChunkProcessingState {
-    last_finish_reason: Option<String>,
-}
-
-impl ChunkProcessingState {
-    fn finish_reason(&self) -> Option<&str> {
-        self.last_finish_reason.as_deref()
-    }
-
-    fn update_finish_reason(&mut self, choice: &Value) {
-        if let Some(reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
-            self.last_finish_reason = Some(reason.to_string());
-        }
-    }
-}
-
-struct ChoiceDeltaPayload {
-    content: String,
-    tool_calls_delta: Option<Value>,
-}
-
-fn extract_first_choice(chunk: &Value) -> Option<&Value> {
-    chunk
-        .get("choices")
-        .and_then(|choices| choices.as_array())
-        .and_then(|array| array.first())
-}
-
-fn process_choice_delta(
-    choice: &Value,
-    state: &mut ChunkProcessingState,
-) -> Option<ChoiceDeltaPayload> {
-    state.update_finish_reason(choice);
-
-    let mut content = String::new();
-    let mut tool_calls_delta: Option<Value> = None;
-
-    if let Some(delta) = choice.get("delta") {
-        if let Some(content_value) = delta.get("content") {
-            append_stream_content(content_value, &mut content);
-        }
-        if let Some(reasoning_value) = delta.get("reasoning") {
-            append_stream_content(reasoning_value, &mut content);
-        }
-        if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
-            && !new_tool_calls.is_empty()
-        {
-            tool_calls_delta = Some(json!(new_tool_calls));
-        }
-    }
-
-    if content.is_empty() {
-        if let Some(text_value) = choice.get("text") {
-            append_stream_content(text_value, &mut content);
-        } else if let Some(message_content) = choice
-            .get("message")
-            .and_then(|message| message.get("content"))
-        {
-            append_stream_content(message_content, &mut content);
-        }
-    }
-
-    if content.is_empty() && tool_calls_delta.is_none() {
-        None
-    } else {
-        Some(ChoiceDeltaPayload {
-            content,
-            tool_calls_delta,
-        })
-    }
-}
-
-fn append_stream_content(content_value: &Value, buffer: &mut String) {
-    match content_value {
-        Value::String(text) => buffer.push_str(text),
-        Value::Array(items) => {
-            for item in items {
-                if let Some(piece_type) = item.get("type").and_then(|t| t.as_str()) {
-                    match piece_type {
-                        "text" | "reasoning" | "output_text" => {
-                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                buffer.push_str(text);
-                            }
-                        }
-                        _ => {
-                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                buffer.push_str(text);
-                            }
-                        }
-                    }
-                } else if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                    buffer.push_str(text);
-                }
-            }
-        }
-        Value::Object(obj) => {
-            if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-                buffer.push_str(text);
-            } else if let Some(nested) = obj.get("content") {
-                append_stream_content(nested, buffer);
-            }
-        }
-        _ => {}
-    }
-}
-
-async fn send_ollama_chunk(
-    tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
-    chunk: &Value,
-) -> bool {
-    let chunk_json = serde_json::to_string(chunk).unwrap_or_else(|e| {
-        log::error!("chunk serialization failed: {}", e);
-        String::from("{\"error\":\"internal proxy error: failed to serialize chunk\"}")
-    });
-    let chunk_with_newline = format!("{}\n", chunk_json);
-    tx.send(Ok(bytes::Bytes::from(chunk_with_newline))).is_ok()
-}
-
-async fn send_chunk_and_close_channel(
-    tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
-    chunk: Value,
-) {
-    let chunk_json = serde_json::to_string(&chunk).unwrap_or_default();
-    let chunk_with_newline = format!("{}\n", chunk_json);
-    let _ = tx.send(Ok(bytes::Bytes::from(chunk_with_newline)));
-}
-
-async fn send_error_and_close(
-    tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
-    model_ollama_name: &str,
-    error_message: &str,
-    is_chat_endpoint: bool,
-) {
-    let error_chunk = create_error_chunk(model_ollama_name, error_message, is_chat_endpoint);
-    send_chunk_and_close_channel(tx, error_chunk).await;
 }

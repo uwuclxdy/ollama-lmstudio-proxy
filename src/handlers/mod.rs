@@ -1,6 +1,7 @@
 pub mod context;
 pub mod lmstudio;
 pub mod ollama;
+pub mod response;
 pub mod retry;
 pub mod transform;
 

@@ -10,7 +10,8 @@ use crate::http::json_response;
 use crate::logging::log_timed;
 use crate::server::ModelResolverType;
 
-use super::utils::{build_model_list_with_virtuals, log_lifecycle_response};
+use crate::logging::log_handler_io;
+use crate::model::types::ModelInfo;
 
 pub async fn handle_ollama_tags(
     context: RequestContext<'_>,
@@ -29,7 +30,7 @@ pub async fn handle_ollama_tags(
 
     let virtual_entries = context.virtual_models.list().await;
     let mut ollama_models =
-        build_model_list_with_virtuals(&models, &virtual_entries, |m| m.to_ollama_tags_model());
+        ModelInfo::merge_with_virtuals(&models, &virtual_entries, |m| m.to_ollama_tags_model());
 
     for entry in &virtual_entries {
         if models.iter().all(|m| m.id != entry.target_model_id) {
@@ -53,6 +54,6 @@ pub async fn handle_ollama_tags(
 
     let response = json!({ "models": ollama_models });
     log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
-    log_lifecycle_response(&response, "tags", false);
+    log_handler_io("tags", None, Some(&response), false);
     Ok(json_response(&response))
 }

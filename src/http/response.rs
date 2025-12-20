@@ -1,10 +1,20 @@
 use serde_json::Value;
 use warp::http::HeaderMap;
+use warp::http::header;
 
 use crate::constants::{
     CONTENT_TYPE_JSON, HEADER_ACCESS_CONTROL_ALLOW_HEADERS, HEADER_ACCESS_CONTROL_ALLOW_METHODS,
     HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, HEADER_CACHE_CONTROL,
 };
+
+pub fn is_json_response(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|ct| ct.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false)
+}
 
 pub fn json_response(value: &Value) -> warp::reply::Response {
     let json_string = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
@@ -37,7 +47,7 @@ pub fn json_response(value: &Value) -> warp::reply::Response {
 }
 
 /// Build forward headers for requests, filtering out hop-by-hop headers
-pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> reqwest::header::HeaderMap {
+pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> HeaderMap {
     use reqwest::header::{
         HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
     };

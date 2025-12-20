@@ -74,3 +74,32 @@ pub fn sanitize_log_message(message: &str) -> String {
         })
         .collect()
 }
+
+pub fn log_handler_io(
+    endpoint: &str,
+    body: Option<&serde_json::Value>,
+    response: Option<&serde_json::Value>,
+    streaming: bool,
+) {
+    if LogConfig::get().debug_enabled {
+        if let Some(body_value) = body {
+            log::debug!(
+                "{} request: {}",
+                endpoint,
+                serde_json::to_string_pretty(body_value).unwrap_or_default()
+            );
+        }
+
+        if let Some(response_value) = response {
+            if streaming {
+                log::debug!("{} response: (streaming)", endpoint);
+            } else {
+                log::debug!(
+                    "{} response: {}",
+                    endpoint,
+                    serde_json::to_string_pretty(response_value).unwrap_or_default()
+                );
+            }
+        }
+    }
+}
