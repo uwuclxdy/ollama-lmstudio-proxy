@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::constants::{
@@ -14,10 +14,10 @@ use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
-use super::utils::{
-    LMStudioRequestParams, ResponseContext, ResponseParams, execute_lmstudio_request,
-    extract_model_name, handle_response, parse_keep_alive_seconds, resolve_model_with_context,
-};
+use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
+use crate::handlers::ollama::images::build_vision_chat_messages;
+use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
+use crate::model::utils::extract_required_model_name;
 
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
@@ -27,7 +27,7 @@ pub async fn handle_ollama_generate(
     load_timeout_seconds: u64,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    let ollama_model_name = extract_model_name(&body, "model")?;
+    let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
     let resolved_model_id_for_retry = ollama_model_name.to_string();
@@ -48,7 +48,7 @@ pub async fn handle_ollama_generate(
                 );
             }
 
-            let current_ollama_model_name = extract_model_name(&body_clone, "model")?;
+            let current_ollama_model_name = extract_required_model_name(&body_clone)?;
             let current_prompt = body_clone
                 .get("prompt")
                 .and_then(|p| p.as_str())
@@ -75,25 +75,11 @@ pub async fn handle_ollama_generate(
             let mut chat_messages_payload: Option<Value> = None;
 
             let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
-                let mut message_list = Vec::new();
-                if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
-                    message_list.push(json!({
-                        "role": "system",
-                        "content": system_text,
-                    }));
-                }
-
-                let mut user_message = json!({
-                    "role": "user",
-                    "content": current_prompt,
-                });
-                if let Some(images_val) = current_images
-                    && let Some(obj) = user_message.as_object_mut()
-                {
-                    obj.insert("images".to_string(), images_val.clone());
-                }
-                message_list.push(user_message);
-                chat_messages_payload = Some(Value::Array(message_list));
+                chat_messages_payload = Some(build_vision_chat_messages(
+                    resolution_ctx.system_prompt.as_deref(),
+                    current_prompt,
+                    current_images,
+                ));
                 let messages_ref = chat_messages_payload.as_ref().unwrap();
 
                 (
@@ -133,18 +119,28 @@ pub async fn handle_ollama_generate(
 
             let _ = &chat_messages_payload;
 
-            let response = execute_lmstudio_request(
-                &context,
-                LMStudioRequestParams {
-                    endpoint: lm_studio_endpoint,
-                    model_id: &resolution_ctx.lm_studio_model_id,
-                    request_type: lm_request_type,
-                    options: resolution_ctx.effective_options.as_ref(),
-                    tools: None,
-                    format: resolution_ctx.effective_format.as_ref(),
-                    keep_alive: keep_alive_seconds_for_request,
-                },
+            let mut lm_request = crate::http::request::build_lm_studio_request(
+                &resolution_ctx.lm_studio_model_id,
+                lm_request_type,
+                resolution_ctx.effective_options.as_ref(),
+                None,
+                resolution_ctx.effective_format.as_ref(),
+            );
+
+            // Apply keep-alive TTL
+            crate::handlers::ollama::keep_alive::apply_keep_alive_ttl(
+                &mut lm_request,
+                keep_alive_seconds_for_request,
+            );
+
+            let response = crate::http::client::CancellableRequest::new(
+                context.client,
                 cancellation_token_clone.clone(),
+            )
+            .make_request(
+                reqwest::Method::POST,
+                &context.endpoint_url(lm_studio_endpoint),
+                Some(lm_request),
             )
             .await?;
 

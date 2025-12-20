@@ -373,7 +373,7 @@ pub fn estimate_token_count(text: &str) -> u64 {
     ((text.len() as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
 }
 
-fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
+pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
     lm_response
         .get("choices")
         .and_then(|c| c.as_array()?.first())
@@ -381,14 +381,28 @@ fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
         .and_then(|reason| reason.as_str())
 }
 
-pub fn extract_system_prompt(body: &Value) -> Option<String> {
-    body.get("system")
-        .and_then(|value| value.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            body.get("options")
-                .and_then(|opts| opts.get("system"))
-                .and_then(|value| value.as_str())
-                .map(|s| s.to_string())
-        })
+pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
+    if let Some(system_text) = system_prompt {
+        let already_has_system = messages.iter().any(|message| {
+            message
+                .get("role")
+                .and_then(|role| role.as_str())
+                .map(|role| role.eq_ignore_ascii_case("system"))
+                .unwrap_or(false)
+        });
+
+        if already_has_system {
+            json!(messages)
+        } else {
+            let mut combined = Vec::with_capacity(messages.len() + 1);
+            combined.push(json!({
+                "role": "system",
+                "content": system_text,
+            }));
+            combined.extend(messages.iter().cloned());
+            Value::Array(combined)
+        }
+    } else {
+        json!(messages)
+    }
 }

@@ -1,4 +1,4 @@
-use std::error::Error;
+pub(crate) use std::error::Error;
 use std::fmt;
 
 use warp::reject::Reject;

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::constants::{LM_STUDIO_NATIVE_DOWNLOAD, LM_STUDIO_NATIVE_DOWNLOAD_STATUS};
 use crate::error::ProxyError;
-use crate::http::client::handle_json_response;
+use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::logging::log_request;
 
 use super::utils::send_status_chunk;
@@ -153,14 +153,13 @@ pub async fn initiate_lmstudio_download(
 
     let url = format!("{}{}", base_url, LM_STUDIO_NATIVE_DOWNLOAD);
     log_request("POST", &url, Some(model_identifier));
-    let response_value = send_json_request(
-        client,
-        Method::POST,
-        &url,
-        Some(&Value::Object(payload)),
-        cancellation_token,
-    )
-    .await?;
+
+    let request = CancellableRequest::new(client, cancellation_token);
+    let response = request
+        .make_request_with_response(Method::POST, &url, Some(Value::Object(payload)))
+        .await?;
+
+    let response_value = handle_json_response(response, request.token().clone()).await?;
 
     serde_json::from_value(response_value).map_err(|e| {
         ProxyError::internal_server_error(&format!("invalid download response: {}", e))
@@ -238,33 +237,15 @@ async fn fetch_lmstudio_download_status(
         "{}{}/{}",
         base_url, LM_STUDIO_NATIVE_DOWNLOAD_STATUS, job_id
     );
-    let response_value =
-        send_json_request(client, Method::GET, &url, None, cancellation_token).await?;
+
+    let request = CancellableRequest::new(client, cancellation_token);
+    let response = request
+        .make_request_with_response(Method::GET, &url, Option::<&Value>::None)
+        .await?;
+
+    let response_value = handle_json_response(response, request.token().clone()).await?;
 
     serde_json::from_value(response_value).map_err(|e| {
         ProxyError::internal_server_error(&format!("invalid download status payload: {}", e))
     })
-}
-
-async fn send_json_request(
-    client: &reqwest::Client,
-    method: Method,
-    url: &str,
-    body: Option<&Value>,
-    cancellation_token: CancellationToken,
-) -> Result<Value, ProxyError> {
-    let mut builder = client.request(method, url);
-    if let Some(payload) = body {
-        builder = builder.json(payload);
-    }
-
-    tokio::select! {
-        response = builder.send() => {
-            match response {
-                Ok(resp) => handle_json_response(resp, cancellation_token).await,
-                Err(err) => Err(crate::http::error::map_reqwest_error(err)),
-            }
-        }
-        _ = cancellation_token.cancelled() => Err(ProxyError::request_cancelled()),
-    }
 }

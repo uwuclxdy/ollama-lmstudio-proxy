@@ -1,11 +1,16 @@
 pub mod blobs;
 pub mod chat;
 pub mod download;
+pub mod download_utils;
 pub mod embeddings;
 pub mod generate;
 pub mod health;
+pub mod images;
+pub mod keep_alive;
 pub mod lifecycle;
+mod model_resolution;
 pub mod models;
+pub mod status_streaming;
 pub mod tags;
 pub mod utils;
 

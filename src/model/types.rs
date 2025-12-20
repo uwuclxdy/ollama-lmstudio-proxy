@@ -5,6 +5,7 @@ use crate::constants::{
     DEFAULT_KEEP_ALIVE_MINUTES, DEFAULT_REPEAT_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
     DEFAULT_TOP_P,
 };
+use crate::storage::VirtualModelEntry;
 
 #[derive(Debug, Clone)]
 pub struct ModelParameters {
@@ -66,6 +67,26 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    pub fn merge_with_virtuals<F>(
+        base_models: &[ModelInfo],
+        virtual_entries: &[VirtualModelEntry],
+        transform_fn: F,
+    ) -> Vec<Value>
+    where
+        F: Fn(&ModelInfo) -> Value,
+    {
+        let mut result: Vec<_> = base_models.iter().map(&transform_fn).collect();
+
+        for entry in virtual_entries {
+            if let Some(base_model) = base_models.iter().find(|m| m.id == entry.target_model_id) {
+                let aliased = base_model.with_alias_name(&entry.name);
+                result.push(transform_fn(&aliased));
+            }
+        }
+
+        result
+    }
+
     pub fn from_native_data(native_data: &NativeModelData) -> Self {
         let is_loaded = !native_data.loaded_instances.is_empty();
         let state = if is_loaded { "loaded" } else { "not-loaded" };

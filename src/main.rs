@@ -15,7 +15,7 @@ mod update;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let cfg = config::Config::parse();
 
     if cfg.update {
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server.run().await
 }
 
-fn setup_logging(log_level: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn setup_logging(log_level: &str) -> Result<(), Box<dyn error::Error>> {
     let level = log_level
         .to_lowercase()
         .parse::<log::LevelFilter>()

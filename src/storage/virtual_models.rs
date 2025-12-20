@@ -36,7 +36,99 @@ pub struct VirtualModelStore {
     entries: RwLock<HashMap<String, VirtualModelEntry>>,
 }
 
+impl VirtualModelEntry {
+    pub fn to_response(&self) -> Value {
+        serde_json::json!({
+            "status": "success",
+            "model": self.name,
+            "virtual": true,
+            "source_model": self.source_model,
+            "target_model_id": self.target_model_id,
+            "created_at": self.created_at.to_rfc3339(),
+            "updated_at": self.updated_at.to_rfc3339(),
+        })
+    }
+}
+
 impl VirtualModelStore {
+    pub fn build_metadata_from_request(
+        body: &Value,
+        base: Option<VirtualModelMetadata>,
+    ) -> VirtualModelMetadata {
+        let mut metadata = base.unwrap_or_default();
+
+        if let Some(system_prompt) = body.get("system").and_then(|v| v.as_str()) {
+            metadata.system_prompt = Some(system_prompt.to_string());
+        }
+
+        if let Some(template) = body.get("template").and_then(|v| v.as_str()) {
+            metadata.template = Some(template.to_string());
+        }
+
+        if let Some(parameters) = body.get("parameters") {
+            metadata.parameters = Some(parameters.clone());
+        }
+
+        if let Some(license) = body.get("license") {
+            metadata.license = Some(license.clone());
+        }
+
+        if let Some(adapters) = body.get("adapters") {
+            metadata.adapters = Some(adapters.clone());
+        }
+
+        if let Some(messages) = body.get("messages").and_then(|m| m.as_array()).cloned() {
+            metadata.messages = Some(messages);
+        }
+
+        metadata
+    }
+
+    pub async fn create_from_request(
+        &self,
+        context: &crate::handlers::RequestContext<'_>,
+        model_resolver: &crate::server::ModelResolverType,
+        alias_name: &str,
+        source_name: &str,
+        body: &Value,
+        cancellation_token: tokio_util::sync::CancellationToken,
+    ) -> Result<VirtualModelEntry, ProxyError> {
+        if let Some(files) = body.get("files") {
+            let has_content = match files {
+                Value::Object(map) => !map.is_empty(),
+                Value::Array(arr) => !arr.is_empty(),
+                Value::Null => false,
+                _ => true,
+            };
+            if has_content {
+                return Err(ProxyError::not_implemented(
+                    "creating models from custom blobs is not supported via LM Studio proxy",
+                ));
+            }
+        }
+
+        if body.get("quantize").is_some() {
+            return Err(ProxyError::not_implemented(
+                "quantization is not available via LM Studio proxy",
+            ));
+        }
+
+        let (resolved_id, source_virtual_entry) =
+            crate::handlers::ollama::utils::resolve_model_target(
+                context,
+                model_resolver,
+                source_name,
+                cancellation_token,
+            )
+            .await?;
+
+        let base_metadata = source_virtual_entry.map(|entry| entry.metadata);
+        let metadata = Self::build_metadata_from_request(body, base_metadata);
+
+        self.create_alias(alias_name, source_name.to_string(), resolved_id, metadata)
+            .await
+    }
+
     pub fn load<P: Into<PathBuf>>(path: P) -> Result<Self, ProxyError> {
         let path = path.into();
         if let Some(parent) = path.parent() {
