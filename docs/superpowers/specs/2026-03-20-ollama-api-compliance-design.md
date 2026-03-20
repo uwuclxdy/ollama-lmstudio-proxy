@@ -29,16 +29,22 @@ Add to the `DIRECT_MAPPINGS` constant in `map_direct_params` (`src/http/request.
 | `frequency_penalty` | `frequency_penalty` | Direct forward via OpenAI-compat |
 | `min_p` | `min_p` | Direct forward; LM Studio may or may not use it |
 
-The existing `map_penalties` function maps `repeat_penalty` → `frequency_penalty` only when `frequency_penalty` is not already set. This behaviour is preserved; the new direct forward of `frequency_penalty` takes precedence.
+The existing `map_penalties` function has three branches for `repeat_penalty`:
+1. If neither `frequency_penalty` nor `presence_penalty` is already in `params` → insert as `repeat_penalty`
+2. If `presence_penalty` is set but `frequency_penalty` is not → insert `repeat_penalty` value as `frequency_penalty`
+3. If `frequency_penalty` is already set → do nothing
+
+After the new direct forwarding of `frequency_penalty` and `presence_penalty` from `options`, case 2 and 3 become unreachable when a client provides those fields explicitly. All three branches are preserved unchanged; the new mappings simply populate `params` earlier, causing the guards to short-circuit correctly.
 
 ### 1b. New top-level body parameters
 
 These are not inside `options` and are not currently extracted from the request body. They must be read before `build_lm_studio_request` is called and merged into the outgoing request.
 
 **`think`** (chat and generate endpoints):
-- Ollama: `think: bool | "high" | "medium" | "low"`
-- Mapping: `true` → `"on"`, `false` → `"off"`, string values pass through unchanged
+- Ollama: `think: bool | "high" | "medium" | "low"` (optional; absent = do not emit `reasoning`)
+- Mapping: `true` → `"on"`, `false` → `"off"`, `"high"/"medium"/"low"` pass through unchanged, any other string value passes through unchanged (let LM Studio accept or reject)
 - Forward as `reasoning` in the LM Studio request body (best-effort; behaviour depends on LM Studio version)
+- When `think` is absent from the Ollama request, no `reasoning` field is emitted
 
 **`logprobs`** (chat and generate endpoints):
 - Ollama: `logprobs: bool`
@@ -48,9 +54,19 @@ These are not inside `options` and are not currently extracted from the request 
 - Ollama: `top_logprobs: integer`
 - Forward as-is
 
+**Passing mechanism:** Introduce a `TopLevelParams<'a>` struct in `src/http/request.rs`:
+```rust
+pub struct TopLevelParams<'a> {
+    pub think: Option<&'a Value>,
+    pub logprobs: Option<&'a Value>,
+    pub top_logprobs: Option<&'a Value>,
+}
+```
+Add a `top_level: Option<&TopLevelParams>` parameter to `build_lm_studio_request`. When present, merge these fields directly into the request object after the options map. `chat.rs` and `generate.rs` extract these values from the body and construct `TopLevelParams` before calling the builder.
+
 ### 1c. Generate-specific: `suffix`
 
-When `suffix` is present in an `/api/generate` request, forward it to `/v1/completions`. This enables fill-in-the-middle completion. No action needed when routing through chat (vision path).
+When `suffix` is present in an `/api/generate` request, forward it to `/v1/completions`. This enables fill-in-the-middle completion. When the request routes through chat (vision path — i.e. `images` is also present), `suffix` cannot be forwarded; log it at debug level with "unsupported on vision path: suffix" and proceed without it.
 
 ### 1d. Full options audit — unsupported parameter logging
 
@@ -90,13 +106,15 @@ The `thinking` key is only included when reasoning is non-empty.
 
 ### 2b. Streaming chat (`src/streaming/chunks.rs`)
 
-`process_choice_delta` currently appends `delta.reasoning` into the content buffer. Change:
-- Carry reasoning content separately in `ChoiceDeltaPayload` (add `thinking: String` field)
-- In `create_ollama_streaming_chunk`, include `message.thinking` when the thinking string is non-empty
+`process_choice_delta` currently appends `delta.reasoning` into the content buffer. Changes:
+
+1. Add `thinking: String` field to `ChoiceDeltaPayload`; populate it from `delta.reasoning` instead of appending to `content`
+2. Update the `None`-return guard: return `Some` when `content` is non-empty **or** `thinking` is non-empty **or** `tool_calls_delta` is `Some`. Reasoning-only chunks (empty content, non-empty thinking) must not be dropped.
+3. Update `create_ollama_streaming_chunk` to accept an optional `thinking: &str` parameter; include `message.thinking` in the JSON object when non-empty. All call sites must be updated accordingly.
 
 ### 2c. Non-streaming generate (`src/handlers/transform.rs`)
 
-LM Studio's `/v1/completions` response may include a `thinking` or `reasoning` field when reasoning is active. Extract it and include as a top-level `thinking` field in the Ollama generate response:
+LM Studio's `/v1/completions` response may include reasoning content when active. Check `choices[0].message.reasoning` first (primary field name); fall back to `choices[0].message.thinking` for older LM Studio versions. Extract it and include as a top-level `thinking` field in the Ollama generate response:
 ```json
 {
   "model": "...",
@@ -119,7 +137,7 @@ Same pattern: emit `thinking` as a top-level field on streaming generate chunks 
 
 Add to `src/server/routes.rs`. Returns plain text `"Ollama is running"` with `Content-Type: text/plain`. This is the standard Ollama health/presence probe used by clients like Open WebUI, LiteLLM proxy, and others.
 
-Handler lives in `src/handlers/ollama/health.rs` alongside the existing `handle_ollama_version`.
+Handler lives in `src/handlers/ollama/health.rs` alongside the existing `handle_ollama_version` and `handle_health_check` — all three are server-presence/status concerns and the file is already imported at the routes level, so no new module boundary is needed.
 
 ### 3b. Accurate model `size_bytes` from LM Studio
 
@@ -129,12 +147,21 @@ pub size_bytes: Option<u64>,
 ```
 LM Studio's `/api/v1/models` response includes this field. Deserialise it with `#[serde(default)]`.
 
-In `ModelInfo::from_native_data`, store `size_bytes` on `ModelInfo`:
+In `ModelInfo::from_native_data`, copy the value to `ModelInfo`:
 ```rust
-pub size_bytes: Option<u64>,
+pub size_bytes: Option<u64>,  // transferred from NativeModelData.size_bytes
 ```
 
-In `calculate_estimated_size`, use `self.size_bytes.unwrap_or_else(|| /* existing heuristic */)`.
+In `calculate_estimated_size`, check `self.size_bytes` first:
+```rust
+fn calculate_estimated_size(&self) -> u64 {
+    if let Some(bytes) = self.size_bytes {
+        return bytes;
+    }
+    // existing name-based heuristic follows ...
+}
+```
+The heuristic is only reached when LM Studio omits `size_bytes`.
 
 ### 3c. Accurate model `params_string` from LM Studio
 
@@ -144,7 +171,21 @@ pub params_string: Option<String>,
 ```
 LM Studio includes this field (e.g. `"7B"`, `"70B"`).
 
-In `parse_parameters`, use `self.params_string.clone().unwrap_or_else(|| /* existing inference from id */)`.
+In `ModelInfo::from_native_data`, copy the value:
+```rust
+pub params_string: Option<String>,  // transferred from NativeModelData.params_string
+```
+
+In `parse_parameters`:
+```rust
+fn parse_parameters(&self) -> ModelParameters {
+    if let Some(ref s) = self.params_string {
+        return ModelParameters { size_string: s.clone() };
+    }
+    // existing name-based inference follows ...
+}
+```
+The existing inference from model id is only reached when LM Studio omits the field.
 
 ---
 
@@ -152,11 +193,11 @@ In `parse_parameters`, use `self.params_string.clone().unwrap_or_else(|| /* exis
 
 | File | Changes |
 |---|---|
-| `src/http/request.rs` | Add `presence_penalty`, `frequency_penalty`, `min_p` to direct mappings; add `log_unsupported_options`; add top-level param extraction for `think`, `logprobs`, `top_logprobs` |
-| `src/handlers/ollama/chat.rs` | Extract `think`, `logprobs`, `top_logprobs` from body; pass to request builder |
-| `src/handlers/ollama/generate.rs` | Extract `think`, `logprobs`, `top_logprobs`, `suffix` from body; pass to request builder |
-| `src/handlers/transform.rs` | Split reasoning extraction; add `thinking` field to chat and generate responses |
-| `src/streaming/chunks.rs` | Add `thinking` field to `ChoiceDeltaPayload`; include `message.thinking` in streaming chunks |
+| `src/http/request.rs` | Add `presence_penalty`, `frequency_penalty`, `min_p` to direct mappings; add `TopLevelParams` struct; add `top_level` parameter to `build_lm_studio_request`; add `log_unsupported_options` |
+| `src/handlers/ollama/chat.rs` | Extract `think`, `logprobs`, `top_logprobs` from body; construct and pass `TopLevelParams` |
+| `src/handlers/ollama/generate.rs` | Extract `think`, `logprobs`, `top_logprobs`, `suffix` from body; construct and pass `TopLevelParams`; forward `suffix` on completions path only |
+| `src/handlers/transform.rs` | Split reasoning extraction into `extract_chat_content` + `extract_reasoning_content`; add `thinking` field to chat and generate responses |
+| `src/streaming/chunks.rs` | Add `thinking: String` to `ChoiceDeltaPayload`; update `None`-return guard; add `thinking` param to `create_ollama_streaming_chunk`; update all call sites |
 | `src/model/types.rs` | Add `size_bytes`, `params_string` to `NativeModelData` and `ModelInfo`; use actual values over heuristics |
 | `src/server/routes.rs` | Register `GET /` route |
 | `src/handlers/ollama/health.rs` | Add `handle_ollama_root` handler |
