@@ -102,7 +102,7 @@ In `convert_to_ollama_chat`, build `message` as:
   "thinking": "<reasoning, if present>"
 }
 ```
-The `thinking` key is only included when reasoning is non-empty.
+The `thinking` key is only included when reasoning is non-empty. Note: for chat, `thinking` is nested inside `message`; for generate (Section 2c), `thinking` is top-level. This matches the Ollama wire format for each endpoint.
 
 ### 2b. Streaming chat (`src/streaming/chunks.rs`)
 
@@ -114,7 +114,7 @@ The `thinking` key is only included when reasoning is non-empty.
 
 ### 2c. Non-streaming generate (`src/handlers/transform.rs`)
 
-LM Studio's `/v1/completions` response may include reasoning content when active. Check `choices[0].message.reasoning` first (primary field name); fall back to `choices[0].message.thinking` for older LM Studio versions. Extract it and include as a top-level `thinking` field in the Ollama generate response:
+The `/v1/completions` response uses `choices[0].text` for content, not a `message` sub-object. Reasoning content, if returned, would appear as a sibling key inside `choices[0]` — check `choices[0].reasoning` first, then `choices[0].thinking` as a fallback. If neither is present the `thinking` field is omitted from the response. Include it as a top-level field in the Ollama generate response when present:
 ```json
 {
   "model": "...",
@@ -124,10 +124,11 @@ LM Studio's `/v1/completions` response may include reasoning content when active
   ...
 }
 ```
+Note: `thinking` is top-level in the generate response, unlike chat where it is nested inside `message`.
 
 ### 2d. Streaming generate (`src/streaming/chunks.rs`)
 
-Same pattern: emit `thinking` as a top-level field on streaming generate chunks when present.
+The streaming `/v1/completions` path uses `choices[0].delta.text` (or `choices[0].text`) for content deltas. Reasoning deltas would appear in `choices[0].delta.reasoning`. The `ChoiceDeltaPayload.thinking` field added in Section 2b is also used here: populate it from `delta.reasoning` on the completions path. Emit `thinking` as a top-level field (not inside `message`) on streaming generate chunks, mirroring the non-streaming generate shape from Section 2c. The None-return guard change from Section 2b applies equally here.
 
 ---
 
@@ -193,7 +194,7 @@ The existing inference from model id is only reached when LM Studio omits the fi
 
 | File | Changes |
 |---|---|
-| `src/http/request.rs` | Add `presence_penalty`, `frequency_penalty`, `min_p` to direct mappings; add `TopLevelParams` struct; add `top_level` parameter to `build_lm_studio_request`; add `log_unsupported_options` |
+| `src/http/request.rs` | Add `presence_penalty`, `frequency_penalty`, `min_p` to direct mappings; add `TopLevelParams<'a>` struct; add `top_level: Option<&TopLevelParams>` parameter to `build_lm_studio_request` (signature change — all call sites must update); add `log_unsupported_options` |
 | `src/handlers/ollama/chat.rs` | Extract `think`, `logprobs`, `top_logprobs` from body; construct and pass `TopLevelParams` |
 | `src/handlers/ollama/generate.rs` | Extract `think`, `logprobs`, `top_logprobs`, `suffix` from body; construct and pass `TopLevelParams`; forward `suffix` on completions path only |
 | `src/handlers/transform.rs` | Split reasoning extraction into `extract_chat_content` + `extract_reasoning_content`; add `thinking` field to chat and generate responses |
