@@ -15,7 +15,7 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::logging::log_timed;
 use crate::streaming::chunks::{
-    ChunkProcessingState, create_cancellation_chunk, create_final_chunk,
+    ChunkProcessingState, FinalChunkParams, create_cancellation_chunk, create_final_chunk,
     create_ollama_streaming_chunk, extract_first_choice, process_choice_delta, send_chunk,
     send_chunk_and_close_channel, send_error_and_close,
 };
@@ -212,13 +212,13 @@ pub async fn handle_streaming_response(
         };
 
         if stream_result.is_ok() && !token_clone.is_cancelled() {
-            let final_chunk = create_final_chunk(
-                &model_clone_for_task,
-                start_time.elapsed(),
+            let final_chunk = create_final_chunk(FinalChunkParams {
+                model_name: &model_clone_for_task,
+                duration: start_time.elapsed(),
                 chunk_count,
-                is_chat_endpoint,
-                chunk_state.finish_reason(),
-            );
+                is_chat: is_chat_endpoint,
+                done_reason: chunk_state.finish_reason(),
+            });
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
 

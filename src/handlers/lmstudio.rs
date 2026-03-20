@@ -54,8 +54,7 @@ pub async fn handle_lmstudio_passthrough(
         }
     }
 
-    let json_body_template = parse_json_body_template(&headers, &body)
-        .map_err(|e| ProxyError::bad_request(&format!("Failed to parse JSON body: {}", e)))?;
+    let json_body_template = parse_json_body_template(&headers, &body)?;
     let original_model_name = json_body_template
         .as_ref()
         .and_then(|value: &Value| value.get("model"))
@@ -125,87 +124,29 @@ pub async fn handle_lmstudio_passthrough(
                     .or(original_model_name.as_deref());
                 log_request(method.as_str(), &final_endpoint_url, log_model);
 
-                if let Some(ref body_json) = current_body {
-                    let is_streaming = is_streaming_request(body_json);
-                    let prepared_body = prepare_request_body(Some(body_json.clone()), &body_bytes)
-                        .map_err(|e| {
-                            ProxyError::bad_request(&format!(
-                                "Failed to prepare request body: {}",
-                                e
-                            ))
-                        })?;
-
-                    let forward_headers = build_forward_headers(&headers, prepared_body.is_json);
-
-                    let lm_studio_request_start = Instant::now();
-                    let cancellable_request =
-                        CancellableRequest::new(context.client, cancellation_token.clone());
-                    let response = cancellable_request
-                        .make_raw_request(
-                            method.clone(),
-                            &final_endpoint_url,
-                            forward_headers,
-                            prepared_body.bytes,
-                        )
-                        .await?;
-
-                    if original_model_name.is_some()
-                        && (endpoint.contains("completion") || endpoint.contains("chat"))
-                    {
-                        log_timed(
-                            LOG_PREFIX_INFO,
-                            &format!(
-                                "LM Studio responded | {}",
-                                format_duration(lm_studio_request_start.elapsed())
-                            ),
-                            lm_studio_request_start,
-                        );
-                    }
-
-                    if is_streaming {
-                        if LogConfig::get().debug_enabled {
-                            log::debug!("passthrough response: (streaming)");
-                        }
-                        handle_passthrough_streaming_response(response, cancellation_token, 60)
-                            .await
-                    } else {
-                        let is_json_response = crate::http::response::is_json_response(&response);
-                        if is_json_response {
-                            let json_body =
-                                handle_json_response(response, cancellation_token).await?;
-                            if LogConfig::get().debug_enabled {
-                                log::debug!(
-                                    "passthrough response: {}",
-                                    serde_json::to_string_pretty(&json_body).unwrap_or_default()
-                                );
-                            }
-                            Ok(json_response(&json_body))
-                        } else {
-                            if LogConfig::get().debug_enabled {
-                                log::debug!("passthrough response: (raw/non-json)");
-                            }
-                            forward_raw_response(response).await
-                        }
-                    }
+                if let Some(body_json) = current_body {
+                    forward_json_body_request(
+                        context.client,
+                        method,
+                        &final_endpoint_url,
+                        &headers,
+                        body_json,
+                        &body_bytes,
+                        &endpoint,
+                        original_model_name.as_deref(),
+                        cancellation_token,
+                    )
+                    .await
                 } else {
-                    // Handle non-JSON body case
-                    let forward_headers = build_forward_headers(&headers, false);
-                    let prepared_body = prepare_request_body(None, &body_bytes).map_err(|e| {
-                        ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
-                    })?;
-
-                    let cancellable_request =
-                        CancellableRequest::new(context.client, cancellation_token.clone());
-                    let response = cancellable_request
-                        .make_raw_request(
-                            method.clone(),
-                            &final_endpoint_url,
-                            forward_headers,
-                            prepared_body.bytes,
-                        )
-                        .await?;
-
-                    forward_raw_response(response).await
+                    forward_raw_body_request(
+                        context.client,
+                        method,
+                        &final_endpoint_url,
+                        &headers,
+                        &body_bytes,
+                        cancellation_token,
+                    )
+                    .await
                 }
             }
         }
@@ -226,6 +167,105 @@ pub async fn handle_lmstudio_passthrough(
 
     log_timed(LOG_PREFIX_SUCCESS, "LM Studio passthrough", start_time);
     Ok(result)
+}
+
+async fn forward_json_body_request(
+    client: &reqwest::Client,
+    method: http::Method,
+    endpoint_url: &str,
+    headers: &http::HeaderMap,
+    body_json: Value,
+    body_bytes: &Bytes,
+    endpoint: &str,
+    original_model_name: Option<&str>,
+    cancellation_token: CancellationToken,
+) -> Result<warp::reply::Response, ProxyError> {
+    let is_streaming = is_streaming_request(&body_json);
+    let prepared_body = prepare_request_body(Some(body_json), body_bytes).map_err(|e| {
+        ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
+    })?;
+
+    let forward_headers = build_forward_headers(headers, prepared_body.is_json);
+
+    let lm_studio_request_start = Instant::now();
+    let cancellable_request = CancellableRequest::new(client, cancellation_token.clone());
+    let response = cancellable_request
+        .make_raw_request(method, endpoint_url, forward_headers, prepared_body.bytes)
+        .await?;
+
+    if original_model_name.is_some()
+        && (endpoint.contains("completion") || endpoint.contains("chat"))
+    {
+        log_timed(
+            LOG_PREFIX_INFO,
+            &format!(
+                "LM Studio responded | {}",
+                format_duration(lm_studio_request_start.elapsed())
+            ),
+            lm_studio_request_start,
+        );
+    }
+
+    route_response(response, is_streaming, cancellation_token).await
+}
+
+async fn forward_raw_body_request(
+    client: &reqwest::Client,
+    method: http::Method,
+    endpoint_url: &str,
+    headers: &http::HeaderMap,
+    body_bytes: &Bytes,
+    cancellation_token: CancellationToken,
+) -> Result<warp::reply::Response, ProxyError> {
+    let forward_headers = build_forward_headers(headers, false);
+    let prepared_body =
+        prepare_request_body(None, body_bytes).map_err(|e| {
+            ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
+        })?;
+
+    let cancellable_request = CancellableRequest::new(client, cancellation_token.clone());
+    let response = cancellable_request
+        .make_raw_request(method, endpoint_url, forward_headers, prepared_body.bytes)
+        .await?;
+
+    forward_raw_response(response).await
+}
+
+async fn route_response(
+    response: reqwest::Response,
+    is_streaming: bool,
+    cancellation_token: CancellationToken,
+) -> Result<warp::reply::Response, ProxyError> {
+    if is_streaming {
+        if LogConfig::get().debug_enabled {
+            log::debug!("passthrough response: (streaming)");
+        }
+        handle_passthrough_streaming_response(response, cancellation_token, 60).await
+    } else {
+        route_non_streaming_response(response, cancellation_token).await
+    }
+}
+
+async fn route_non_streaming_response(
+    response: reqwest::Response,
+    cancellation_token: CancellationToken,
+) -> Result<warp::reply::Response, ProxyError> {
+    let is_json_response = crate::http::response::is_json_response(&response);
+    if is_json_response {
+        let json_body = handle_json_response(response, cancellation_token).await?;
+        if LogConfig::get().debug_enabled {
+            log::debug!(
+                "passthrough response: {}",
+                serde_json::to_string_pretty(&json_body).unwrap_or_default()
+            );
+        }
+        Ok(json_response(&json_body))
+    } else {
+        if LogConfig::get().debug_enabled {
+            log::debug!("passthrough response: (raw/non-json)");
+        }
+        forward_raw_response(response).await
+    }
 }
 
 fn determine_passthrough_endpoint_url(

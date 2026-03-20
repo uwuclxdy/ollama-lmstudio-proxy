@@ -72,7 +72,7 @@ pub async fn handle_ollama_generate(
 
             let mut prompt_for_estimation = current_prompt;
             let mut prompt_override_storage: Option<String> = None;
-            let mut chat_messages_payload: Option<Value> = None;
+            let chat_messages_payload: Option<Value>;
 
             let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
                 chat_messages_payload = Some(build_vision_chat_messages(
@@ -116,8 +116,6 @@ pub async fn handle_ollama_generate(
                     },
                 )
             };
-
-            let _ = &chat_messages_payload;
 
             let mut lm_request = crate::http::request::build_lm_studio_request(
                 &resolution_ctx.lm_studio_model_id,

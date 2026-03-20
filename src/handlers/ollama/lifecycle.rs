@@ -30,7 +30,7 @@ pub async fn handle_ollama_pull(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_handler_io("pull", Some(&body), None, false);
+    log_handler_io("pull", Some(&body), None);
     let requested_model = extract_required_model_name(&body)?;
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
     let quantization = body
@@ -93,7 +93,7 @@ pub async fn handle_ollama_pull(
 
         let response_body = final_status.into_final_response(requested_model)?;
         log_timed(LOG_PREFIX_SUCCESS, "Ollama pull", start_time);
-        log_handler_io("pull", None, Some(&response_body), false);
+        log_handler_io("pull", None, Some(&response_body));
         return Ok(json_response(&response_body));
     }
 
@@ -121,7 +121,7 @@ pub async fn handle_ollama_pull(
 
     let response = create_ndjson_stream_response(rx, "failed to create pull streaming response")?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama pull stream open", start_time);
-    log_handler_io("pull", None, None, true);
+    log_handler_io("pull", None, None);
     Ok(response)
 }
 
@@ -132,7 +132,7 @@ pub async fn handle_ollama_create(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_handler_io("create", Some(&body), None, false);
+    log_handler_io("create", Some(&body), None);
     let new_model_name = extract_required_model_name(&body)?;
     let source_model_name = body
         .get("from")
@@ -168,12 +168,12 @@ pub async fn handle_ollama_create(
             json!({"status": "writing manifest", "model": new_model_name}),
             json!({"status": "success", "model": new_model_name, "virtual": true}),
         ];
-        log_handler_io("create", None, None, true);
+        log_handler_io("create", None, None);
         return stream_status_messages(statuses, "failed to create model alias stream");
     }
 
     let response = entry.to_response();
-    log_handler_io("create", None, Some(&response), false);
+    log_handler_io("create", None, Some(&response));
     Ok(json_response(&response))
 }
 
@@ -184,7 +184,7 @@ pub async fn handle_ollama_copy(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_handler_io("copy", Some(&body), None, false);
+    log_handler_io("copy", Some(&body), None);
     let source = body
         .get("source")
         .and_then(|value| value.as_str())
@@ -223,7 +223,7 @@ pub async fn handle_ollama_copy(
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama copy", start_time);
     let response = entry.to_response();
-    log_handler_io("copy", None, Some(&response), false);
+    log_handler_io("copy", None, Some(&response));
     Ok(json_response(&response))
 }
 
@@ -232,7 +232,7 @@ pub async fn handle_ollama_delete(
     body: Value,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_handler_io("delete", Some(&body), None, false);
+    log_handler_io("delete", Some(&body), None);
     let model_name = extract_required_model_name(&body)?;
     log_request("DELETE", "/api/delete", Some(model_name));
 
@@ -246,7 +246,7 @@ pub async fn handle_ollama_delete(
     let removed = context.virtual_models.delete(model_name).await?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama delete", start_time);
     let response = removed.to_response();
-    log_handler_io("delete", None, Some(&response), false);
+    log_handler_io("delete", None, Some(&response));
     Ok(json_response(&response))
 }
 
@@ -257,7 +257,7 @@ pub async fn handle_ollama_push(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
-    log_handler_io("push", Some(&body), None, false);
+    log_handler_io("push", Some(&body), None);
     let model_name = extract_required_model_name(&body)?;
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
 
@@ -283,7 +283,7 @@ pub async fn handle_ollama_push(
                 "detail": "push is a no-op when targeting LM Studio"
             }),
         ];
-        log_handler_io("push", None, None, true);
+        log_handler_io("push", None, None);
         return stream_status_messages(statuses, "failed to stream push status");
     }
 
@@ -293,6 +293,6 @@ pub async fn handle_ollama_push(
         "detail": "push is a no-op when targeting LM Studio",
         "target_model_id": resolved_model_id
     });
-    log_handler_io("push", None, Some(&response), false);
+    log_handler_io("push", None, Some(&response));
     Ok(json_response(&response))
 }

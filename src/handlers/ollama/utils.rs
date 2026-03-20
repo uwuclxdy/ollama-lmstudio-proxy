@@ -7,7 +7,6 @@ pub use super::status_streaming::{
     send_status_chunk, send_status_error_chunk, stream_status_messages,
 };
 
-/// Extracts system prompt from request body
 pub fn extract_system_prompt(body: &Value) -> Option<String> {
     body.get("system")
         .and_then(|value| value.as_str())

@@ -249,22 +249,24 @@ pub fn create_cancellation_chunk(
     chunk
 }
 
-pub fn create_final_chunk(
-    model_ollama_name: &str,
-    duration: Duration,
-    chunk_count_for_token_estimation: u64,
-    is_chat_endpoint: bool,
-    done_reason: Option<&str>,
-) -> Value {
-    let timing = TimingInfo::from_stream_chunks(duration, chunk_count_for_token_estimation, None);
+pub struct FinalChunkParams<'a> {
+    pub model_name: &'a str,
+    pub duration: Duration,
+    pub chunk_count: u64,
+    pub is_chat: bool,
+    pub done_reason: Option<&'a str>,
+}
+
+pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
+    let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
 
     let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None);
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert(
             "done_reason".to_string(),
-            json!(done_reason.unwrap_or("stop")),
+            json!(params.done_reason.unwrap_or("stop")),
         );
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
@@ -278,7 +280,7 @@ pub fn create_final_chunk(
         );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
-        if !is_chat_endpoint {
+        if !params.is_chat {
             chunk_obj.insert("context".to_string(), json!([]));
         }
     }

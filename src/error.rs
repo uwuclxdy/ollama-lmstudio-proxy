@@ -10,83 +10,43 @@ use crate::constants::ERROR_CANCELLED;
 pub struct ProxyError {
     pub message: String,
     pub status_code: u16,
-    kind: ProxyErrorKind,
-}
-
-#[derive(Debug, Clone)]
-enum ProxyErrorKind {
-    RequestCancelled,
-    InternalServerError,
-    BadRequest,
-    NotFound,
-    NotImplemented,
-    LMStudioUnavailable,
-    Custom,
 }
 
 impl ProxyError {
     pub fn new(message: String, status_code: u16) -> Self {
-        Self {
-            message,
-            status_code,
-            kind: ProxyErrorKind::Custom,
-        }
+        Self { message, status_code }
     }
 
     pub fn internal_server_error(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 500,
-            kind: ProxyErrorKind::InternalServerError,
-        }
+        Self { message: message.to_string(), status_code: 500 }
     }
 
     pub fn bad_request(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 400,
-            kind: ProxyErrorKind::BadRequest,
-        }
+        Self { message: message.to_string(), status_code: 400 }
     }
 
     pub fn not_found(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 404,
-            kind: ProxyErrorKind::NotFound,
-        }
+        Self { message: message.to_string(), status_code: 404 }
     }
 
     pub fn not_implemented(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 501,
-            kind: ProxyErrorKind::NotImplemented,
-        }
+        Self { message: message.to_string(), status_code: 501 }
     }
 
     pub fn request_cancelled() -> Self {
-        Self {
-            message: ERROR_CANCELLED.to_string(),
-            status_code: 499,
-            kind: ProxyErrorKind::RequestCancelled,
-        }
+        Self { message: ERROR_CANCELLED.to_string(), status_code: 499 }
     }
 
     pub fn lm_studio_unavailable(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 503,
-            kind: ProxyErrorKind::LMStudioUnavailable,
-        }
+        Self { message: message.to_string(), status_code: 503 }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        matches!(self.kind, ProxyErrorKind::RequestCancelled)
+        self.status_code == 499
     }
 
     pub fn is_lm_studio_unavailable(&self) -> bool {
-        matches!(self.kind, ProxyErrorKind::LMStudioUnavailable)
+        self.status_code == 503
     }
 }
 

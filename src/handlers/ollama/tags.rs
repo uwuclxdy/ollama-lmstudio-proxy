@@ -54,6 +54,6 @@ pub async fn handle_ollama_tags(
 
     let response = json!({ "models": ollama_models });
     log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
-    log_handler_io("tags", None, Some(&response), false);
+    log_handler_io("tags", None, Some(&response));
     Ok(json_response(&response))
 }

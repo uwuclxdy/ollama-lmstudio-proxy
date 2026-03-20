@@ -5,7 +5,7 @@ use crate::error::ProxyError;
 use crate::handlers::transform::ResponseTransformer;
 use crate::http::client::handle_json_response;
 use crate::http::json_response;
-use crate::logging::{LogConfig, log_handler_io};
+use crate::logging::log_handler_io;
 use crate::server::ModelResolverType;
 use crate::streaming::handle_streaming_response;
 use tokio_util::sync::CancellationToken;
@@ -73,20 +73,10 @@ pub async fn handle_response(
             }
         };
 
-        if LogConfig::get().debug_enabled {
-            log::debug!(
-                "{} response: {}",
-                if is_chat { "chat" } else { "generate" },
-                serde_json::to_string_pretty(&ollama_response).unwrap_or_default()
-            );
-        }
-
-        // Log the handler I/O
         log_handler_io(
             if is_chat { "chat" } else { "generate" },
             None,
             Some(&ollama_response),
-            false,
         );
 
         Ok(json_response(&ollama_response))

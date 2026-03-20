@@ -85,7 +85,7 @@ pub async fn handle_ollama_show(
     }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama show", start_time);
-    log_handler_io("show", None, Some(&response), false);
+    log_handler_io("show", None, Some(&response));
     Ok(json_response(&response))
 }
 
@@ -116,6 +116,6 @@ pub async fn handle_ollama_ps(
 
     let response = json!({ "models": ollama_models });
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
-    log_handler_io("ps", None, Some(&response), false);
+    log_handler_io("ps", None, Some(&response));
     Ok(json_response(&response))
 }

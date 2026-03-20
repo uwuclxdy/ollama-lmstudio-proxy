@@ -79,7 +79,6 @@ pub fn log_handler_io(
     endpoint: &str,
     body: Option<&serde_json::Value>,
     response: Option<&serde_json::Value>,
-    streaming: bool,
 ) {
     if LogConfig::get().debug_enabled {
         if let Some(body_value) = body {
@@ -91,15 +90,11 @@ pub fn log_handler_io(
         }
 
         if let Some(response_value) = response {
-            if streaming {
-                log::debug!("{} response: (streaming)", endpoint);
-            } else {
-                log::debug!(
-                    "{} response: {}",
-                    endpoint,
-                    serde_json::to_string_pretty(response_value).unwrap_or_default()
-                );
-            }
+            log::debug!(
+                "{} response: {}",
+                endpoint,
+                serde_json::to_string_pretty(response_value).unwrap_or_default()
+            );
         }
     }
 }
