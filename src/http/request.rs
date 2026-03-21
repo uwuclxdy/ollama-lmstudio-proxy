@@ -75,6 +75,10 @@ pub fn map_ollama_to_lmstudio_params(
     map_penalties(ollama_options, &mut params);
     map_format_params(ollama_options, structured_format, &mut params);
 
+    if let Some(options) = ollama_options {
+        log_unsupported_options(options);
+    }
+
     params
 }
 
@@ -131,6 +135,9 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
             "stop",
             "truncate",
             "dimensions",
+            "presence_penalty",
+            "frequency_penalty",
+            "min_p",
         ];
 
         for param in DIRECT_MAPPINGS {
@@ -185,6 +192,40 @@ fn map_format_params(
     }
 }
 
+const UNSUPPORTED_OPTION_KEYS: &[&str] = &[
+    "num_ctx",
+    "repeat_last_n",
+    "tfs_z",
+    "typical_p",
+    "mirostat",
+    "mirostat_tau",
+    "mirostat_eta",
+    "penalize_newline",
+    "num_keep",
+    "num_batch",
+    "num_gpu",
+    "num_thread",
+    "numa",
+    "use_mmap",
+    "use_mlock",
+    "vocab_only",
+];
+
+pub(crate) fn collect_unsupported_keys(options: &Value) -> Vec<&'static str> {
+    UNSUPPORTED_OPTION_KEYS
+        .iter()
+        .copied()
+        .filter(|key| options.get(key).is_some())
+        .collect()
+}
+
+pub fn log_unsupported_options(options: &Value) {
+    let keys = collect_unsupported_keys(options);
+    if !keys.is_empty() {
+        log::debug!("unsupported options ignored: {}", keys.join(", "));
+    }
+}
+
 fn convert_structured_format(format_value: &Value) -> Option<Value> {
     match format_value {
         Value::String(mode) if mode.eq_ignore_ascii_case("json") => {
@@ -200,5 +241,53 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
             }
         })),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn forwards_presence_penalty() {
+        let options = json!({ "presence_penalty": 0.5 });
+        let params = map_ollama_to_lmstudio_params(Some(&options), None);
+        assert_eq!(params.get("presence_penalty"), Some(&json!(0.5)));
+    }
+
+    #[test]
+    fn forwards_frequency_penalty() {
+        let options = json!({ "frequency_penalty": 0.3 });
+        let params = map_ollama_to_lmstudio_params(Some(&options), None);
+        assert_eq!(params.get("frequency_penalty"), Some(&json!(0.3)));
+    }
+
+    #[test]
+    fn forwards_min_p() {
+        let options = json!({ "min_p": 0.05 });
+        let params = map_ollama_to_lmstudio_params(Some(&options), None);
+        assert_eq!(params.get("min_p"), Some(&json!(0.05)));
+    }
+
+    #[test]
+    fn collects_unsupported_options() {
+        let options = json!({ "num_ctx": 4096, "mirostat": 1, "temperature": 0.7 });
+        let unsupported = collect_unsupported_keys(&options);
+        assert!(unsupported.contains(&"num_ctx"), "expected num_ctx in {:?}", unsupported);
+        assert!(unsupported.contains(&"mirostat"), "expected mirostat in {:?}", unsupported);
+        // temperature is supported — must NOT appear
+        assert!(!unsupported.contains(&"temperature"), "temperature should not appear in {:?}", unsupported);
+    }
+
+    #[test]
+    fn log_unsupported_options_does_not_panic() {
+        // Smoke test: calling with unsupported keys must not panic (log output not asserted)
+        let options = json!({ "num_ctx": 4096, "mirostat": 1 });
+        log_unsupported_options(&options);
+
+        // No keys: also must not panic
+        let empty = json!({ "temperature": 0.7 });
+        log_unsupported_options(&empty);
     }
 }
