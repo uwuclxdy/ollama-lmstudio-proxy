@@ -167,17 +167,28 @@ impl ModelInfo {
         cloned
     }
 
+    fn is_thinking_model(&self) -> bool {
+        let lower = self.id.to_lowercase();
+        lower.contains("reasoning")
+            || lower.contains("thinking")
+            || lower.contains("-r1")
+            || lower.starts_with("r1-")
+            || lower.contains("qwq")
+            || lower.contains("qvq")
+            || lower.contains("-cot-")
+            || lower.contains("deepseek-r")
+            || lower.contains("reflect")
+    }
+
     fn determine_capabilities(&self) -> Vec<String> {
         let mut caps = Vec::new();
 
         match self.model_type.as_str() {
             "llm" => {
                 caps.push("completion".to_string());
-                if self.arch.contains("instruct")
-                    || self.id.contains("instruct")
-                    || self.id.contains("chat")
-                {
-                    caps.push("chat".to_string());
+                caps.push("chat".to_string());
+                if self.is_thinking_model() {
+                    caps.push("thinking".to_string());
                 }
                 if self.supports_vision {
                     caps.push("vision".to_string());
@@ -190,6 +201,9 @@ impl ModelInfo {
                 caps.push("completion".to_string());
                 caps.push("chat".to_string());
                 caps.push("vision".to_string());
+                if self.is_thinking_model() {
+                    caps.push("thinking".to_string());
+                }
                 if self.supports_tools {
                     caps.push("tools".to_string());
                 }
@@ -199,6 +213,10 @@ impl ModelInfo {
             }
             _ => {
                 caps.push("completion".to_string());
+                caps.push("chat".to_string());
+                if self.is_thinking_model() {
+                    caps.push("thinking".to_string());
+                }
                 if self.supports_vision {
                     caps.push("vision".to_string());
                 }
@@ -388,6 +406,73 @@ mod tests {
             size_bytes,
             params_string,
         }
+    }
+
+    fn make_native_with_caps(key: &str, model_type: &str, vision: bool, tools: bool) -> NativeModelData {
+        NativeModelData {
+            key: key.to_string(),
+            model_type: model_type.to_string(),
+            publisher: "test".to_string(),
+            architecture: Some("llama".to_string()),
+            format: Some("gguf".to_string()),
+            quantization: Some(NativeQuantization { name: Some("Q4_K_M".to_string()) }),
+            max_context_length: 4096,
+            loaded_instances: vec![],
+            capabilities: Some(NativeCapabilities {
+                vision: Some(vision),
+                trained_for_tool_use: Some(tools),
+            }),
+            size_bytes: None,
+            params_string: None,
+        }
+    }
+
+    fn caps(info: &ModelInfo) -> Vec<String> {
+        info.determine_capabilities()
+    }
+
+    #[test]
+    fn llm_without_instruct_in_name_still_gets_chat() {
+        let native = make_native_with_caps("qwen3.5-9b-reasoning-distilled", "llm", false, false);
+        let info = ModelInfo::from_native_data(&native);
+        assert!(caps(&info).contains(&"chat".to_string()), "expected 'chat' but got {:?}", caps(&info));
+    }
+
+    #[test]
+    fn reasoning_model_gets_thinking_capability() {
+        let native = make_native_with_caps("qwen3.5-9b-opus-reasoning-distilled", "llm", false, false);
+        let info = ModelInfo::from_native_data(&native);
+        assert!(caps(&info).contains(&"thinking".to_string()), "expected 'thinking' but got {:?}", caps(&info));
+    }
+
+    #[test]
+    fn r1_model_gets_thinking_capability() {
+        let native = make_native_with_caps("deepseek-r1-7b", "llm", false, false);
+        let info = ModelInfo::from_native_data(&native);
+        assert!(caps(&info).contains(&"thinking".to_string()), "expected 'thinking' but got {:?}", caps(&info));
+    }
+
+    #[test]
+    fn vision_llm_gets_vision_capability() {
+        let native = make_native_with_caps("qwen3.5-9b-instruct-heretic", "llm", true, false);
+        let info = ModelInfo::from_native_data(&native);
+        assert!(caps(&info).contains(&"vision".to_string()), "expected 'vision' but got {:?}", caps(&info));
+    }
+
+    #[test]
+    fn reasoning_vision_model_gets_both() {
+        let native = make_native_with_caps("qvq-72b-preview", "llm", true, false);
+        let info = ModelInfo::from_native_data(&native);
+        let c = caps(&info);
+        assert!(c.contains(&"thinking".to_string()), "expected 'thinking' but got {:?}", c);
+        assert!(c.contains(&"vision".to_string()), "expected 'vision' but got {:?}", c);
+    }
+
+    #[test]
+    fn non_reasoning_llm_does_not_get_thinking() {
+        let native = make_native_with_caps("llama-3-8b-instruct", "llm", false, false);
+        let info = ModelInfo::from_native_data(&native);
+        assert!(!caps(&info).contains(&"thinking".to_string()), "unexpected 'thinking' in {:?}", caps(&info));
     }
 
     #[test]
