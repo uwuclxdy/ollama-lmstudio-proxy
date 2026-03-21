@@ -17,6 +17,14 @@ pub fn create_routes(
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     let with_server_state = warp::any().map(move || server.clone());
 
+    let root_route = warp::path::end()
+        .and(warp::get())
+        .and_then(|| async move {
+            ollama::handle_ollama_root()
+                .await
+                .map_err(warp::reject::custom)
+        });
+
     let health_route = warp::path!("health")
         .and(warp::get())
         .and(with_server_state.clone())
@@ -303,7 +311,8 @@ pub fn create_routes(
             },
         );
 
-    health_route
+    root_route
+        .or(health_route)
         .or(ollama_tags_route)
         .or(ollama_chat_route)
         .or(ollama_generate_route)

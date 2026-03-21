@@ -13,6 +13,19 @@ use crate::handlers::RequestContext;
 use crate::http::CancellableRequest;
 use crate::logging::{LogConfig, log_timed};
 
+pub async fn handle_ollama_root() -> Result<warp::reply::Response, ProxyError> {
+    Ok(warp::http::Response::builder()
+        .status(warp::http::StatusCode::OK)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body("Ollama is running".into())
+        .unwrap_or_else(|_| {
+            warp::http::Response::builder()
+                .status(warp::http::StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Server Error".into())
+                .unwrap()
+        }))
+}
+
 pub async fn handle_ollama_version() -> Result<warp::reply::Response, ProxyError> {
     if LogConfig::get().debug_enabled {
         log::debug!("version request");
@@ -106,5 +119,25 @@ pub async fn handle_health_check(
             }
             Ok(response)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn root_returns_ollama_is_running() {
+        let response = handle_ollama_root().await.unwrap();
+        assert_eq!(response.status(), 200);
+        let ct = response
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(ct.contains("text/plain"), "expected text/plain, got: {}", ct);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), b"Ollama is running");
     }
 }
