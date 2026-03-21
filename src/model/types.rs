@@ -45,8 +45,15 @@ pub struct NativeQuantization {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeLoadedInstanceConfig {
+    pub context_length: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeLoadedInstance {
     pub id: String,
+    #[serde(default)]
+    pub config: Option<NativeLoadedInstanceConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +72,7 @@ pub struct ModelInfo {
     pub quantization: String,
     pub state: String,
     pub max_context_length: u64,
+    pub context_length: u64,
     pub is_loaded: bool,
     pub supports_vision: bool,
     pub supports_tools: bool,
@@ -96,6 +104,13 @@ impl ModelInfo {
     pub fn from_native_data(native_data: &NativeModelData) -> Self {
         let is_loaded = !native_data.loaded_instances.is_empty();
         let state = if is_loaded { "loaded" } else { "not-loaded" };
+
+        let context_length = native_data
+            .loaded_instances
+            .first()
+            .and_then(|inst| inst.config.as_ref())
+            .and_then(|cfg| cfg.context_length)
+            .unwrap_or(native_data.max_context_length);
 
         let ollama_name = if native_data.key.contains(':') {
             native_data.key.clone()
@@ -137,6 +152,7 @@ impl ModelInfo {
             quantization,
             state: state.to_string(),
             max_context_length: native_data.max_context_length,
+            context_length,
             is_loaded,
             supports_vision,
             supports_tools,
@@ -317,6 +333,23 @@ impl ModelInfo {
         base
     }
 
+    fn build_model_info(&self) -> Value {
+        let mut map = serde_json::Map::new();
+        map.insert("general.architecture".into(), json!(self.arch));
+        map.insert("general.file_type".into(), json!(2));
+        map.insert("general.quantization_version".into(), json!(2));
+        map.insert(format!("{}.context_length", self.arch), json!(self.context_length));
+        map.insert("lmstudio.publisher".into(), json!(self.publisher));
+        map.insert("lmstudio.model_type".into(), json!(self.model_type));
+        map.insert("lmstudio.state".into(), json!(self.state));
+        map.insert("lmstudio.context_length".into(), json!(self.context_length));
+        map.insert("lmstudio.max_context_length".into(), json!(self.max_context_length));
+        map.insert("lmstudio.compatibility_type".into(), json!(self.compatibility_type));
+        map.insert("lmstudio.supports_vision".into(), json!(self.supports_vision));
+        map.insert("lmstudio.supports_tools".into(), json!(self.supports_tools));
+        Value::Object(map)
+    }
+
     pub fn to_show_response(&self) -> Value {
         let capabilities = self.determine_capabilities();
 
@@ -328,18 +361,7 @@ impl ModelInfo {
                 DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": self.base_ollama_representation()["details"].clone(),
-            "model_info": {
-                "general.architecture": self.arch,
-                "general.file_type": 2,
-                "general.quantization_version": 2,
-                "lmstudio.publisher": self.publisher,
-                "lmstudio.model_type": self.model_type,
-                "lmstudio.state": self.state,
-                "lmstudio.max_context_length": self.max_context_length,
-                "lmstudio.compatibility_type": self.compatibility_type,
-                "lmstudio.supports_vision": self.supports_vision,
-                "lmstudio.supports_tools": self.supports_tools
-            },
+            "model_info": self.build_model_info(),
             "capabilities": capabilities,
             "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
             "size": self.base_ollama_representation()["size"].as_u64().unwrap_or(0),
