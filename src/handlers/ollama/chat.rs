@@ -7,7 +7,7 @@ use crate::constants::{ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
-use crate::http::request::LMStudioRequestType;
+use crate::http::request::{LMStudioRequestType, TopLevelParams};
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
@@ -16,6 +16,43 @@ use crate::handlers::ollama::images::inject_images_into_messages;
 use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
 use crate::handlers::transform::normalize_chat_messages;
 use crate::model::utils::extract_required_model_name;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_think_from_body() {
+        let body = json!({ "think": true, "model": "x", "messages": [] });
+        let top = make_top_level_params(&body);
+        assert!(top.think.is_some());
+        assert_eq!(top.think, Some(&json!(true)));
+    }
+
+    #[test]
+    fn absent_think_gives_none() {
+        let body = json!({ "model": "x", "messages": [] });
+        let top = make_top_level_params(&body);
+        assert!(top.think.is_none());
+    }
+
+    #[test]
+    fn extracts_logprobs_and_top_logprobs() {
+        let body = json!({ "logprobs": true, "top_logprobs": 3 });
+        let top = make_top_level_params(&body);
+        assert_eq!(top.logprobs, Some(&json!(true)));
+        assert_eq!(top.top_logprobs, Some(&json!(3)));
+    }
+}
+
+fn make_top_level_params(body: &serde_json::Value) -> TopLevelParams<'_> {
+    TopLevelParams {
+        think: body.get("think"),
+        logprobs: body.get("logprobs"),
+        top_logprobs: body.get("top_logprobs"),
+    }
+}
 
 pub async fn handle_ollama_chat(
     context: RequestContext<'_>,
@@ -80,6 +117,7 @@ pub async fn handle_ollama_chat(
                 normalized_messages
             };
 
+            let top_level_params = make_top_level_params(&body_clone);
             let mut lm_request = crate::http::request::build_lm_studio_request(
                 &resolution_ctx.lm_studio_model_id,
                 LMStudioRequestType::Chat {
@@ -89,7 +127,7 @@ pub async fn handle_ollama_chat(
                 resolution_ctx.effective_options.as_ref(),
                 ollama_tools,
                 resolution_ctx.effective_format.as_ref(),
-                None,  // TopLevelParams — wired in Task 5
+                Some(&top_level_params),
             );
 
             // Apply keep-alive TTL
