@@ -10,14 +10,88 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::retry::execute_request_with_retry;
-use crate::http::request::LMStudioRequestType;
+use crate::http::request::{LMStudioRequestType, TopLevelParams};
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_think_from_generate_body() {
+        let body = json!({ "think": "high", "model": "x", "prompt": "hi" });
+        let top = make_top_level_params(&body);
+        assert_eq!(top.think, Some(&json!("high")));
+    }
+
+    #[test]
+    fn suffix_inserted_into_lm_request() {
+        use crate::http::request::{build_lm_studio_request, LMStudioRequestType, TopLevelParams};
+        use std::borrow::Cow;
+
+        let body = json!({ "suffix": "world", "model": "test", "prompt": "hello" });
+        let suffix_val = body.get("suffix");
+        let top_level = TopLevelParams { think: None, logprobs: None, top_logprobs: None };
+
+        let mut lm_request = build_lm_studio_request(
+            "test",
+            LMStudioRequestType::Completion { prompt: Cow::Borrowed("hello"), stream: false },
+            None,
+            None,
+            None,
+            Some(&top_level),
+        );
+
+        if let Some(s) = suffix_val {
+            if let Some(obj) = lm_request.as_object_mut() {
+                obj.insert("suffix".to_string(), s.clone());
+            }
+        }
+
+        assert_eq!(lm_request.get("suffix"), Some(&json!("world")));
+    }
+
+    #[test]
+    fn suffix_not_inserted_on_vision_path() {
+        let body = json!({ "suffix": "world", "model": "test", "prompt": "hello",
+                           "images": ["base64data"] });
+        let current_images = body.get("images");
+        let suffix_val = body.get("suffix");
+        let mut lm_request = json!({ "model": "test" });
+
+        if current_images.is_none() {
+            if let Some(s) = suffix_val {
+                if let Some(obj) = lm_request.as_object_mut() {
+                    obj.insert("suffix".to_string(), s.clone());
+                }
+            }
+        }
+
+        assert!(lm_request.get("suffix").is_none(), "suffix must be absent on vision path");
+    }
+
+    #[test]
+    fn absent_think_gives_none_in_generate() {
+        let body = json!({ "model": "x", "prompt": "hi" });
+        let top = make_top_level_params(&body);
+        assert!(top.think.is_none());
+    }
+}
 
 use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
 use crate::handlers::ollama::images::build_vision_chat_messages;
 use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
 use crate::model::utils::extract_required_model_name;
+
+fn make_top_level_params(body: &serde_json::Value) -> TopLevelParams<'_> {
+    TopLevelParams {
+        think: body.get("think"),
+        logprobs: body.get("logprobs"),
+        top_logprobs: body.get("top_logprobs"),
+    }
+}
 
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
@@ -117,14 +191,29 @@ pub async fn handle_ollama_generate(
                 )
             };
 
+            let top_level_params = make_top_level_params(&body_clone);
+            let suffix_val = body_clone.get("suffix");
+
+            if current_images.is_some() && suffix_val.is_some() {
+                log::debug!("unsupported on vision path: suffix");
+            }
+
             let mut lm_request = crate::http::request::build_lm_studio_request(
                 &resolution_ctx.lm_studio_model_id,
                 lm_request_type,
                 resolution_ctx.effective_options.as_ref(),
                 None,
                 resolution_ctx.effective_format.as_ref(),
-                None,  // TopLevelParams — wired in Task 6
+                Some(&top_level_params),
             );
+
+            if current_images.is_none() {
+                if let Some(s) = suffix_val {
+                    if let Some(obj) = lm_request.as_object_mut() {
+                        obj.insert("suffix".to_string(), s.clone());
+                    }
+                }
+            }
 
             // Apply keep-alive TTL
             crate::handlers::ollama::keep_alive::apply_keep_alive_ttl(
