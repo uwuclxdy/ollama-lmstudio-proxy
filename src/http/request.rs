@@ -35,6 +35,12 @@ pub enum LMStudioRequestType<'a> {
     Embeddings { input: &'a Value },
 }
 
+pub struct TopLevelParams<'a> {
+    pub think: Option<&'a Value>,
+    pub logprobs: Option<&'a Value>,
+    pub top_logprobs: Option<&'a Value>,
+}
+
 pub struct PreparedBody {
     pub bytes: Option<Vec<u8>>,
     pub is_json: bool,
@@ -82,12 +88,31 @@ pub fn map_ollama_to_lmstudio_params(
     params
 }
 
+fn apply_top_level_params(top: &TopLevelParams<'_>, request_obj: &mut serde_json::Map<String, Value>) {
+    if let Some(think_val) = top.think {
+        let reasoning: Value = match think_val {
+            Value::Bool(true) => json!("on"),
+            Value::Bool(false) => json!("off"),
+            Value::String(s) => json!(s),
+            other => other.clone(),
+        };
+        request_obj.insert("reasoning".to_string(), reasoning);
+    }
+    if let Some(lp) = top.logprobs {
+        request_obj.insert("logprobs".to_string(), lp.clone());
+    }
+    if let Some(tlp) = top.top_logprobs {
+        request_obj.insert("top_logprobs".to_string(), tlp.clone());
+    }
+}
+
 pub fn build_lm_studio_request(
     model_lm_studio_id: &str,
     request_type: LMStudioRequestType,
     ollama_options: Option<&Value>,
     ollama_tools: Option<&Value>,
     structured_format: Option<&Value>,
+    top_level: Option<&TopLevelParams<'_>>,
 ) -> Value {
     let mut builder = RequestBuilder::new().add_required("model", model_lm_studio_id);
 
@@ -119,6 +144,12 @@ pub fn build_lm_studio_request(
     if let Some(request_obj) = request_json.as_object_mut() {
         for (key, value) in lm_studio_mapped_params {
             request_obj.insert(key, value);
+        }
+    }
+
+    if let Some(top) = top_level {
+        if let Some(request_obj) = request_json.as_object_mut() {
+            apply_top_level_params(top, request_obj);
         }
     }
 
@@ -289,5 +320,123 @@ mod tests {
         // No keys: also must not panic
         let empty = json!({ "temperature": 0.7 });
         log_unsupported_options(&empty);
+    }
+
+    #[test]
+    fn top_level_params_think_true_emits_reasoning_on() {
+        let think_val = json!(true);
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(request.get("reasoning"), Some(&json!("on")));
+    }
+
+    #[test]
+    fn top_level_params_think_false_emits_reasoning_off() {
+        let think_val = json!(false);
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(request.get("reasoning"), Some(&json!("off")));
+    }
+
+    #[test]
+    fn top_level_params_think_string_passes_through() {
+        let think_val = json!("high");
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(request.get("reasoning"), Some(&json!("high")));
+    }
+
+    #[test]
+    fn top_level_params_absent_think_emits_no_reasoning() {
+        let top = TopLevelParams { think: None, logprobs: None, top_logprobs: None };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert!(request.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn top_level_params_logprobs_forwarded() {
+        let lp = json!(true);
+        let top = TopLevelParams { think: None, logprobs: Some(&lp), top_logprobs: None };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(request.get("logprobs"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn top_level_params_work_on_chat_type_too() {
+        // think applies to both chat and generate paths
+        let think_val = json!("medium");
+        let top = TopLevelParams { think: Some(&think_val), logprobs: None, top_logprobs: None };
+        let messages = json!([{"role": "user", "content": "hi"}]);
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Chat { messages: &messages, stream: false },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(request.get("reasoning"), Some(&json!("medium")));
     }
 }

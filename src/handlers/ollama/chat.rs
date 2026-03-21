@@ -89,6 +89,7 @@ pub async fn handle_ollama_chat(
                 resolution_ctx.effective_options.as_ref(),
                 ollama_tools,
                 resolution_ctx.effective_format.as_ref(),
+                None,  // TopLevelParams — wired in Task 5
             );
 
             // Apply keep-alive TTL
