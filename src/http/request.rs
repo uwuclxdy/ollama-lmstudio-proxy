@@ -94,7 +94,10 @@ fn apply_top_level_params(top: &TopLevelParams<'_>, request_obj: &mut serde_json
             Value::Bool(true) => json!("on"),
             Value::Bool(false) => json!("off"),
             Value::String(s) => json!(s),
-            other => other.clone(),
+            other => {
+                log::debug!("think: unexpected value type {:?}, forwarding as-is", other);
+                other.clone()
+            }
         };
         request_obj.insert("reasoning".to_string(), reasoning);
     }
@@ -147,10 +150,8 @@ pub fn build_lm_studio_request(
         }
     }
 
-    if let Some(top) = top_level {
-        if let Some(request_obj) = request_json.as_object_mut() {
-            apply_top_level_params(top, request_obj);
-        }
+    if let (Some(top), Some(request_obj)) = (top_level, request_json.as_object_mut()) {
+        apply_top_level_params(top, request_obj);
     }
 
     request_json
