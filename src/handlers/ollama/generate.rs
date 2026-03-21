@@ -134,6 +134,7 @@ pub async fn handle_ollama_generate(
                 .unwrap_or(false);
 
             let current_images = body_clone.get("images");
+            let raw = body_clone.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
             let resolution_ctx = resolve_model_with_context(
                 &context,
@@ -149,8 +150,9 @@ pub async fn handle_ollama_generate(
             let chat_messages_payload: Option<Value>;
 
             let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
+                let system_for_vision = if raw { None } else { resolution_ctx.system_prompt.as_deref() };
                 chat_messages_payload = Some(build_vision_chat_messages(
-                    resolution_ctx.system_prompt.as_deref(),
+                    system_for_vision,
                     current_prompt,
                     current_images,
                 ));
@@ -164,15 +166,17 @@ pub async fn handle_ollama_generate(
                     },
                 )
             } else {
-                if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
-                    let trimmed = system_text.trim();
-                    if !trimmed.is_empty() {
-                        let combined = if current_prompt.is_empty() {
-                            trimmed.to_string()
-                        } else {
-                            format!("{trimmed}\n\n{current_prompt}")
-                        };
-                        prompt_override_storage = Some(combined);
+                if !raw {
+                    if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
+                        let trimmed = system_text.trim();
+                        if !trimmed.is_empty() {
+                            let combined = if current_prompt.is_empty() {
+                                trimmed.to_string()
+                            } else {
+                                format!("{trimmed}\n\n{current_prompt}")
+                            };
+                            prompt_override_storage = Some(combined);
+                        }
                     }
                 }
 
@@ -257,6 +261,21 @@ pub async fn handle_ollama_generate(
         cancellation_token.clone(),
     )
     .await?;
+
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let unload_delay = if is_streaming {
+        crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS
+    } else {
+        0
+    };
+    super::keep_alive::spawn_model_unload_if_needed(
+        context.client.clone(),
+        context.lmstudio_url.to_string(),
+        model_resolver.clone(),
+        ollama_model_name.to_string(),
+        keep_alive_seconds,
+        unload_delay,
+    );
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama generate", start_time);
     Ok(result)

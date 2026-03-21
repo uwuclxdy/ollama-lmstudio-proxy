@@ -171,6 +171,21 @@ pub async fn handle_ollama_chat(
     )
     .await?;
 
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let unload_delay = if is_streaming {
+        crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS
+    } else {
+        0
+    };
+    super::keep_alive::spawn_model_unload_if_needed(
+        context.client.clone(),
+        context.lmstudio_url.to_string(),
+        model_resolver.clone(),
+        ollama_model_name.to_string(),
+        keep_alive_seconds,
+        unload_delay,
+    );
+
     log_timed(LOG_PREFIX_SUCCESS, "Ollama chat", start_time);
     Ok(result)
 }

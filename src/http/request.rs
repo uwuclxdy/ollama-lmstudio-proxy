@@ -189,12 +189,14 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
 }
 
 fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
-    if let Some(options) = ollama_options
-        && let Some(max_tokens) = options
-            .get("max_tokens")
-            .or_else(|| options.get("num_predict"))
-    {
+    let Some(options) = ollama_options else { return };
+
+    if let Some(max_tokens) = options.get("max_tokens").or_else(|| options.get("num_predict")) {
         params.insert("max_tokens".to_string(), max_tokens.clone());
+    }
+
+    if let Some(ctx) = options.get("num_ctx") {
+        params.insert("context_length".to_string(), ctx.clone());
     }
 }
 
@@ -225,7 +227,7 @@ fn map_format_params(
 }
 
 const UNSUPPORTED_OPTION_KEYS: &[&str] = &[
-    "num_ctx",
+    "template",
     "repeat_last_n",
     "tfs_z",
     "typical_p",
@@ -304,12 +306,28 @@ mod tests {
 
     #[test]
     fn collects_unsupported_options() {
-        let options = json!({ "num_ctx": 4096, "mirostat": 1, "temperature": 0.7 });
+        let options = json!({ "template": "{{.Prompt}}", "mirostat": 1, "temperature": 0.7 });
         let unsupported = collect_unsupported_keys(&options);
-        assert!(unsupported.contains(&"num_ctx"), "expected num_ctx in {:?}", unsupported);
+        assert!(unsupported.contains(&"template"), "expected template in {:?}", unsupported);
         assert!(unsupported.contains(&"mirostat"), "expected mirostat in {:?}", unsupported);
         // temperature is supported — must NOT appear
         assert!(!unsupported.contains(&"temperature"), "temperature should not appear in {:?}", unsupported);
+    }
+
+    #[test]
+    fn num_ctx_maps_to_context_length() {
+        let options = json!({ "num_ctx": 8192 });
+        let params = map_ollama_to_lmstudio_params(Some(&options), None);
+        assert_eq!(params.get("context_length"), Some(&json!(8192)));
+        // num_ctx must not appear in the output — it has been renamed
+        assert!(params.get("num_ctx").is_none());
+    }
+
+    #[test]
+    fn num_ctx_is_not_treated_as_unsupported() {
+        let options = json!({ "num_ctx": 4096 });
+        let unsupported = collect_unsupported_keys(&options);
+        assert!(!unsupported.contains(&"num_ctx"), "num_ctx must not appear in unsupported: {:?}", unsupported);
     }
 
     #[test]
