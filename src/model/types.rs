@@ -25,6 +25,10 @@ pub struct NativeModelData {
     pub loaded_instances: Vec<NativeLoadedInstance>,
     #[serde(default)]
     pub capabilities: Option<NativeCapabilities>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub params_string: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -64,6 +68,8 @@ pub struct ModelInfo {
     pub is_loaded: bool,
     pub supports_vision: bool,
     pub supports_tools: bool,
+    pub size_bytes: Option<u64>,
+    pub params_string: Option<String>,
 }
 
 impl ModelInfo {
@@ -134,6 +140,8 @@ impl ModelInfo {
             is_loaded,
             supports_vision,
             supports_tools,
+            size_bytes: native_data.size_bytes,
+            params_string: native_data.params_string.clone(),
         }
     }
 
@@ -191,7 +199,10 @@ impl ModelInfo {
         caps
     }
 
-    fn calculate_estimated_size(&self) -> u64 {
+    pub(crate) fn calculate_estimated_size(&self) -> u64 {
+        if let Some(bytes) = self.size_bytes {
+            return bytes;
+        }
         let lower_id = self.id.to_lowercase();
         let base_params: u64 = if lower_id.contains("0.5b") || lower_id.contains("500m") {
             500_000_000
@@ -228,7 +239,10 @@ impl ModelInfo {
         ((base_params as f64) * multiplier) as u64
     }
 
-    fn parse_parameters(&self) -> ModelParameters {
+    pub(crate) fn parse_parameters(&self) -> ModelParameters {
+        if let Some(ref s) = self.params_string {
+            return ModelParameters { size_string: s.clone() };
+        }
         let lower_id = self.id.to_lowercase();
 
         let size_string = if lower_id.contains("0.5b") || lower_id.contains("500m") {
@@ -331,5 +345,56 @@ impl ModelInfo {
             "size": self.base_ollama_representation()["size"].as_u64().unwrap_or(0),
             "modified_at": chrono::Utc::now().to_rfc3339()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_native(key: &str, size_bytes: Option<u64>, params_string: Option<String>) -> NativeModelData {
+        NativeModelData {
+            key: key.to_string(),
+            model_type: "llm".to_string(),
+            publisher: "test".to_string(),
+            architecture: Some("llama".to_string()),
+            format: Some("gguf".to_string()),
+            quantization: Some(NativeQuantization { name: Some("Q4_K_M".to_string()) }),
+            max_context_length: 4096,
+            loaded_instances: vec![],
+            capabilities: None,
+            size_bytes,
+            params_string,
+        }
+    }
+
+    #[test]
+    fn uses_real_size_bytes_when_present() {
+        let native = make_native("mymodel", Some(4_200_000_000), None);
+        let info = ModelInfo::from_native_data(&native);
+        assert_eq!(info.calculate_estimated_size(), 4_200_000_000);
+    }
+
+    #[test]
+    fn falls_back_to_heuristic_when_size_bytes_absent() {
+        let native = make_native("llama-7b", None, None);
+        let info = ModelInfo::from_native_data(&native);
+        // heuristic for "7b" with Q4 gives ~3.85GB — just check it's non-zero and not exact
+        assert!(info.calculate_estimated_size() > 0);
+        assert_ne!(info.calculate_estimated_size(), 4_200_000_000);
+    }
+
+    #[test]
+    fn uses_real_params_string_when_present() {
+        let native = make_native("somemodel", None, Some("13B".to_string()));
+        let info = ModelInfo::from_native_data(&native);
+        assert_eq!(info.parse_parameters().size_string, "13B");
+    }
+
+    #[test]
+    fn falls_back_to_inferred_params_when_absent() {
+        let native = make_native("llama-7b-instruct", None, None);
+        let info = ModelInfo::from_native_data(&native);
+        assert_eq!(info.parse_parameters().size_string, "7B");
     }
 }
