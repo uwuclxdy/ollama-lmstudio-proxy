@@ -160,7 +160,8 @@ impl ResponseTransformer {
         start_time: Instant,
         use_native_stats: bool,
     ) -> Value {
-        let content = Self::extract_chat_content_with_reasoning(lm_response);
+        let content = extract_chat_content(lm_response);
+        let thinking = extract_reasoning_content(lm_response);
 
         let timing = if use_native_stats {
             TimingInfo::from_native_stats(
@@ -192,6 +193,12 @@ impl ResponseTransformer {
             "role": "assistant",
             "content": content
         });
+
+        if let Some(ref thinking_str) = thinking {
+            if let Some(msg_obj) = ollama_message.as_object_mut() {
+                msg_obj.insert("thinking".to_string(), json!(thinking_str));
+            }
+        }
 
         if let Some(tool_calls) = lm_response
             .get("choices")
@@ -227,6 +234,7 @@ impl ResponseTransformer {
         use_native_stats: bool,
     ) -> Value {
         let content = Self::extract_completion_content(lm_response);
+        let thinking = extract_completion_thinking(lm_response);
 
         let timing = if use_native_stats {
             TimingInfo::from_native_stats(
@@ -254,7 +262,7 @@ impl ResponseTransformer {
         };
 
         let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
-        json!({
+        let mut response_obj = json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
             "response": content,
@@ -267,7 +275,15 @@ impl ResponseTransformer {
             "prompt_eval_duration": timing.prompt_eval_duration,
             "eval_count": timing.eval_count,
             "eval_duration": timing.eval_duration
-        })
+        });
+
+        if let Some(ref t) = thinking {
+            if let Some(obj) = response_obj.as_object_mut() {
+                obj.insert("thinking".to_string(), json!(t));
+            }
+        }
+
+        response_obj
     }
 
     pub fn convert_to_ollama_embeddings(
@@ -312,28 +328,6 @@ impl ResponseTransformer {
         })
     }
 
-    fn extract_chat_content_with_reasoning(lm_response: &Value) -> String {
-        let base_content = lm_response
-            .get("choices")
-            .and_then(|c| c.as_array()?.first())
-            .and_then(|choice| choice.get("message")?.get("content")?.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if let Some(reasoning) = lm_response
-            .get("choices")
-            .and_then(|c| c.as_array()?.first())
-            .and_then(|choice| choice.get("message")?.get("reasoning")?.as_str())
-            && !reasoning.is_empty()
-        {
-            return format!(
-                "**Reasoning:**\n{}\n\n**Answer:**\n{}",
-                reasoning, base_content
-            );
-        }
-        base_content
-    }
-
     fn extract_completion_content(lm_response: &Value) -> String {
         lm_response
             .get("choices")
@@ -366,6 +360,33 @@ impl ResponseTransformer {
     }
 }
 
+fn extract_chat_content(lm_response: &Value) -> String {
+    lm_response
+        .get("choices")
+        .and_then(|c| c.as_array()?.first())
+        .and_then(|choice| choice.get("message")?.get("content")?.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn extract_reasoning_content(lm_response: &Value) -> Option<String> {
+    let s = lm_response
+        .get("choices")
+        .and_then(|c| c.as_array()?.first())
+        .and_then(|choice| choice.get("message")?.get("reasoning")?.as_str())?;
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+fn extract_completion_thinking(lm_response: &Value) -> Option<String> {
+    let choice = lm_response
+        .get("choices")
+        .and_then(|c| c.as_array()?.first())?;
+    let s = choice.get("reasoning")
+        .or_else(|| choice.get("thinking"))
+        .and_then(|v| v.as_str())?;
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
 pub fn estimate_token_count(text: &str) -> u64 {
     if text.is_empty() {
         return 0;
@@ -379,6 +400,69 @@ pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
         .and_then(|c| c.as_array()?.first())
         .and_then(|choice| choice.get("finish_reason"))
         .and_then(|reason| reason.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Instant;
+
+    fn lm_chat_response(content: &str, reasoning: Option<&str>) -> serde_json::Value {
+        let mut msg = json!({ "content": content });
+        if let Some(r) = reasoning {
+            msg.as_object_mut().unwrap().insert("reasoning".to_string(), json!(r));
+        }
+        json!({
+            "choices": [{ "message": msg, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        })
+    }
+
+    fn lm_completion_response(text: &str, reasoning: Option<&str>) -> serde_json::Value {
+        let mut choice = json!({ "text": text, "finish_reason": "stop" });
+        if let Some(r) = reasoning {
+            choice.as_object_mut().unwrap().insert("reasoning".to_string(), json!(r));
+        }
+        json!({
+            "choices": [choice],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        })
+    }
+
+    #[test]
+    fn chat_response_thinking_in_message_not_content() {
+        let lm = lm_chat_response("The answer is 42", Some("Let me think..."));
+        let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now(), false);
+        let msg = result.get("message").unwrap();
+        assert_eq!(msg.get("content").and_then(|v| v.as_str()), Some("The answer is 42"));
+        assert_eq!(msg.get("thinking").and_then(|v| v.as_str()), Some("Let me think..."));
+        // must not be merged into content
+        assert!(!msg.get("content").unwrap().as_str().unwrap().contains("Reasoning"));
+    }
+
+    #[test]
+    fn chat_response_no_thinking_field_when_absent() {
+        let lm = lm_chat_response("The answer is 42", None);
+        let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now(), false);
+        let msg = result.get("message").unwrap();
+        assert!(msg.get("thinking").is_none());
+    }
+
+    #[test]
+    fn generate_response_thinking_top_level() {
+        let lm = lm_completion_response("42", Some("Let me reason"));
+        let result = ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "what is the answer?", Instant::now(), false);
+        assert_eq!(result.get("response").and_then(|v| v.as_str()), Some("42"));
+        assert_eq!(result.get("thinking").and_then(|v| v.as_str()), Some("Let me reason"));
+    }
+
+    #[test]
+    fn generate_response_no_thinking_field_when_absent() {
+        let lm = lm_completion_response("42", None);
+        let result = ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now(), false);
+        assert!(result.get("thinking").is_none());
+    }
 }
 
 pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
