@@ -25,6 +25,7 @@ impl ChunkProcessingState {
 
 pub struct ChoiceDeltaPayload {
     pub content: String,
+    pub thinking: String,
     pub tool_calls_delta: Option<Value>,
 }
 
@@ -42,6 +43,7 @@ pub fn process_choice_delta(
     state.update_finish_reason(choice);
 
     let mut content = String::new();
+    let mut thinking = String::new();
     let mut tool_calls_delta: Option<Value> = None;
 
     if let Some(delta) = choice.get("delta") {
@@ -49,7 +51,7 @@ pub fn process_choice_delta(
             append_stream_content(content_value, &mut content);
         }
         if let Some(reasoning_value) = delta.get("reasoning") {
-            append_stream_content(reasoning_value, &mut content);
+            append_stream_content(reasoning_value, &mut thinking);
         }
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
             && !new_tool_calls.is_empty()
@@ -69,11 +71,12 @@ pub fn process_choice_delta(
         }
     }
 
-    if content.is_empty() && tool_calls_delta.is_none() {
+    if content.is_empty() && thinking.is_empty() && tool_calls_delta.is_none() {
         None
     } else {
         Some(ChoiceDeltaPayload {
             content,
+            thinking,
             tool_calls_delta,
         })
     }
@@ -151,6 +154,7 @@ pub fn create_ollama_streaming_chunk(
     is_chat_endpoint: bool,
     done: bool,
     tool_calls_delta: Option<&Value>,
+    thinking: &str,
 ) -> Value {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -159,6 +163,9 @@ pub fn create_ollama_streaming_chunk(
             "role": "assistant",
             "content": content
         });
+        if !thinking.is_empty() {
+            message_obj.as_object_mut().unwrap().insert("thinking".to_string(), json!(thinking));
+        }
         if let Some(tc_delta) = tool_calls_delta
             && let Some(msg_map) = message_obj.as_object_mut()
         {
@@ -172,12 +179,16 @@ pub fn create_ollama_streaming_chunk(
             "done": done
         })
     } else {
-        json!({
+        let mut chunk = json!({
             "model": model_ollama_name,
             "created_at": timestamp,
             "response": content,
             "done": done
-        })
+        });
+        if !thinking.is_empty() {
+            chunk.as_object_mut().unwrap().insert("thinking".to_string(), json!(thinking));
+        }
+        chunk
     }
 }
 
@@ -187,7 +198,7 @@ pub fn create_error_chunk(
     is_chat_endpoint: bool,
 ) -> Value {
     let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("error".to_string(), json!(error_message));
         if is_chat_endpoint
@@ -212,7 +223,7 @@ pub fn create_cancellation_chunk(
     );
 
     let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None);
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         let content_field_value = if tokens_generated_estimate > 0 {
@@ -261,7 +272,7 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
 
     let mut chunk =
-        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None);
+        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None, "");
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert(
@@ -285,4 +296,65 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
         }
     }
     chunk
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn choice_with_delta(content: Option<&str>, reasoning: Option<&str>) -> serde_json::Value {
+        let mut delta = json!({});
+        if let Some(c) = content {
+            delta.as_object_mut().unwrap().insert("content".to_string(), json!(c));
+        }
+        if let Some(r) = reasoning {
+            delta.as_object_mut().unwrap().insert("reasoning".to_string(), json!(r));
+        }
+        json!({ "delta": delta })
+    }
+
+    #[test]
+    fn reasoning_goes_to_thinking_not_content() {
+        let choice = choice_with_delta(Some("answer"), Some("my thinking"));
+        let mut state = ChunkProcessingState::default();
+        let payload = process_choice_delta(&choice, &mut state).unwrap();
+        assert_eq!(payload.content, "answer");
+        assert_eq!(payload.thinking, "my thinking");
+    }
+
+    #[test]
+    fn reasoning_only_chunk_is_not_dropped() {
+        // No content, only reasoning — must return Some
+        let choice = choice_with_delta(None, Some("reasoning only"));
+        let mut state = ChunkProcessingState::default();
+        let payload = process_choice_delta(&choice, &mut state);
+        assert!(payload.is_some());
+        let p = payload.unwrap();
+        assert_eq!(p.content, "");
+        assert_eq!(p.thinking, "reasoning only");
+    }
+
+    #[test]
+    fn chat_chunk_thinking_in_message() {
+        let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "my thought");
+        let msg = chunk.get("message").unwrap();
+        assert_eq!(msg.get("thinking").and_then(|v| v.as_str()), Some("my thought"));
+        assert_eq!(msg.get("content").and_then(|v| v.as_str()), Some("hi"));
+    }
+
+    #[test]
+    fn chat_chunk_no_thinking_field_when_empty() {
+        let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "");
+        let msg = chunk.get("message").unwrap();
+        assert!(msg.get("thinking").is_none());
+    }
+
+    #[test]
+    fn generate_chunk_thinking_top_level() {
+        let chunk = create_ollama_streaming_chunk("m", "response", false, false, None, "thought");
+        assert_eq!(chunk.get("thinking").and_then(|v| v.as_str()), Some("thought"));
+        // must NOT be nested inside message
+        assert!(chunk.get("message").is_none());
+    }
 }
