@@ -19,7 +19,8 @@ pub fn create_routes(
 
     let root_route = warp::path::end()
         .and(warp::get())
-        .and_then(|| async move {
+        .and(with_server_state.clone())
+        .and_then(|_s: Arc<ProxyServer>| async move {
             ollama::handle_ollama_root()
                 .await
                 .map_err(warp::reject::custom)
