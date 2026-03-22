@@ -71,12 +71,18 @@ translate to LM Studio native APIs.
 
 ## Installation options
 
-### 1. Pre-built Binaries
+### 3. Cargo (Recommended)
+
+```bash
+cargo install ollama-lmstudio-proxy
+```
+
+### 2. Pre-built Binary
 
 1. Download the latest release from the [Releases](https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases) page.
-2. Extract and run the binary in the terminal.
+2. Run the binary in terminal.
 
-### 2. Source
+### 3. Source
 
 ```bash
 # Clone the repository
@@ -88,12 +94,6 @@ cargo build --release
 
 # Run
 ./target/release/ollama-lmstudio-proxy
-```
-
-### 3. Cargo
-
-```bash
-cargo install --git https://github.com/uwuclxdy/ollama-lmstudio-proxy.git
 ```
 
 ## Quick Start
