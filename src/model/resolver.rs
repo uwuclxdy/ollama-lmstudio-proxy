@@ -142,24 +142,32 @@ impl ModelResolver {
     ) -> Option<ModelInfo> {
         let lower_ollama = ollama_name_cleaned.to_lowercase();
 
-        for model in available_models {
-            if model.id.to_lowercase() == lower_ollama {
-                return Some(model.clone());
+        // Pre-compute lowercased model IDs once for all phases
+        let lowered_ids: Vec<String> = available_models
+            .iter()
+            .map(|m| m.id.to_lowercase())
+            .collect();
+
+        for (i, lowered_id) in lowered_ids.iter().enumerate() {
+            if *lowered_id == lower_ollama {
+                return Some(available_models[i].clone());
             }
         }
 
-        for model in available_models {
-            if model.id.to_lowercase().contains(&lower_ollama)
-                && (lower_ollama.len() > model.id.len() / 2 || lower_ollama.len() > 10)
+        for (i, lowered_id) in lowered_ids.iter().enumerate() {
+            if lowered_id.contains(&*lower_ollama)
+                && (lower_ollama.len() > available_models[i].id.len() / 2
+                    || lower_ollama.len() > 10)
             {
-                return Some(model.clone());
+                return Some(available_models[i].clone());
             }
         }
 
         let mut best_match = None;
         let mut best_score = 0;
-        for model in available_models {
-            let score = self.calculate_match_score(&lower_ollama, model);
+        for (i, model) in available_models.iter().enumerate() {
+            let score =
+                Self::calculate_match_score(&lower_ollama, model, &lowered_ids[i]);
             if score > best_score && score >= 3 {
                 best_score = score;
                 best_match = Some(model.clone());
@@ -169,21 +177,22 @@ impl ModelResolver {
         best_match
     }
 
-    fn calculate_match_score(&self, ollama_name: &str, model: &ModelInfo) -> usize {
-        let model_name_lower = model.id.to_lowercase();
-        let ollama_parts: Vec<&str> = ollama_name
-            .split(&['-', '_', ':', '.', '/', ' '])
-            .filter(|s| !s.is_empty() && s.len() > 1)
-            .collect();
-        let model_parts: Vec<&str> = model_name_lower
-            .split(&['-', '_', ':', '.', '/', ' '])
-            .filter(|s| !s.is_empty() && s.len() > 1)
-            .collect();
-
+    fn calculate_match_score(
+        ollama_name: &str,
+        model: &ModelInfo,
+        model_name_lower: &str,
+    ) -> usize {
         let mut score = 0;
 
-        for ollama_part in &ollama_parts {
-            for model_part in &model_parts {
+        // Use iterators instead of collecting into Vecs
+        for ollama_part in ollama_name
+            .split(&['-', '_', ':', '.', '/', ' '])
+            .filter(|s| s.len() > 1)
+        {
+            for model_part in model_name_lower
+                .split(&['-', '_', ':', '.', '/', ' '])
+                .filter(|s| s.len() > 1)
+            {
                 if ollama_part == model_part {
                     score += ollama_part.len() * 2;
                 } else if model_part.contains(ollama_part) || ollama_part.contains(model_part) {
@@ -192,11 +201,8 @@ impl ModelResolver {
             }
         }
 
-        if model
-            .arch
-            .to_lowercase()
-            .contains(&ollama_name.to_lowercase())
-        {
+        // ollama_name is already lowercase — no need to re-lowercase
+        if model.arch.eq_ignore_ascii_case(ollama_name) {
             score += 5;
         }
 
