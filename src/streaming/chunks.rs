@@ -120,22 +120,22 @@ pub async fn send_chunk(
     tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
     chunk: &Value,
 ) -> bool {
-    let chunk_json = serde_json::to_string(chunk).unwrap_or_else(|e| {
+    let mut buf = serde_json::to_vec(chunk).unwrap_or_else(|e| {
         log::error!("chunk serialization failed: {}", e);
-        String::from("{\"error\":\"internal proxy error: failed to serialize chunk\"}")
+        b"{\"error\":\"internal proxy error: failed to serialize chunk\"}".to_vec()
     });
-    let chunk_with_newline = format!("{}\n", chunk_json);
+    buf.push(b'\n');
 
-    tx.send(Ok(bytes::Bytes::from(chunk_with_newline))).is_ok()
+    tx.send(Ok(bytes::Bytes::from(buf))).is_ok()
 }
 
 pub async fn send_chunk_and_close_channel(
     tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
     chunk: Value,
 ) {
-    let chunk_json = serde_json::to_string(&chunk).unwrap_or_default();
-    let chunk_with_newline = format!("{}\n", chunk_json);
-    let _ = tx.send(Ok(bytes::Bytes::from(chunk_with_newline)));
+    let mut buf = serde_json::to_vec(&chunk).unwrap_or_default();
+    buf.push(b'\n');
+    let _ = tx.send(Ok(bytes::Bytes::from(buf)));
 }
 
 pub async fn send_error_and_close(
@@ -159,36 +159,34 @@ pub fn create_ollama_streaming_chunk(
     let timestamp = chrono::Utc::now().to_rfc3339();
 
     if is_chat_endpoint {
-        let mut message_obj = json!({
-            "role": "assistant",
-            "content": content
-        });
+        let msg_capacity = 2 + (!thinking.is_empty() as usize) + tool_calls_delta.is_some() as usize;
+        let mut msg_map = serde_json::Map::with_capacity(msg_capacity);
+        msg_map.insert("role".into(), Value::String("assistant".into()));
+        msg_map.insert("content".into(), Value::String(content.into()));
         if !thinking.is_empty() {
-            message_obj.as_object_mut().unwrap().insert("thinking".to_string(), json!(thinking));
+            msg_map.insert("thinking".into(), Value::String(thinking.into()));
         }
-        if let Some(tc_delta) = tool_calls_delta
-            && let Some(msg_map) = message_obj.as_object_mut()
-        {
-            msg_map.insert("tool_calls".to_string(), tc_delta.clone());
+        if let Some(tc_delta) = tool_calls_delta {
+            msg_map.insert("tool_calls".into(), tc_delta.clone());
         }
 
-        json!({
-            "model": model_ollama_name,
-            "created_at": timestamp,
-            "message": message_obj,
-            "done": done
-        })
+        let mut map = serde_json::Map::with_capacity(4);
+        map.insert("model".into(), Value::String(model_ollama_name.into()));
+        map.insert("created_at".into(), Value::String(timestamp));
+        map.insert("message".into(), Value::Object(msg_map));
+        map.insert("done".into(), Value::Bool(done));
+        Value::Object(map)
     } else {
-        let mut chunk = json!({
-            "model": model_ollama_name,
-            "created_at": timestamp,
-            "response": content,
-            "done": done
-        });
+        let capacity = 4 + (!thinking.is_empty() as usize);
+        let mut map = serde_json::Map::with_capacity(capacity);
+        map.insert("model".into(), Value::String(model_ollama_name.into()));
+        map.insert("created_at".into(), Value::String(timestamp));
+        map.insert("response".into(), Value::String(content.into()));
+        map.insert("done".into(), Value::Bool(done));
         if !thinking.is_empty() {
-            chunk.as_object_mut().unwrap().insert("thinking".to_string(), json!(thinking));
+            map.insert("thinking".into(), Value::String(thinking.into()));
         }
-        chunk
+        Value::Object(map)
     }
 }
 
