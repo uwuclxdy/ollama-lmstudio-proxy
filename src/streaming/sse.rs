@@ -82,11 +82,13 @@ pub async fn handle_streaming_response(
                             if let Ok(chunk_str) = std::str::from_utf8(&bytes_chunk) {
                                 sse_buffer.push_str(chunk_str);
 
-                                while let Some(boundary_pos) = sse_buffer.find(SSE_MESSAGE_BOUNDARY) {
-                                    let message_text = sse_buffer[..boundary_pos].to_string();
-                                    sse_buffer.drain(..boundary_pos + SSE_MESSAGE_BOUNDARY.len());
+                                let mut cursor = 0;
+                                while let Some(rel_pos) = sse_buffer[cursor..].find(SSE_MESSAGE_BOUNDARY) {
+                                    let boundary_pos = cursor + rel_pos;
+                                    let message_text = &sse_buffer[cursor..boundary_pos];
+                                    cursor = boundary_pos + SSE_MESSAGE_BOUNDARY.len();
 
-                                    if message_text.trim().is_empty() { continue; }
+                                    if message_text.bytes().all(|b| b.is_ascii_whitespace()) { continue; }
 
                                     if let Some(data_content) = message_text.strip_prefix(SSE_DATA_PREFIX) {
                                         if data_content.trim() == SSE_DONE_MESSAGE {
@@ -124,7 +126,6 @@ pub async fn handle_streaming_response(
                                             Err(e) => {
                                                 if enable_chunk_recovery {
                                                     log::warn!("SSE parsing error (attempting recovery): {}", e);
-                                                    // Attempt to recover by finding valid JSON within the problematic chunk
                                                     if let Some(recovered_json) = recover_json_from_chunk(data_content) {
                                                         log::info!("Successfully recovered chunk data");
                                                         let mut content_to_send = String::new();
@@ -154,7 +155,6 @@ pub async fn handle_streaming_response(
                                                         }
                                                     } else {
                                                         log::error!("SSE parsing error (recovery failed): {}", e);
-                                                        // Store the problematic chunk for potential later recovery
                                                         recovery_buffer.push_str(data_content);
                                                         recovery_buffer.push_str(SSE_MESSAGE_BOUNDARY);
                                                     }
@@ -163,9 +163,12 @@ pub async fn handle_streaming_response(
                                                 }
                                             }
                                         }
-                                    } else if !message_text.trim().is_empty() {
+                                    } else {
                                          log::warn!("SSE format: non-standard line: {}", message_text);
                                     }
+                                }
+                                if cursor > 0 {
+                                    sse_buffer.drain(..cursor);
                                 }
                             } else {
                                 send_error_and_close(&tx, &model_clone_for_task, "invalid UTF-8 in stream", is_chat_endpoint).await;
