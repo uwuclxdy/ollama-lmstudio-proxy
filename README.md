@@ -12,24 +12,26 @@ free to report any bugs or auditing code before use!**
 
 ## Highlights
 
-- Native LM Studio REST API (`/api/v1/*`) plus OpenAI-compatible passthrough (`/v1/*`) mapped to Ollama endpoints
+- Ollama API endpoints translated to LM Studio native (`/api/v1/*`) and OpenAI-compatible (`/v1/*`) backends
 - Automatic model name mapping to Ollama format (with virtual aliases stored on disk)
 - **Streaming**: Optimized SSE processing with chunk recovery and cancellation
+- Thinking/reasoning capability detection for models (e.g. DeepSeek-R1, QwQ)
 - Auto-retry, model preload hints, and catalog-backed downloads via `/api/pull`
 
 ## Configuration
 
 ### CLI Options
 
-| Flag                                   | Default                 | Description                       |
-|----------------------------------------|-------------------------|-----------------------------------|
-| `--listen`                             | `0.0.0.0:11434`         | Server bind address               |
-| `--lmstudio_url`                       | `http://localhost:1234` | LM Studio URL                     |
-| `--log-level`                          | `info`                  | Set log level                     |
-| `--load_timeout_seconds`               | `15`                    | Model loading timeout             |
-| `--model_resolution_cache_ttl_seconds` | `300`                   | Cache TTL for model resolution    |
-| `--max_buffer_size`                    | `262144`                | Buffer size for streaming (bytes) |
-| `--enable_chunk_recovery`              | `false`                 | Enable stream chunk recovery      |
+| Flag                                    | Default                 | Description                                              |
+|-----------------------------------------|-------------------------|----------------------------------------------------------|
+| `--listen`                              | `0.0.0.0:11434`         | Server bind address                                      |
+| `--lmstudio-url`                        | `http://localhost:1234` | LM Studio URL                                            |
+| `--log-level`                           | `info`                  | Set log level (`off`, `error`, `warn`, `info`, `debug`, `trace`) |
+| `--load-timeout-seconds`                | `15`                    | Model loading wait timeout in seconds (after trigger)    |
+| `--model-resolution-cache-ttl-seconds`  | `300`                   | Cache TTL for model resolution                           |
+| `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |
+| `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
+| `--update`                              | —                       | Check for updates and replace the executable if a newer version is available |
 
 ## LM Studio API Compatibility
 
@@ -38,28 +40,30 @@ translate to LM Studio native APIs.
 
 ### Endpoint Support
 
-| Ollama Endpoint                | Legacy API             | Native API                  | Notes                                          |
-|--------------------------------|------------------------|-----------------------------|------------------------------------------------|
-| `GET /api/tags`                | —                      | ✅ `/api/v1/models`          | Includes proxy-managed aliases                 |
-| `GET /api/ps`                  | —                      | ✅ `/api/v1/models`          | Shows loaded models (plus aliases)             |
-| `POST /api/show`               | —                      | ✅ *Real metadata*           | Adds alias metadata when present               |
-| `POST /api/chat`               | —                      | ✅ `/v1/chat/completions`    |                                                |
-| `POST /api/generate`           | —                      | ✅ `/v1/completions`         | Vision support via chat endpoint               |
-| `POST /api/embed`              | —                      | ✅ `/v1/embeddings`          | Also supports `/api/embeddings`                |
-| `GET /api/version`             | —                      | ✅ *Proxy response*          |                                                |
-| `GET /health`                  | —                      | ✅ *Health check*            | Validates LM Studio reachability               |
-| `POST /v1/*`                   | ✅ *Direct passthrough* | ✅ *Direct passthrough*      |                                                |
-| `POST /api/create`             | —                      | ✅ *Proxy alias*             | Creates virtual aliases (no custom blobs)      |
-| `POST /api/pull`               | —                      | ✅ `/api/v1/models/download` | Streams LM Studio catalog downloads            |
-| `POST /api/push`               | —                      | ✅ *Acknowledged*            | No-op; validates target model                  |
-| `POST /api/delete`             | —                      | ✅ *Proxy alias only*        | Removes proxy-managed aliases                  |
-| `POST /api/copy`               | —                      | ✅ *Proxy alias*             | Duplicates aliases or targets LM Studio models |
-| `HEAD/POST /api/blobs/:digest` | —                      | ✅ *Proxy storage*           | Stores/validates blobs for manifests           |
+| Endpoint                        | Behaviour                                                          |
+|---------------------------------|--------------------------------------------------------------------|
+| `GET /`                         | Returns "Ollama is running"                                        |
+| `GET /api/tags`                 | Translates to `/api/v1/models`; includes proxy-managed aliases     |
+| `GET /api/ps`                   | Translates to `/api/v1/models`; shows loaded models plus aliases   |
+| `POST /api/show`                | Fetches real LM Studio metadata; merges alias info when present    |
+| `POST /api/chat`                | Translates to `/v1/chat/completions`                               |
+| `POST /api/generate`            | Translates to `/v1/completions`; vision requests use chat endpoint |
+| `POST /api/embed`               | Translates to `/v1/embeddings`; also handles `/api/embeddings`     |
+| `GET /api/version`              | Returns proxy version in Ollama format                             |
+| `GET /health`                   | Validates LM Studio reachability                                   |
+| `POST /api/create`              | Creates proxy-managed virtual aliases (no custom blobs)            |
+| `POST /api/pull`                | Translates to `/api/v1/models/download`; streams download progress |
+| `POST /api/push`                | No-op; validates that the target model exists                      |
+| `DELETE /api/delete`            | Removes proxy-managed aliases only                                 |
+| `POST /api/copy`                | Duplicates aliases or references LM Studio models                  |
+| `HEAD/POST /api/blobs/:digest`  | Stores and validates blobs for alias manifests                     |
+
+`ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without modification.
 
 ### Virtual model aliases
 
 - `/api/create` and `/api/copy` manage aliases stored under
-  `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback: system temp). Metadata such as `system`,
+  `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback: `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Metadata such as `system`,
   `template`, `parameters`, `license`, `adapters`, and `messages` is merged into subsequent requests.
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio metadata plus alias info when present.
 - `/api/pull` streams LM Studio catalog downloads (or blocks when `"stream": false`); optional `quantization` and
@@ -103,8 +107,8 @@ ollama-lmstudio-proxy
 # Custom configuration
 ollama-lmstudio-proxy \
   --listen 0.0.0.0:11434 \
-  --lmstudio_url http://localhost:1234 \
-  --load_timeout_seconds 30
+  --lmstudio-url http://localhost:1234 \
+  --load-timeout-seconds 30
 ```
 
 **Make sure the Ollama server is not running when using the proxy!**
@@ -113,29 +117,43 @@ ollama-lmstudio-proxy \
 
 The proxy understands two payload styles:
 
-- **Ollama-style**: advanced parameters belong in `options`. Use this when calling `/api/*` endpoints.
+- **Ollama-style**: model parameters belong in `options`. Use this when calling `/api/*` endpoints.
 - **OpenAI-style passthrough**: send OpenAI-compatible JSON to `/v1/*` and the proxy forwards it untouched.
 
-When you target Ollama endpoints, keep fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and
-structured `format` values inside the `options` object (or top-level `format`), and the proxy will translate them to LM
-Studio's native parameters. You can set `"format": "json"` for quick JSON responses or provide a JSON Schema object (also
-acceptable inside `options.format`) to take advantage of LM Studio's structured output enforcement.
+When you target Ollama endpoints, put fields such as `temperature`, `num_predict`, `max_tokens`, `logit_bias`, and
+structured `format` values inside the `options` object (or top-level `format`). The proxy translates them to LM
+Studio's native parameters. Set `"format": "json"` for quick JSON responses or provide a JSON Schema object (also
+accepted inside `options.format`) to use LM Studio's structured output enforcement.
 
 ### Option mappings
 
-The proxy automatically forwards or converts these knobs for you:
+These parameters go inside the `options` object:
 
 | Ollama option              | LM Studio parameter                  | Notes                                                      |
 |----------------------------|--------------------------------------|------------------------------------------------------------|
 | `temperature`, `top_p`     | Same name                            | Direct passthrough                                         |
 | `top_k`                    | `top_k`                              | Direct passthrough                                         |
+| `min_p`                    | `min_p`                              | Direct passthrough                                         |
 | `presence_penalty`         | `presence_penalty`                   | Direct passthrough                                         |
 | `frequency_penalty`        | `frequency_penalty`                  | Direct passthrough                                         |
-| `repeat_penalty`           | `repeat_penalty`/`frequency_penalty` | Mapped depending on what is already provided               |
-| `max_tokens`/`num_predict` | `max_tokens`                         | Picks whichever you set, with `max_tokens` taking priority |
-| `logit_bias`               | `logit_bias`                         | Works with either JSON or map notation                     |
+| `repeat_penalty`           | `repeat_penalty`/`frequency_penalty` | Mapped depending on what is already set                    |
+| `max_tokens`/`num_predict` | `max_tokens`                         | Picks whichever you set; `max_tokens` takes priority       |
+| `num_ctx`                  | `context_length`                     | Context window size                                        |
+| `logit_bias`               | `logit_bias`                         | Accepts JSON object or map notation                        |
 | `system` (in `options`)    | `system`                             | Injected as LM Studio system prompt                        |
 | `stop`, `seed`             | Same name                            | Direct passthrough                                         |
+| `truncate`                 | `truncate`                           | Direct passthrough                                         |
+| `dimensions`               | `dimensions`                         | Direct passthrough (embeddings)                            |
+
+These parameters go at the **top level** of the request body (not inside `options`):
+
+| Ollama field               | LM Studio parameter                  | Notes                                                                        |
+|----------------------------|--------------------------------------|------------------------------------------------------------------------------|
+| `think`                    | `reasoning`                          | `true`→`"on"`, `false`→`"off"`, string passed through; omit to leave unset  |
+| `logprobs`, `top_logprobs` | Same name                            | Direct passthrough                                                           |
+| `suffix`                   | `suffix`                             | Forwarded on non-vision generate requests only                               |
+| `raw`                      | —                                    | Disables system-prompt injection in generate requests                        |
+| `keep_alive`               | `ttl`                                | Seconds (int) or duration string (`"5m"`); `0` unloads the model immediately |
 
 If you do not need structured output, you can still pass overrides such as `stop`, `seed`, or additional
 OpenAI-compatible payloads and the proxy will pass them through untouched.
