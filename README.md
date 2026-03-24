@@ -13,11 +13,55 @@ Useful if you want to use **LM Studio models through Ollama API** (for example C
 
 ## Highlights
 
-- Ollama API endpoints translated to LM Studio native (`/api/v1/*`) and OpenAI-compatible (`/v1/*`) backends
-- Automatic model name mapping to Ollama format (with virtual aliases stored on disk)
-- **Streaming**: Optimized SSE processing with chunk recovery and cancellation
-- Thinking/reasoning capability detection for models (e.g. DeepSeek-R1, QwQ)
+- Ollama API endpoints translated to LM Studio native (`/api/v1/*`) and OpenAI-compatible (`/v1/*`) equivalents
+- Automatic model name mapping to Ollama format
+- SSE processing response streaming with chunk recovery and cancellation
+- Thinking/reasoning capability detection for models
 - Auto-retry, model preload hints, and catalog-backed downloads via `/api/pull`
+
+## Installation
+
+### Cargo (Recommended)
+
+```bash
+cargo install ollama-lmstudio-proxy
+```
+
+### Pre-built Binary
+
+1. Download the latest release from the [Releases](https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases) page.
+2. Run the binary in terminal.
+
+### Source
+
+```bash
+# Clone the repository
+git clone https://github.com/uwuclxdy/ollama-lmstudio-proxy.git
+cd ollama-lmstudio-proxy
+
+# Build release version
+cargo build --release
+
+# Run
+./target/release/ollama-lmstudio-proxy
+```
+
+## Quick Start
+
+### Basic Usage
+
+```bash
+# Start with default settings (native API)
+ollama-lmstudio-proxy
+
+# Custom configuration
+ollama-lmstudio-proxy \
+  --listen 0.0.0.0:11434 \
+  --lmstudio-url http://localhost:1234 \
+  --load-timeout-seconds 30
+```
+
+**Make sure the Ollama server is not running (on the same port)!**
 
 ## Configuration
 
@@ -27,12 +71,12 @@ Useful if you want to use **LM Studio models through Ollama API** (for example C
 |-----------------------------------------|-------------------------|----------------------------------------------------------|
 | `--listen`                              | `0.0.0.0:11434`         | Server bind address                                      |
 | `--lmstudio-url`                        | `http://localhost:1234` | LM Studio URL                                            |
-| `--log-level`                           | `info`                  | Set log level (`off`, `error`, `warn`, `info`, `debug`, `trace`) |
+| `--log-level`                           | `info`                  | `off`, `error`, `warn`, `info`, `debug`, `trace`         |
 | `--load-timeout-seconds`                | `15`                    | Model loading wait timeout in seconds (after trigger)    |
 | `--model-resolution-cache-ttl-seconds`  | `300`                   | Cache TTL for model resolution                           |
 | `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |
 | `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
-| `--update`                              | —                       | Check for updates and replace the executable if a newer version is available |
+| `--update`                              | —                       | Self-update from latest GitHub release                   |
 
 ## LM Studio API Compatibility
 
@@ -69,50 +113,6 @@ translate to LM Studio native API equivalents.
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio metadata plus alias info when present.
 - `/api/pull` streams LM Studio catalog downloads (or blocks when `"stream": false`); optional `quantization` and
   `source` fields are forwarded.
-
-## Installation options
-
-### 1. Cargo (Recommended)
-
-```bash
-cargo install ollama-lmstudio-proxy
-```
-
-### 2. Pre-built Binary
-
-1. Download the latest release from the [Releases](https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases) page.
-2. Run the binary in terminal.
-
-### 3. Source
-
-```bash
-# Clone the repository
-git clone https://github.com/uwuclxdy/ollama-lmstudio-proxy.git
-cd ollama-lmstudio-proxy
-
-# Build release version
-cargo build --release
-
-# Run
-./target/release/ollama-lmstudio-proxy
-```
-
-## Quick Start
-
-### Basic Usage
-
-```bash
-# Start with default settings (native API)
-ollama-lmstudio-proxy
-
-# Custom configuration
-ollama-lmstudio-proxy \
-  --listen 0.0.0.0:11434 \
-  --lmstudio-url http://localhost:1234 \
-  --load-timeout-seconds 30
-```
-
-**Make sure the Ollama server is not running when using the proxy!**
 
 ## Request Shapes & Examples
 
