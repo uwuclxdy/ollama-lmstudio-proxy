@@ -1,12 +1,13 @@
-# Ollama ↔ LM Studio Proxy
+# Ollama to LM Studio (Proxy)
 
-Proxy server that bridges **Ollama API** and **LM Studio**
+[![Release](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml)
 
-Useful if you want to **connect models from LM Studio to applications that support only Ollama API** (such as Copilot in
-VS Code).
+Proxy server that gives access to **LM Studio** through **Ollama API**
 
-> ⚠️ This project was in the majority vibe coded. I only want to let you know, despite me regularly using it. **Feel
-free to report any bugs or auditing code before use!**
+Useful if you want to use **LM Studio models through Ollama API** (for example Copilot in VSCode).
+
+> [!IMPORTANT]
+> This project is in the majority vibe coded. I just want to let you know, despite me regularly using it. **Please report any bugs or auditing code before use!**
 
 ![preview.png](preview.png)
 
@@ -35,8 +36,8 @@ free to report any bugs or auditing code before use!**
 
 ## LM Studio API Compatibility
 
-Requires LM Studio **0.3.6+**. Legacy mode is removed; `/v1/*` requests are forwarded directly, while Ollama endpoints
-translate to LM Studio native APIs.
+Requires LM Studio **0.3.6+**. `/v1/*` requests are forwarded directly, while Ollama endpoints
+translate to LM Studio native API equivalents.
 
 ### Endpoint Support
 
@@ -71,7 +72,7 @@ translate to LM Studio native APIs.
 
 ## Installation options
 
-### 3. Cargo (Recommended)
+### 1. Cargo (Recommended)
 
 ```bash
 cargo install ollama-lmstudio-proxy
