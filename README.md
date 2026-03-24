@@ -1,6 +1,7 @@
 # Ollama to LM Studio (Proxy)
 
 [![Release](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml)
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/ollama-lmstudio-proxy)
 
 Proxy server that gives access to **LM Studio** through **Ollama API**
 
