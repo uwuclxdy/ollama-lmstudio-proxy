@@ -208,7 +208,10 @@ impl ResponseTransformer {
             && !tool_calls.is_empty()
             && let Some(msg_obj) = ollama_message.as_object_mut()
         {
-            msg_obj.insert("tool_calls".to_string(), json!(tool_calls));
+            msg_obj.insert(
+                "tool_calls".to_string(),
+                convert_tool_calls_to_ollama(tool_calls),
+            );
         }
 
         json!({
@@ -431,6 +434,61 @@ mod tests {
     }
 
     #[test]
+    fn tool_calls_arguments_string_becomes_object() {
+        let tool_calls = vec![json!({
+            "id": "call_abc",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": "{\"location\":\"London\"}"}
+        })];
+        let result = convert_tool_calls_to_ollama(&tool_calls);
+        let first = &result.as_array().unwrap()[0];
+        assert!(first.get("id").is_none(), "id should be stripped");
+        assert!(first.get("type").is_none(), "type should be stripped");
+        let args = first.get("function").unwrap().get("arguments").unwrap();
+        assert!(args.is_object(), "arguments should be an object, got {:?}", args);
+        assert_eq!(args.get("location").and_then(|v| v.as_str()), Some("London"));
+    }
+
+    #[test]
+    fn tool_calls_arguments_already_object_is_preserved() {
+        let tool_calls = vec![json!({
+            "function": {"name": "fn", "arguments": {"key": "val"}}
+        })];
+        let result = convert_tool_calls_to_ollama(&tool_calls);
+        let first = &result.as_array().unwrap()[0];
+        let args = first.get("function").unwrap().get("arguments").unwrap();
+        assert!(args.is_object());
+        assert_eq!(args.get("key").and_then(|v| v.as_str()), Some("val"));
+    }
+
+    #[test]
+    fn tool_calls_end_to_end_in_chat_response() {
+        let lm = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "my_tool", "arguments": "{\"x\":1}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        });
+        let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 2, Instant::now(), false);
+        let msg = result.get("message").unwrap();
+        let tc = msg.get("tool_calls").unwrap().as_array().unwrap();
+        assert_eq!(tc.len(), 1);
+        let args = tc[0].get("function").unwrap().get("arguments").unwrap();
+        assert!(args.is_object(), "expected object, got {:?}", args);
+        assert_eq!(args.get("x").and_then(|v| v.as_i64()), Some(1));
+        assert!(tc[0].get("id").is_none());
+    }
+
+    #[test]
     fn chat_response_thinking_in_message_not_content() {
         let lm = lm_chat_response("The answer is 42", Some("Let me think..."));
         let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now(), false);
@@ -463,6 +521,55 @@ mod tests {
         let result = ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now(), false);
         assert!(result.get("thinking").is_none());
     }
+}
+
+/// Convert an OpenAI-format `tool_calls` array to the Ollama format.
+///
+/// OpenAI represents each tool call as:
+/// ```json
+/// {"id": "call_abc", "type": "function", "function": {"name": "fn", "arguments": "{\"k\":\"v\"}"}}
+/// ```
+/// where `arguments` is a **JSON string**.
+///
+/// Ollama expects:
+/// ```json
+/// {"function": {"name": "fn", "arguments": {"k": "v"}}}
+/// ```
+/// where `arguments` is a **JSON object** and the `id`/`type` wrapper fields are absent.
+pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
+    let converted: Vec<Value> = tool_calls
+        .iter()
+        .map(|tc| {
+            let name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+
+            let raw_args = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .cloned()
+                .unwrap_or(Value::Object(serde_json::Map::new()));
+
+            // OpenAI serialises arguments as a JSON string; parse it back into an object.
+            let arguments = match raw_args {
+                Value::String(ref s) => {
+                    serde_json::from_str(s).unwrap_or(Value::Object(serde_json::Map::new()))
+                }
+                other => other,
+            };
+
+            json!({
+                "function": {
+                    "name": name,
+                    "arguments": arguments
+                }
+            })
+        })
+        .collect();
+
+    json!(converted)
 }
 
 pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
