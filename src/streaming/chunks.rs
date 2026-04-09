@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::constants::ERROR_CANCELLED;
-use crate::handlers::transform::TimingInfo;
+use crate::handlers::transform::{TimingInfo, convert_tool_calls_to_ollama};
 
 #[derive(Default)]
 pub struct ChunkProcessingState {
@@ -56,7 +56,7 @@ pub fn process_choice_delta(
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
             && !new_tool_calls.is_empty()
         {
-            tool_calls_delta = Some(json!(new_tool_calls));
+            tool_calls_delta = Some(convert_tool_calls_to_ollama(new_tool_calls));
         }
     }
 
