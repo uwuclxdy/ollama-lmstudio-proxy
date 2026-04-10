@@ -414,6 +414,81 @@ pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
         .and_then(|reason| reason.as_str())
 }
 
+/// Convert an OpenAI-format `tool_calls` array to the Ollama format.
+///
+/// OpenAI represents each tool call as:
+/// ```json
+/// {"id": "call_abc", "type": "function", "function": {"name": "fn", "arguments": "{\"k\":\"v\"}"}}
+/// ```
+/// where `arguments` is a **JSON string**.
+///
+/// Ollama expects:
+/// ```json
+/// {"function": {"name": "fn", "arguments": {"k": "v"}}}
+/// ```
+/// where `arguments` is a **JSON object** and the `id`/`type` wrapper fields are absent.
+pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
+    let converted: Vec<Value> = tool_calls
+        .iter()
+        .map(|tc| {
+            let name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+
+            let raw_args = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .cloned()
+                .unwrap_or(Value::Object(serde_json::Map::new()));
+
+            // OpenAI serialises arguments as a JSON string; parse it back into an object.
+            let arguments = match raw_args {
+                Value::String(ref s) => {
+                    serde_json::from_str(s).unwrap_or(Value::Object(serde_json::Map::new()))
+                }
+                other => other,
+            };
+
+            json!({
+                "function": {
+                    "name": name,
+                    "arguments": arguments
+                }
+            })
+        })
+        .collect();
+
+    json!(converted)
+}
+
+pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
+    if let Some(system_text) = system_prompt {
+        let already_has_system = messages.iter().any(|message| {
+            message
+                .get("role")
+                .and_then(|role| role.as_str())
+                .map(|role| role.eq_ignore_ascii_case("system"))
+                .unwrap_or(false)
+        });
+
+        if already_has_system {
+            json!(messages)
+        } else {
+            let mut combined = Vec::with_capacity(messages.len() + 1);
+            combined.push(json!({
+                "role": "system",
+                "content": system_text,
+            }));
+            combined.extend(messages.iter().cloned());
+            Value::Array(combined)
+        }
+    } else {
+        json!(messages)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,80 +646,5 @@ mod tests {
             false,
         );
         assert!(result.get("thinking").is_none());
-    }
-}
-
-/// Convert an OpenAI-format `tool_calls` array to the Ollama format.
-///
-/// OpenAI represents each tool call as:
-/// ```json
-/// {"id": "call_abc", "type": "function", "function": {"name": "fn", "arguments": "{\"k\":\"v\"}"}}
-/// ```
-/// where `arguments` is a **JSON string**.
-///
-/// Ollama expects:
-/// ```json
-/// {"function": {"name": "fn", "arguments": {"k": "v"}}}
-/// ```
-/// where `arguments` is a **JSON object** and the `id`/`type` wrapper fields are absent.
-pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
-    let converted: Vec<Value> = tool_calls
-        .iter()
-        .map(|tc| {
-            let name = tc
-                .get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(|n| n.as_str())
-                .unwrap_or("");
-
-            let raw_args = tc
-                .get("function")
-                .and_then(|f| f.get("arguments"))
-                .cloned()
-                .unwrap_or(Value::Object(serde_json::Map::new()));
-
-            // OpenAI serialises arguments as a JSON string; parse it back into an object.
-            let arguments = match raw_args {
-                Value::String(ref s) => {
-                    serde_json::from_str(s).unwrap_or(Value::Object(serde_json::Map::new()))
-                }
-                other => other,
-            };
-
-            json!({
-                "function": {
-                    "name": name,
-                    "arguments": arguments
-                }
-            })
-        })
-        .collect();
-
-    json!(converted)
-}
-
-pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
-    if let Some(system_text) = system_prompt {
-        let already_has_system = messages.iter().any(|message| {
-            message
-                .get("role")
-                .and_then(|role| role.as_str())
-                .map(|role| role.eq_ignore_ascii_case("system"))
-                .unwrap_or(false)
-        });
-
-        if already_has_system {
-            json!(messages)
-        } else {
-            let mut combined = Vec::with_capacity(messages.len() + 1);
-            combined.push(json!({
-                "role": "system",
-                "content": system_text,
-            }));
-            combined.extend(messages.iter().cloned());
-            Value::Array(combined)
-        }
-    } else {
-        json!(messages)
     }
 }

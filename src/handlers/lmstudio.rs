@@ -125,17 +125,17 @@ pub async fn handle_lmstudio_passthrough(
                 log_request(method.as_str(), &final_endpoint_url, log_model);
 
                 if let Some(body_json) = current_body {
-                    forward_json_body_request(
-                        context.client,
+                    forward_json_body_request(ForwardJsonRequest {
+                        client: context.client,
                         method,
-                        &final_endpoint_url,
-                        &headers,
+                        endpoint_url: &final_endpoint_url,
+                        headers: &headers,
                         body_json,
-                        &body_bytes,
-                        &endpoint,
-                        original_model_name.as_deref(),
+                        body_bytes: &body_bytes,
+                        endpoint: &endpoint,
+                        original_model_name: original_model_name.as_deref(),
                         cancellation_token,
-                    )
+                    })
                     .await
                 } else {
                     forward_raw_body_request(
@@ -169,17 +169,32 @@ pub async fn handle_lmstudio_passthrough(
     Ok(result)
 }
 
-async fn forward_json_body_request(
-    client: &reqwest::Client,
+struct ForwardJsonRequest<'a> {
+    client: &'a reqwest::Client,
     method: http::Method,
-    endpoint_url: &str,
-    headers: &http::HeaderMap,
+    endpoint_url: &'a str,
+    headers: &'a http::HeaderMap,
     body_json: Value,
-    body_bytes: &Bytes,
-    endpoint: &str,
-    original_model_name: Option<&str>,
+    body_bytes: &'a Bytes,
+    endpoint: &'a str,
+    original_model_name: Option<&'a str>,
     cancellation_token: CancellationToken,
+}
+
+async fn forward_json_body_request(
+    req: ForwardJsonRequest<'_>,
 ) -> Result<warp::reply::Response, ProxyError> {
+    let ForwardJsonRequest {
+        client,
+        method,
+        endpoint_url,
+        headers,
+        body_json,
+        body_bytes,
+        endpoint,
+        original_model_name,
+        cancellation_token,
+    } = req;
     let is_streaming = is_streaming_request(&body_json);
     let prepared_body = prepare_request_body(Some(body_json), body_bytes)
         .map_err(|e| ProxyError::bad_request(&format!("Failed to prepare request body: {}", e)))?;
