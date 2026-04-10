@@ -70,9 +70,10 @@ pub fn build_vision_chat_messages(
     });
     let obj = user_message.as_object_mut();
     if let Some(obj) = obj
-        && let Some(img_value) = images {
-            obj.insert("images".to_string(), img_value.clone());
-        }
+        && let Some(img_value) = images
+    {
+        obj.insert("images".to_string(), img_value.clone());
+    }
     message_list.push(user_message);
 
     Value::Array(message_list)

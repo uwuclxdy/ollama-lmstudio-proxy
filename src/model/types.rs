@@ -275,7 +275,9 @@ impl ModelInfo {
 
     pub(crate) fn parse_parameters(&self) -> ModelParameters {
         if let Some(ref s) = self.params_string {
-            return ModelParameters { size_string: s.clone() };
+            return ModelParameters {
+                size_string: s.clone(),
+            };
         }
         let lower_id = self.id.to_lowercase();
 
@@ -356,14 +358,26 @@ impl ModelInfo {
         map.insert("general.architecture".into(), json!(self.arch));
         map.insert("general.file_type".into(), json!(2));
         map.insert("general.quantization_version".into(), json!(2));
-        map.insert(format!("{}.context_length", self.arch), json!(self.context_length));
+        map.insert(
+            format!("{}.context_length", self.arch),
+            json!(self.context_length),
+        );
         map.insert("lmstudio.publisher".into(), json!(self.publisher));
         map.insert("lmstudio.model_type".into(), json!(self.model_type));
         map.insert("lmstudio.state".into(), json!(self.state));
         map.insert("lmstudio.context_length".into(), json!(self.context_length));
-        map.insert("lmstudio.max_context_length".into(), json!(self.max_context_length));
-        map.insert("lmstudio.compatibility_type".into(), json!(self.compatibility_type));
-        map.insert("lmstudio.supports_vision".into(), json!(self.supports_vision));
+        map.insert(
+            "lmstudio.max_context_length".into(),
+            json!(self.max_context_length),
+        );
+        map.insert(
+            "lmstudio.compatibility_type".into(),
+            json!(self.compatibility_type),
+        );
+        map.insert(
+            "lmstudio.supports_vision".into(),
+            json!(self.supports_vision),
+        );
         map.insert("lmstudio.supports_tools".into(), json!(self.supports_tools));
         Value::Object(map)
     }
@@ -393,14 +407,20 @@ impl ModelInfo {
 mod tests {
     use super::*;
 
-    fn make_native(key: &str, size_bytes: Option<u64>, params_string: Option<String>) -> NativeModelData {
+    fn make_native(
+        key: &str,
+        size_bytes: Option<u64>,
+        params_string: Option<String>,
+    ) -> NativeModelData {
         NativeModelData {
             key: key.to_string(),
             model_type: "llm".to_string(),
             publisher: "test".to_string(),
             architecture: Some("llama".to_string()),
             format: Some("gguf".to_string()),
-            quantization: Some(NativeQuantization { name: Some("Q4_K_M".to_string()) }),
+            quantization: Some(NativeQuantization {
+                name: Some("Q4_K_M".to_string()),
+            }),
             max_context_length: 4096,
             loaded_instances: vec![],
             capabilities: None,
@@ -409,14 +429,21 @@ mod tests {
         }
     }
 
-    fn make_native_with_caps(key: &str, model_type: &str, vision: bool, tools: bool) -> NativeModelData {
+    fn make_native_with_caps(
+        key: &str,
+        model_type: &str,
+        vision: bool,
+        tools: bool,
+    ) -> NativeModelData {
         NativeModelData {
             key: key.to_string(),
             model_type: model_type.to_string(),
             publisher: "test".to_string(),
             architecture: Some("llama".to_string()),
             format: Some("gguf".to_string()),
-            quantization: Some(NativeQuantization { name: Some("Q4_K_M".to_string()) }),
+            quantization: Some(NativeQuantization {
+                name: Some("Q4_K_M".to_string()),
+            }),
             max_context_length: 4096,
             loaded_instances: vec![],
             capabilities: Some(NativeCapabilities {
@@ -436,28 +463,45 @@ mod tests {
     fn llm_without_instruct_in_name_still_gets_chat() {
         let native = make_native_with_caps("qwen3.5-9b-reasoning-distilled", "llm", false, false);
         let info = ModelInfo::from_native_data(&native);
-        assert!(caps(&info).contains(&"chat"), "expected 'chat' but got {:?}", caps(&info));
+        assert!(
+            caps(&info).contains(&"chat"),
+            "expected 'chat' but got {:?}",
+            caps(&info)
+        );
     }
 
     #[test]
     fn reasoning_model_gets_thinking_capability() {
-        let native = make_native_with_caps("qwen3.5-9b-opus-reasoning-distilled", "llm", false, false);
+        let native =
+            make_native_with_caps("qwen3.5-9b-opus-reasoning-distilled", "llm", false, false);
         let info = ModelInfo::from_native_data(&native);
-        assert!(caps(&info).contains(&"thinking"), "expected 'thinking' but got {:?}", caps(&info));
+        assert!(
+            caps(&info).contains(&"thinking"),
+            "expected 'thinking' but got {:?}",
+            caps(&info)
+        );
     }
 
     #[test]
     fn r1_model_gets_thinking_capability() {
         let native = make_native_with_caps("deepseek-r1-7b", "llm", false, false);
         let info = ModelInfo::from_native_data(&native);
-        assert!(caps(&info).contains(&"thinking"), "expected 'thinking' but got {:?}", caps(&info));
+        assert!(
+            caps(&info).contains(&"thinking"),
+            "expected 'thinking' but got {:?}",
+            caps(&info)
+        );
     }
 
     #[test]
     fn vision_llm_gets_vision_capability() {
         let native = make_native_with_caps("qwen3.5-9b-instruct-heretic", "llm", true, false);
         let info = ModelInfo::from_native_data(&native);
-        assert!(caps(&info).contains(&"vision"), "expected 'vision' but got {:?}", caps(&info));
+        assert!(
+            caps(&info).contains(&"vision"),
+            "expected 'vision' but got {:?}",
+            caps(&info)
+        );
     }
 
     #[test]
@@ -465,7 +509,11 @@ mod tests {
         let native = make_native_with_caps("qvq-72b-preview", "llm", true, false);
         let info = ModelInfo::from_native_data(&native);
         let c = caps(&info);
-        assert!(c.contains(&"thinking"), "expected 'thinking' but got {:?}", c);
+        assert!(
+            c.contains(&"thinking"),
+            "expected 'thinking' but got {:?}",
+            c
+        );
         assert!(c.contains(&"vision"), "expected 'vision' but got {:?}", c);
     }
 
@@ -473,7 +521,11 @@ mod tests {
     fn non_reasoning_llm_does_not_get_thinking() {
         let native = make_native_with_caps("llama-3-8b-instruct", "llm", false, false);
         let info = ModelInfo::from_native_data(&native);
-        assert!(!caps(&info).contains(&"thinking"), "unexpected 'thinking' in {:?}", caps(&info));
+        assert!(
+            !caps(&info).contains(&"thinking"),
+            "unexpected 'thinking' in {:?}",
+            caps(&info)
+        );
     }
 
     #[test]

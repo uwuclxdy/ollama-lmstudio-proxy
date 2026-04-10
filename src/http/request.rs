@@ -88,7 +88,10 @@ pub fn map_ollama_to_lmstudio_params(
     params
 }
 
-fn apply_top_level_params(top: &TopLevelParams<'_>, request_obj: &mut serde_json::Map<String, Value>) {
+fn apply_top_level_params(
+    top: &TopLevelParams<'_>,
+    request_obj: &mut serde_json::Map<String, Value>,
+) {
     if let Some(think_val) = top.think {
         let reasoning: Value = match think_val {
             Value::Bool(true) => json!("on"),
@@ -189,9 +192,14 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
 }
 
 fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
-    let Some(options) = ollama_options else { return };
+    let Some(options) = ollama_options else {
+        return;
+    };
 
-    if let Some(max_tokens) = options.get("max_tokens").or_else(|| options.get("num_predict")) {
+    if let Some(max_tokens) = options
+        .get("max_tokens")
+        .or_else(|| options.get("num_predict"))
+    {
         params.insert("max_tokens".to_string(), max_tokens.clone());
     }
 
@@ -308,10 +316,22 @@ mod tests {
     fn collects_unsupported_options() {
         let options = json!({ "template": "{{.Prompt}}", "mirostat": 1, "temperature": 0.7 });
         let unsupported = collect_unsupported_keys(&options);
-        assert!(unsupported.contains(&"template"), "expected template in {:?}", unsupported);
-        assert!(unsupported.contains(&"mirostat"), "expected mirostat in {:?}", unsupported);
+        assert!(
+            unsupported.contains(&"template"),
+            "expected template in {:?}",
+            unsupported
+        );
+        assert!(
+            unsupported.contains(&"mirostat"),
+            "expected mirostat in {:?}",
+            unsupported
+        );
         // temperature is supported — must NOT appear
-        assert!(!unsupported.contains(&"temperature"), "temperature should not appear in {:?}", unsupported);
+        assert!(
+            !unsupported.contains(&"temperature"),
+            "temperature should not appear in {:?}",
+            unsupported
+        );
     }
 
     #[test]
@@ -327,7 +347,11 @@ mod tests {
     fn num_ctx_is_not_treated_as_unsupported() {
         let options = json!({ "num_ctx": 4096 });
         let unsupported = collect_unsupported_keys(&options);
-        assert!(!unsupported.contains(&"num_ctx"), "num_ctx must not appear in unsupported: {:?}", unsupported);
+        assert!(
+            !unsupported.contains(&"num_ctx"),
+            "num_ctx must not appear in unsupported: {:?}",
+            unsupported
+        );
     }
 
     #[test]
@@ -409,7 +433,11 @@ mod tests {
 
     #[test]
     fn top_level_params_absent_think_emits_no_reasoning() {
-        let top = TopLevelParams { think: None, logprobs: None, top_logprobs: None };
+        let top = TopLevelParams {
+            think: None,
+            logprobs: None,
+            top_logprobs: None,
+        };
         let request = build_lm_studio_request(
             "mymodel",
             LMStudioRequestType::Completion {
@@ -427,7 +455,11 @@ mod tests {
     #[test]
     fn top_level_params_logprobs_forwarded() {
         let lp = json!(true);
-        let top = TopLevelParams { think: None, logprobs: Some(&lp), top_logprobs: None };
+        let top = TopLevelParams {
+            think: None,
+            logprobs: Some(&lp),
+            top_logprobs: None,
+        };
         let request = build_lm_studio_request(
             "mymodel",
             LMStudioRequestType::Completion {
@@ -446,11 +478,18 @@ mod tests {
     fn top_level_params_work_on_chat_type_too() {
         // think applies to both chat and generate paths
         let think_val = json!("medium");
-        let top = TopLevelParams { think: Some(&think_val), logprobs: None, top_logprobs: None };
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
         let messages = json!([{"role": "user", "content": "hi"}]);
         let request = build_lm_studio_request(
             "mymodel",
-            LMStudioRequestType::Chat { messages: &messages, stream: false },
+            LMStudioRequestType::Chat {
+                messages: &messages,
+                stream: false,
+            },
             None,
             None,
             None,

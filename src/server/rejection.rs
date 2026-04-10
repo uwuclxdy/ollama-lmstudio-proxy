@@ -18,7 +18,10 @@ fn classify_rejection(rejection: &Rejection) -> (StatusCode, String) {
     }
 
     if rejection.find::<warp::reject::MethodNotAllowed>().is_some() {
-        return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed".to_string());
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method not allowed".to_string(),
+        );
     }
 
     if rejection.find::<warp::reject::InvalidHeader>().is_some() {
@@ -26,19 +29,31 @@ fn classify_rejection(rejection: &Rejection) -> (StatusCode, String) {
     }
 
     if rejection.find::<warp::reject::MissingHeader>().is_some() {
-        return (StatusCode::BAD_REQUEST, "missing required header".to_string());
+        return (
+            StatusCode::BAD_REQUEST,
+            "missing required header".to_string(),
+        );
     }
 
     if rejection.find::<warp::reject::PayloadTooLarge>().is_some() {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large".to_string());
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request body too large".to_string(),
+        );
     }
 
     if let Some(body_err) = rejection.find::<warp::body::BodyDeserializeError>() {
-        return (StatusCode::BAD_REQUEST, format!("invalid request body: {}", body_err));
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("invalid request body: {}", body_err),
+        );
     }
 
     log::error!("unhandled rejection: {:?}", rejection);
-    (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".to_string())
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal server error".to_string(),
+    )
 }
 
 pub async fn handle_rejection(rejection: Rejection) -> Result<impl Reply, Infallible> {

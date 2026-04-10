@@ -76,7 +76,7 @@ pub async fn handle_ollama_embeddings(
                 resolution_ctx.effective_options.as_ref(),
                 None,
                 None,
-                None,  // TopLevelParams — not applicable for embeddings
+                None, // TopLevelParams — not applicable for embeddings
             );
 
             // Apply keep-alive TTL

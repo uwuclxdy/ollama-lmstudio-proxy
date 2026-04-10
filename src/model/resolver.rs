@@ -166,8 +166,7 @@ impl ModelResolver {
         let mut best_match = None;
         let mut best_score = 0;
         for (i, model) in available_models.iter().enumerate() {
-            let score =
-                Self::calculate_match_score(&lower_ollama, model, &lowered_ids[i]);
+            let score = Self::calculate_match_score(&lower_ollama, model, &lowered_ids[i]);
             if score > best_score && score >= 3 {
                 best_score = score;
                 best_match = Some(model.clone());

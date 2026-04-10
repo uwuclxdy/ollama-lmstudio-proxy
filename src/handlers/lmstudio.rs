@@ -181,9 +181,8 @@ async fn forward_json_body_request(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let is_streaming = is_streaming_request(&body_json);
-    let prepared_body = prepare_request_body(Some(body_json), body_bytes).map_err(|e| {
-        ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
-    })?;
+    let prepared_body = prepare_request_body(Some(body_json), body_bytes)
+        .map_err(|e| ProxyError::bad_request(&format!("Failed to prepare request body: {}", e)))?;
 
     let forward_headers = build_forward_headers(headers, prepared_body.is_json);
 
@@ -218,10 +217,8 @@ async fn forward_raw_body_request(
     cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
     let forward_headers = build_forward_headers(headers, false);
-    let prepared_body =
-        prepare_request_body(None, body_bytes).map_err(|e| {
-            ProxyError::bad_request(&format!("Failed to prepare request body: {}", e))
-        })?;
+    let prepared_body = prepare_request_body(None, body_bytes)
+        .map_err(|e| ProxyError::bad_request(&format!("Failed to prepare request body: {}", e)))?;
 
     let cancellable_request = CancellableRequest::new(client, cancellation_token.clone());
     let response = cancellable_request

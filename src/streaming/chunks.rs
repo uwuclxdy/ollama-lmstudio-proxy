@@ -159,7 +159,8 @@ pub fn create_ollama_streaming_chunk(
     let timestamp = chrono::Utc::now().to_rfc3339();
 
     if is_chat_endpoint {
-        let msg_capacity = 2 + (!thinking.is_empty() as usize) + tool_calls_delta.is_some() as usize;
+        let msg_capacity =
+            2 + (!thinking.is_empty() as usize) + tool_calls_delta.is_some() as usize;
         let mut msg_map = serde_json::Map::with_capacity(msg_capacity);
         msg_map.insert("role".into(), Value::String("assistant".into()));
         msg_map.insert("content".into(), Value::String(content.into()));
@@ -304,10 +305,16 @@ mod tests {
     fn choice_with_delta(content: Option<&str>, reasoning: Option<&str>) -> serde_json::Value {
         let mut delta = json!({});
         if let Some(c) = content {
-            delta.as_object_mut().unwrap().insert("content".to_string(), json!(c));
+            delta
+                .as_object_mut()
+                .unwrap()
+                .insert("content".to_string(), json!(c));
         }
         if let Some(r) = reasoning {
-            delta.as_object_mut().unwrap().insert("reasoning".to_string(), json!(r));
+            delta
+                .as_object_mut()
+                .unwrap()
+                .insert("reasoning".to_string(), json!(r));
         }
         json!({ "delta": delta })
     }
@@ -337,7 +344,10 @@ mod tests {
     fn chat_chunk_thinking_in_message() {
         let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "my thought");
         let msg = chunk.get("message").unwrap();
-        assert_eq!(msg.get("thinking").and_then(|v| v.as_str()), Some("my thought"));
+        assert_eq!(
+            msg.get("thinking").and_then(|v| v.as_str()),
+            Some("my thought")
+        );
         assert_eq!(msg.get("content").and_then(|v| v.as_str()), Some("hi"));
     }
 
@@ -351,7 +361,10 @@ mod tests {
     #[test]
     fn generate_chunk_thinking_top_level() {
         let chunk = create_ollama_streaming_chunk("m", "response", false, false, None, "thought");
-        assert_eq!(chunk.get("thinking").and_then(|v| v.as_str()), Some("thought"));
+        assert_eq!(
+            chunk.get("thinking").and_then(|v| v.as_str()),
+            Some("thought")
+        );
         // must NOT be nested inside message
         assert!(chunk.get("message").is_none());
     }

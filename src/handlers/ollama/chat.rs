@@ -171,7 +171,10 @@ pub async fn handle_ollama_chat(
     )
     .await?;
 
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let unload_delay = if is_streaming {
         crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS
     } else {

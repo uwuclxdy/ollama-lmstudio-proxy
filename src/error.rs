@@ -14,31 +14,52 @@ pub struct ProxyError {
 
 impl ProxyError {
     pub fn new(message: String, status_code: u16) -> Self {
-        Self { message, status_code }
+        Self {
+            message,
+            status_code,
+        }
     }
 
     pub fn internal_server_error(message: &str) -> Self {
-        Self { message: message.to_string(), status_code: 500 }
+        Self {
+            message: message.to_string(),
+            status_code: 500,
+        }
     }
 
     pub fn bad_request(message: &str) -> Self {
-        Self { message: message.to_string(), status_code: 400 }
+        Self {
+            message: message.to_string(),
+            status_code: 400,
+        }
     }
 
     pub fn not_found(message: &str) -> Self {
-        Self { message: message.to_string(), status_code: 404 }
+        Self {
+            message: message.to_string(),
+            status_code: 404,
+        }
     }
 
     pub fn not_implemented(message: &str) -> Self {
-        Self { message: message.to_string(), status_code: 501 }
+        Self {
+            message: message.to_string(),
+            status_code: 501,
+        }
     }
 
     pub fn request_cancelled() -> Self {
-        Self { message: ERROR_CANCELLED.to_string(), status_code: 499 }
+        Self {
+            message: ERROR_CANCELLED.to_string(),
+            status_code: 499,
+        }
     }
 
     pub fn lm_studio_unavailable(message: &str) -> Self {
-        Self { message: message.to_string(), status_code: 503 }
+        Self {
+            message: message.to_string(),
+            status_code: 503,
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {

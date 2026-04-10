@@ -28,16 +28,23 @@ mod tests {
 
     #[test]
     fn suffix_inserted_into_lm_request() {
-        use crate::http::request::{build_lm_studio_request, LMStudioRequestType, TopLevelParams};
+        use crate::http::request::{LMStudioRequestType, TopLevelParams, build_lm_studio_request};
         use std::borrow::Cow;
 
         let body = json!({ "suffix": "world", "model": "test", "prompt": "hello" });
         let suffix_val = body.get("suffix");
-        let top_level = TopLevelParams { think: None, logprobs: None, top_logprobs: None };
+        let top_level = TopLevelParams {
+            think: None,
+            logprobs: None,
+            top_logprobs: None,
+        };
 
         let mut lm_request = build_lm_studio_request(
             "test",
-            LMStudioRequestType::Completion { prompt: Cow::Borrowed("hello"), stream: false },
+            LMStudioRequestType::Completion {
+                prompt: Cow::Borrowed("hello"),
+                stream: false,
+            },
             None,
             None,
             None,
@@ -69,7 +76,10 @@ mod tests {
             }
         }
 
-        assert!(lm_request.get("suffix").is_none(), "suffix must be absent on vision path");
+        assert!(
+            lm_request.get("suffix").is_none(),
+            "suffix must be absent on vision path"
+        );
     }
 
     #[test]
@@ -134,7 +144,10 @@ pub async fn handle_ollama_generate(
                 .unwrap_or(false);
 
             let current_images = body_clone.get("images");
-            let raw = body_clone.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
+            let raw = body_clone
+                .get("raw")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let resolution_ctx = resolve_model_with_context(
                 &context,
@@ -150,7 +163,11 @@ pub async fn handle_ollama_generate(
             let chat_messages_payload: Option<Value>;
 
             let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
-                let system_for_vision = if raw { None } else { resolution_ctx.system_prompt.as_deref() };
+                let system_for_vision = if raw {
+                    None
+                } else {
+                    resolution_ctx.system_prompt.as_deref()
+                };
                 chat_messages_payload = Some(build_vision_chat_messages(
                     system_for_vision,
                     current_prompt,
@@ -166,17 +183,15 @@ pub async fn handle_ollama_generate(
                     },
                 )
             } else {
-                if !raw {
-                    if let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
-                        let trimmed = system_text.trim();
-                        if !trimmed.is_empty() {
-                            let combined = if current_prompt.is_empty() {
-                                trimmed.to_string()
-                            } else {
-                                format!("{trimmed}\n\n{current_prompt}")
-                            };
-                            prompt_override_storage = Some(combined);
-                        }
+                if !raw && let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
+                    let trimmed = system_text.trim();
+                    if !trimmed.is_empty() {
+                        let combined = if current_prompt.is_empty() {
+                            trimmed.to_string()
+                        } else {
+                            format!("{trimmed}\n\n{current_prompt}")
+                        };
+                        prompt_override_storage = Some(combined);
                     }
                 }
 
@@ -211,12 +226,11 @@ pub async fn handle_ollama_generate(
                 Some(&top_level_params),
             );
 
-            if current_images.is_none() {
-                if let Some(s) = suffix_val {
-                    if let Some(obj) = lm_request.as_object_mut() {
-                        obj.insert("suffix".to_string(), s.clone());
-                    }
-                }
+            if current_images.is_none()
+                && let Some(s) = suffix_val
+                && let Some(obj) = lm_request.as_object_mut()
+            {
+                obj.insert("suffix".to_string(), s.clone());
             }
 
             // Apply keep-alive TTL
@@ -262,7 +276,10 @@ pub async fn handle_ollama_generate(
     )
     .await?;
 
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let unload_delay = if is_streaming {
         crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS
     } else {

@@ -95,7 +95,11 @@ pub fn spawn_model_unload_if_needed(
         if let Err(e) =
             unload_model_instances(&client, &base_url, &model_resolver, &ollama_model_name).await
         {
-            log::warn!("model unload failed for '{}': {}", ollama_model_name, e.message);
+            log::warn!(
+                "model unload failed for '{}': {}",
+                ollama_model_name,
+                e.message
+            );
         }
     });
 }
