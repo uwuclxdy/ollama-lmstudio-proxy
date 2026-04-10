@@ -1,6 +1,6 @@
 [package]
 name = "ollama-lmstudio-proxy"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 authors = ["uwuclxdy"]
 description = "High-performance proxy server that bridges Ollama API and LM Studio"
