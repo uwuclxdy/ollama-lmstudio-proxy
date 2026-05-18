@@ -369,7 +369,7 @@ impl ModelInfo {
         if let Some(obj) = base.as_object_mut() {
             obj.insert(
                 "modified_at".to_string(),
-                chrono::Utc::now().to_rfc3339().into(),
+                crate::model::timestamps::process_start_modified_at().into(),
             );
         }
 
