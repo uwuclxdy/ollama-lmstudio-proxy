@@ -8,6 +8,7 @@ use crate::constants::{ERROR_LM_STUDIO_UNAVAILABLE, LM_STUDIO_NATIVE_MODELS, LOG
 use crate::error::ProxyError;
 use crate::http::CancellableRequest;
 use crate::logging::log_timed;
+use crate::model::matcher::{ModelMatchView, find_best_match};
 use crate::model::types::{ModelInfo, NativeModelsResponse};
 use crate::model::utils::clean_model_name;
 
@@ -50,7 +51,7 @@ impl ModelResolver {
         match self.get_available_models(client, cancellation_token).await {
             Ok(available_models) => {
                 if let Some(matched_model) =
-                    self.find_best_match(&cleaned_ollama_request, &available_models)
+                    Self::resolve_match(&cleaned_ollama_request, &available_models)
                 {
                     if !matched_model.is_loaded {
                         log::warn!(
@@ -135,99 +136,21 @@ impl ModelResolver {
         Ok(models)
     }
 
-    fn find_best_match(
-        &self,
-        ollama_name_cleaned: &str,
-        available_models: &[ModelInfo],
-    ) -> Option<ModelInfo> {
-        let lower_ollama = ollama_name_cleaned.to_lowercase();
-
-        // Pre-compute lowercased model IDs once for all phases
-        let lowered_ids: Vec<String> = available_models
+    fn resolve_match(query: &str, available_models: &[ModelInfo]) -> Option<ModelInfo> {
+        let views: Vec<ModelMatchView> = available_models
             .iter()
-            .map(|m| m.id.to_lowercase())
+            .map(|m| ModelMatchView {
+                id: m.id.clone(),
+                arch: m.arch.clone(),
+                model_type: m.model_type.clone(),
+                is_loaded: m.is_loaded,
+            })
             .collect();
-
-        for (i, lowered_id) in lowered_ids.iter().enumerate() {
-            if *lowered_id == lower_ollama {
-                return Some(available_models[i].clone());
-            }
-        }
-
-        for (i, lowered_id) in lowered_ids.iter().enumerate() {
-            if lowered_id.contains(&*lower_ollama)
-                && (lower_ollama.len() > available_models[i].id.len() / 2
-                    || lower_ollama.len() > 10)
-            {
-                return Some(available_models[i].clone());
-            }
-        }
-
-        let mut best_match = None;
-        let mut best_score = 0;
-        for (i, model) in available_models.iter().enumerate() {
-            let score = Self::calculate_match_score(&lower_ollama, model, &lowered_ids[i]);
-            if score > best_score && score >= 3 {
-                best_score = score;
-                best_match = Some(model.clone());
-            }
-        }
-
-        best_match
-    }
-
-    fn calculate_match_score(
-        ollama_name: &str,
-        model: &ModelInfo,
-        model_name_lower: &str,
-    ) -> usize {
-        let mut score = 0;
-
-        // Use iterators instead of collecting into Vecs
-        for ollama_part in ollama_name
-            .split(&['-', '_', ':', '.', '/', ' '])
-            .filter(|s| s.len() > 1)
-        {
-            for model_part in model_name_lower
-                .split(&['-', '_', ':', '.', '/', ' '])
-                .filter(|s| s.len() > 1)
-            {
-                if ollama_part == model_part {
-                    score += ollama_part.len() * 2;
-                } else if model_part.contains(ollama_part) || ollama_part.contains(model_part) {
-                    score += ollama_part.len().min(model_part.len());
-                }
-            }
-        }
-
-        // ollama_name is already lowercase — no need to re-lowercase
-        if model.arch.eq_ignore_ascii_case(ollama_name) {
-            score += 5;
-        }
-
-        if model.model_type == "llm"
-            && (ollama_name.contains("chat") || ollama_name.contains("instruct"))
-        {
-            score += 3;
-        }
-        if model.model_type == "vlm"
-            && (ollama_name.contains("vision") || ollama_name.contains("llava"))
-        {
-            score += 3;
-        }
-        if model.model_type == "embeddings" && ollama_name.contains("embed") {
-            score += 3;
-        }
-
-        if model.is_loaded {
-            score += 2;
-        }
-
-        if model_name_lower.starts_with(ollama_name) {
-            score += ollama_name.len();
-        }
-
-        score
+        let matched = find_best_match(query, &views)?;
+        available_models
+            .iter()
+            .find(|m| m.id == matched.id)
+            .cloned()
     }
 
     pub async fn get_all_models(
