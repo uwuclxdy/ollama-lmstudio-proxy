@@ -19,8 +19,8 @@ LMS_TREES=(1_developer)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCS_DIR="$REPO_ROOT/api docs"
-LMS_DIR="$DOCS_DIR/lm studio"
+DOCS_DIR="$REPO_ROOT/api_docs"
+LMS_DIR="$DOCS_DIR/lmstudio"
 
 if [[ ! -d "$DOCS_DIR" ]]; then
     echo "error: '$DOCS_DIR' does not exist; run from repo containing the api docs/ directory" >&2
