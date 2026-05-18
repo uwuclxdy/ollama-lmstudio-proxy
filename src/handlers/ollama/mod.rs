@@ -8,6 +8,7 @@ pub mod generate;
 pub mod health;
 pub mod images;
 pub mod keep_alive;
+pub mod keep_alive_parse;
 pub mod lifecycle;
 mod model_resolution;
 pub mod models;
