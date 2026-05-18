@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod chat;
 pub mod download;
 pub mod download_utils;
+pub mod embed_params;
 pub mod embeddings;
 pub mod generate;
 pub mod health;

@@ -14,6 +14,7 @@ use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
+use super::embed_params::lift_embed_top_level_params;
 use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
 use crate::model::utils::extract_required_model_name;
 
@@ -32,6 +33,8 @@ pub async fn handle_ollama_embeddings(
     load_timeout_seconds: u64,
 ) -> Result<warp::reply::Response, ProxyError> {
     let start_time = Instant::now();
+    let mut body = body;
+    lift_embed_top_level_params(&mut body);
     let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
