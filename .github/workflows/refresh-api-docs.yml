@@ -2,8 +2,8 @@ name: refresh api docs
 
 on:
   schedule:
-    # Mondays at 06:00 UTC — once a week is plenty for API doc churn.
-    - cron: '0 6 * * 1'
+    # Daily at 06:00 UTC.
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run refresh script
         run: ./scripts/refresh-api-docs.sh
@@ -33,7 +33,7 @@ jobs:
 
       - name: Open pull request
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/refresh-api-docs
           commit-message: |
