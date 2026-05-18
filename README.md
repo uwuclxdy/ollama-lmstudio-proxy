@@ -9,7 +9,7 @@ Useful if you want to use **LM Studio models through Ollama API** (for example C
 > [!IMPORTANT]
 > This project is in the majority vibe coded. I just want to let you know, despite me regularly using it. **Please report any bugs or auditing code before use!**
 
-![preview.png](preview.png)
+![preview.png](media/preview.png)
 
 ## Highlights
 
