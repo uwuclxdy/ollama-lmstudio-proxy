@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use reqwest::Method;
-use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -12,128 +11,10 @@ use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::logging::log_request;
 
+use super::download_status::LmStudioDownloadStatus;
 use super::utils::send_status_chunk;
 
 const DOWNLOAD_STATUS_POLL_INTERVAL_MS: u64 = 500;
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LmStudioDownloadStatus {
-    #[serde(default)]
-    job_id: Option<String>,
-    status: String,
-    #[serde(default)]
-    total_size_bytes: Option<u64>,
-    #[serde(default)]
-    downloaded_bytes: Option<u64>,
-    #[serde(default)]
-    bytes_per_second: Option<f64>,
-    #[serde(default)]
-    estimated_completion: Option<String>,
-    #[serde(default)]
-    started_at: Option<String>,
-    #[serde(default)]
-    completed_at: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl LmStudioDownloadStatus {
-    fn translated_status(&self) -> String {
-        match self.status.as_str() {
-            "completed" | "already_downloaded" => "success".to_string(),
-            other => other.to_string(),
-        }
-    }
-
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self.status.as_str(),
-            "completed" | "already_downloaded" | "failed"
-        )
-    }
-
-    fn is_failure(&self) -> bool {
-        matches!(self.status.as_str(), "failed")
-    }
-
-    fn job_id(&self) -> Result<&str, ProxyError> {
-        self.job_id.as_deref().ok_or_else(|| {
-            ProxyError::internal_server_error("LM Studio download response missing job identifier")
-        })
-    }
-
-    pub fn to_chunk(&self, model: &str) -> Value {
-        let mut chunk = serde_json::Map::new();
-        chunk.insert(
-            "status".to_string(),
-            Value::String(self.translated_status()),
-        );
-        chunk.insert("model".to_string(), Value::String(model.to_string()));
-        chunk.insert("detail".to_string(), Value::String(self.status.clone()));
-        if let Some(job_id) = &self.job_id {
-            chunk.insert("job_id".to_string(), Value::String(job_id.clone()));
-        }
-        if let Some(total) = self.total_size_bytes {
-            chunk.insert("total".to_string(), Value::from(total));
-        }
-        if let Some(done) = self.downloaded_bytes {
-            chunk.insert("completed".to_string(), Value::from(done));
-        }
-        if let Some(rate) = self.bytes_per_second {
-            chunk.insert("bytes_per_second".to_string(), Value::from(rate));
-        }
-        if let Some(eta) = &self.estimated_completion {
-            chunk.insert(
-                "estimated_completion".to_string(),
-                Value::String(eta.clone()),
-            );
-        }
-        if let Some(started) = &self.started_at {
-            chunk.insert("started_at".to_string(), Value::String(started.clone()));
-        }
-        if let Some(done_at) = &self.completed_at {
-            chunk.insert("completed_at".to_string(), Value::String(done_at.clone()));
-        }
-        if let Some(err) = &self.error {
-            chunk.insert("error".to_string(), Value::String(err.clone()));
-        }
-        Value::Object(chunk)
-    }
-
-    pub fn into_final_response(self, model: &str) -> Result<Value, ProxyError> {
-        match self.status.as_str() {
-            "completed" | "already_downloaded" => {
-                let mut map = serde_json::Map::new();
-                map.insert("status".to_string(), Value::String("success".to_string()));
-                map.insert("model".to_string(), Value::String(model.to_string()));
-                map.insert("detail".to_string(), Value::String(self.status));
-                if let Some(job_id) = self.job_id {
-                    map.insert("job_id".to_string(), Value::String(job_id));
-                }
-                if let Some(total) = self.total_size_bytes {
-                    map.insert("total".to_string(), Value::from(total));
-                }
-                if let Some(done) = self.downloaded_bytes {
-                    map.insert("completed".to_string(), Value::from(done));
-                }
-                if let Some(done_at) = self.completed_at {
-                    map.insert("completed_at".to_string(), Value::String(done_at));
-                }
-                Ok(Value::Object(map))
-            }
-            "failed" => Err(ProxyError::internal_server_error(
-                &self
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "LM Studio reported download failure".to_string()),
-            )),
-            other => Err(ProxyError::internal_server_error(&format!(
-                "unexpected download status: {}",
-                other
-            ))),
-        }
-    }
-}
 
 pub async fn initiate_lmstudio_download(
     client: &reqwest::Client,
