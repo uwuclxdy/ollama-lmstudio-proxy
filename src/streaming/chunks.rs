@@ -290,9 +290,6 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
         );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
-        if !params.is_chat {
-            chunk_obj.insert("context".to_string(), json!([]));
-        }
     }
     chunk
 }

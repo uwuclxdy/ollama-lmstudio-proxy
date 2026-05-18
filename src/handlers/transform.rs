@@ -286,13 +286,16 @@ impl ResponseTransformer {
         };
 
         let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
+        // `context` (token-ID encoding of conversation) is deprecated in Ollama and
+        // cannot be synthesized from LM Studio responses, so omit it rather than
+        // emitting a misleading empty array that breaks legacy context-chaining
+        // clients.
         let mut response_obj = json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
             "response": content,
             "done": true,
             "done_reason": done_reason,
-            "context": [],
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
