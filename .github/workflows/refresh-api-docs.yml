@@ -1,0 +1,54 @@
+name: refresh api docs
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC — once a week is plenty for API doc churn.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run refresh script
+        run: ./scripts/refresh-api-docs.sh
+
+      - name: Detect changes
+        id: diff
+        run: |
+          if git diff --quiet -- "api docs/"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "no upstream changes"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- "api docs/"
+          fi
+
+      - name: Open pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/refresh-api-docs
+          commit-message: |
+            docs(api): refresh ollama and lm studio reference snapshots
+
+            Automated sync via scripts/refresh-api-docs.sh.
+          title: 'docs(api): refresh upstream API doc mirrors'
+          body: |
+            Automated refresh of `api docs/ollama.md` and
+            `api docs/lm studio/{1_developer,1_python,2_typescript,3_cli}/`
+            from `ollama/ollama@main` and `lmstudio-ai/docs@main`.
+
+            Triggered by `.github/workflows/refresh-api-docs.yml`.
+            Review the diff before merging — upstream API changes may
+            require corresponding proxy updates.
+          add-paths: |
+            api docs/**
+          delete-branch: true
