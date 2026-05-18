@@ -29,6 +29,10 @@ pub struct NativeModelData {
     pub size_bytes: Option<u64>,
     #[serde(default)]
     pub params_string: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -37,11 +41,26 @@ pub struct NativeCapabilities {
     pub vision: Option<bool>,
     #[serde(default)]
     pub trained_for_tool_use: Option<bool>,
+    #[serde(default)]
+    pub reasoning: Option<NativeReasoningCapability>,
+}
+
+/// LM Studio 0.4.0+ surfaces public reasoning config on tool-capable models
+/// (e.g. `openai/gpt-oss-20b`). When `allowed_options` contains anything other
+/// than `"off"`, the model can think — promote it to the `thinking` capability.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeReasoningCapability {
+    #[serde(default)]
+    pub allowed_options: Vec<String>,
+    #[serde(default)]
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeQuantization {
     pub name: Option<String>,
+    #[serde(default)]
+    pub bits_per_weight: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -76,8 +95,11 @@ pub struct ModelInfo {
     pub is_loaded: bool,
     pub supports_vision: bool,
     pub supports_tools: bool,
+    pub supports_reasoning: bool,
     pub size_bytes: Option<u64>,
     pub params_string: Option<String>,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
 }
 
 impl ModelInfo {
@@ -136,6 +158,17 @@ impl ModelInfo {
             .and_then(|c| c.trained_for_tool_use)
             .unwrap_or(false);
 
+        let supports_reasoning = native_data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.reasoning.as_ref())
+            .map(|r| {
+                r.allowed_options
+                    .iter()
+                    .any(|opt| !opt.eq_ignore_ascii_case("off"))
+            })
+            .unwrap_or(false);
+
         Self {
             id: native_data.key.clone(),
             ollama_name,
@@ -156,8 +189,11 @@ impl ModelInfo {
             is_loaded,
             supports_vision,
             supports_tools,
+            supports_reasoning,
             size_bytes: native_data.size_bytes,
             params_string: native_data.params_string.clone(),
+            display_name: native_data.display_name.clone(),
+            description: native_data.description.clone(),
         }
     }
 
@@ -168,6 +204,9 @@ impl ModelInfo {
     }
 
     fn is_thinking_model(&self) -> bool {
+        if self.supports_reasoning {
+            return true;
+        }
         let lower = self.id.to_lowercase();
         lower.contains("reasoning")
             || lower.contains("thinking")
@@ -386,7 +425,7 @@ impl ModelInfo {
         let capabilities = self.determine_capabilities();
         let base = self.base_ollama_representation();
 
-        json!({
+        let mut response = json!({
             "modelfile": format!("# Modelfile for {}\nFROM {} # (Real data from LM Studio)\n\nPARAMETER temperature {}\nPARAMETER top_p {}\nPARAMETER top_k {}\n\nTEMPLATE \"\"\"{{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}\"\"\"",
                 self.ollama_name, self.ollama_name, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K
             ),
@@ -399,7 +438,18 @@ impl ModelInfo {
             "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
             "size": base["size"].as_u64().unwrap_or(0),
             "modified_at": chrono::Utc::now().to_rfc3339()
-        })
+        });
+
+        if let Some(obj) = response.as_object_mut() {
+            if let Some(name) = &self.display_name {
+                obj.insert("display_name".to_string(), json!(name));
+            }
+            if let Some(desc) = &self.description {
+                obj.insert("description".to_string(), json!(desc));
+            }
+        }
+
+        response
     }
 }
 
@@ -420,12 +470,15 @@ mod tests {
             format: Some("gguf".to_string()),
             quantization: Some(NativeQuantization {
                 name: Some("Q4_K_M".to_string()),
+                bits_per_weight: Some(4.0),
             }),
             max_context_length: 4096,
             loaded_instances: vec![],
             capabilities: None,
             size_bytes,
             params_string,
+            display_name: None,
+            description: None,
         }
     }
 
@@ -443,15 +496,19 @@ mod tests {
             format: Some("gguf".to_string()),
             quantization: Some(NativeQuantization {
                 name: Some("Q4_K_M".to_string()),
+                bits_per_weight: Some(4.0),
             }),
             max_context_length: 4096,
             loaded_instances: vec![],
             capabilities: Some(NativeCapabilities {
                 vision: Some(vision),
                 trained_for_tool_use: Some(tools),
+                reasoning: None,
             }),
             size_bytes: None,
             params_string: None,
+            display_name: None,
+            description: None,
         }
     }
 
@@ -556,5 +613,59 @@ mod tests {
         let native = make_native("llama-7b-instruct", None, None);
         let info = ModelInfo::from_native_data(&native);
         assert_eq!(info.parse_parameters().size_string, "7B");
+    }
+
+    #[test]
+    fn reasoning_capability_promotes_to_thinking_even_without_keyword() {
+        let mut native = make_native_with_caps("openai/gpt-oss-20b", "llm", false, true);
+        native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+            allowed_options: vec!["off".into(), "low".into(), "medium".into(), "high".into()],
+            default: Some("medium".into()),
+        });
+        let info = ModelInfo::from_native_data(&native);
+        assert!(info.supports_reasoning);
+        assert!(
+            caps(&info).contains(&"thinking"),
+            "expected thinking via capabilities, got {:?}",
+            caps(&info)
+        );
+    }
+
+    #[test]
+    fn reasoning_only_off_does_not_promote_thinking() {
+        let mut native = make_native_with_caps("plain-model", "llm", false, false);
+        native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+            allowed_options: vec!["off".into()],
+            default: Some("off".into()),
+        });
+        let info = ModelInfo::from_native_data(&native);
+        assert!(!info.supports_reasoning);
+        assert!(!caps(&info).contains(&"thinking"));
+    }
+
+    #[test]
+    fn show_response_surfaces_display_name_and_description() {
+        let mut native = make_native_with_caps("publisher/model", "llm", false, false);
+        native.display_name = Some("Pretty Model".into());
+        native.description = Some("a description".into());
+        let info = ModelInfo::from_native_data(&native);
+        let show = info.to_show_response();
+        assert_eq!(
+            show.get("display_name").and_then(|v| v.as_str()),
+            Some("Pretty Model")
+        );
+        assert_eq!(
+            show.get("description").and_then(|v| v.as_str()),
+            Some("a description")
+        );
+    }
+
+    #[test]
+    fn show_response_omits_display_fields_when_absent() {
+        let native = make_native_with_caps("publisher/model", "llm", false, false);
+        let info = ModelInfo::from_native_data(&native);
+        let show = info.to_show_response();
+        assert!(show.get("display_name").is_none());
+        assert!(show.get("description").is_none());
     }
 }
