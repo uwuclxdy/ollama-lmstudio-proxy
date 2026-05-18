@@ -15,7 +15,7 @@ set -euo pipefail
 
 OLLAMA_URL="https://raw.githubusercontent.com/ollama/ollama/main/docs/api.md"
 LMS_REPO="https://github.com/lmstudio-ai/docs.git"
-LMS_TREES=(1_developer 1_python 2_typescript 3_cli)
+LMS_TREES=(1_developer)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
