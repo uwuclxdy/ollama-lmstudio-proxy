@@ -24,43 +24,64 @@ impl TimingInfo {
         estimated_output_tokens: u64,
     ) -> Self {
         if let Some(stats) = lm_response.get("stats") {
-            let generation_time = stats
-                .get("generation_time")
-                .and_then(|t| t.as_f64())
-                .unwrap_or(0.001);
-
+            // LM Studio publishes two stats shapes:
+            //   /api/v0/*       — { generation_time, time_to_first_token, tokens_per_second }
+            //   /v1/responses   — { time_to_first_token_seconds, tokens_per_second,
+            //                       model_load_time_seconds, input_tokens, total_output_tokens }
+            //
+            // generation_time (when present) is the post-TTFT eval phase, NOT total.
+            // For v1 responses there is no generation_time; derive eval phase from
+            // total_output_tokens / tokens_per_second.
             let time_to_first_token = stats
-                .get("time_to_first_token")
+                .get("time_to_first_token_seconds")
+                .or_else(|| stats.get("time_to_first_token"))
                 .and_then(|t| t.as_f64())
-                .unwrap_or(0.1);
+                .unwrap_or(0.0);
+
+            let tokens_per_second = stats
+                .get("tokens_per_second")
+                .and_then(|t| t.as_f64())
+                .unwrap_or(0.0);
 
             let actual_prompt_tokens = lm_response
                 .get("usage")
                 .and_then(|u| u.get("prompt_tokens"))
                 .and_then(|t| t.as_u64())
+                .or_else(|| stats.get("input_tokens").and_then(|t| t.as_u64()))
                 .unwrap_or(estimated_input_tokens);
 
             let actual_completion_tokens = lm_response
                 .get("usage")
                 .and_then(|u| u.get("completion_tokens"))
                 .and_then(|t| t.as_u64())
+                .or_else(|| stats.get("total_output_tokens").and_then(|t| t.as_u64()))
                 .unwrap_or(estimated_output_tokens);
 
-            let generation_time_ns = (generation_time * 1_000_000_000.0) as u64;
-            let ttft_ns = (time_to_first_token * 1_000_000_000.0) as u64;
+            let generation_time = match stats.get("generation_time").and_then(|t| t.as_f64()) {
+                Some(g) => g,
+                None if tokens_per_second > 0.0 && actual_completion_tokens > 0 => {
+                    actual_completion_tokens as f64 / tokens_per_second
+                }
+                _ => 0.0,
+            };
 
-            let prompt_eval_duration_ns = ttft_ns.max(1);
-            let eval_duration_ns = generation_time_ns.saturating_sub(ttft_ns).max(1);
-            let total_duration_ns =
-                generation_time_ns.max(prompt_eval_duration_ns + eval_duration_ns);
+            let load_duration_ns = stats
+                .get("model_load_time_seconds")
+                .and_then(|t| t.as_f64())
+                .map(|s| (s * 1_000_000_000.0) as u64)
+                .unwrap_or(DEFAULT_LOAD_DURATION_NS);
+
+            let ttft_ns = (time_to_first_token * 1_000_000_000.0) as u64;
+            let generation_time_ns = (generation_time * 1_000_000_000.0) as u64;
+            let total_duration_ns = ttft_ns + generation_time_ns;
 
             return Self {
-                total_duration: total_duration_ns,
-                load_duration: DEFAULT_LOAD_DURATION_NS,
+                total_duration: total_duration_ns.max(1),
+                load_duration: load_duration_ns,
                 prompt_eval_count: actual_prompt_tokens.max(1),
-                prompt_eval_duration: prompt_eval_duration_ns,
+                prompt_eval_duration: ttft_ns.max(1),
                 eval_count: actual_completion_tokens.max(1),
-                eval_duration: eval_duration_ns,
+                eval_duration: generation_time_ns.max(1),
             };
         }
 
