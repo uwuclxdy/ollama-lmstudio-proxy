@@ -396,6 +396,13 @@ impl ModelInfo {
         let mut map = serde_json::Map::new();
         map.insert("general.architecture".into(), json!(self.arch));
         map.insert("general.file_type".into(), json!(2));
+        // Ollama clients (api_docs/ollama.md line 1485) use general.parameter_count
+        // to size memory budgets. Derive from params_string ("7B" → 7e9) or fall
+        // back to the heuristic on the model id.
+        let params = self.parse_parameters();
+        if let Some(count) = crate::model::param_count::parse_parameter_count(&params.size_string) {
+            map.insert("general.parameter_count".into(), json!(count));
+        }
         map.insert("general.quantization_version".into(), json!(2));
         map.insert(
             format!("{}.context_length", self.arch),

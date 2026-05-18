@@ -1,4 +1,5 @@
 pub mod matcher;
+pub mod param_count;
 pub mod resolver;
 pub mod timestamps;
 pub mod types;
