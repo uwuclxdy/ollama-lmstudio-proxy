@@ -6,6 +6,29 @@ index: 2
 
 ---
 
+###### LM Studio 0.4.1
+
+### Anthropic-compatible API
+
+- New Anthropic-compatible endpoint: `POST /v1/messages`.
+  - Use Claude code models with LM Studio
+  - See docs for more details: [/docs/developer/anthropic-compat](/docs/developer/anthropic-compat).
+
+---
+
+###### LM Studio 0.4.0
+
+### LM Studio native v1 REST API
+
+- Official release of LM Studio's native v1 REST API at `/api/v1/*` endpoints.
+  - [MCP via API](/docs/developer/core/mcp)
+  - [Stateful chats](/docs/developer/rest/stateful-chats)
+  - [Authentication](/docs/developer/core/authentication) configuration with API tokens
+  - Model [download](/docs/developer/rest/download), [load](/docs/developer/rest/load) and [unload](/docs/developer/rest/unload) endpoints
+  - See [overview](/docs/developer/rest) page for more details and [comparison](/docs/developer/rest#inference-endpoint-comparison) with OpenAI-compatible endpoints.
+
+---
+
 ###### LM Studio 0.3.29 • 2025‑10‑06
 
 ### OpenAI `/v1/responses` and variant listing
@@ -28,7 +51,7 @@ index: 2
 - `lms chat`: press `Ctrl+C` to interrupt an ongoing prediction.
 - `lms ps --json` now reports each model's generation status and the number of queued prediction requests.
 - CLI color contrast improved for light mode.
-- See docs: [/docs/cli/load](/docs/cli/load). Full release notes: [/blog/lmstudio-v0.3.27](/blog/lmstudio-v0.3.27).
+- See docs: [/docs/cli/local-models/load](/docs/cli/local-models/load). Full release notes: [/blog/lmstudio-v0.3.27](/blog/lmstudio-v0.3.27).
 
 ---
 
@@ -40,7 +63,7 @@ index: 2
   - `--source server` streams HTTP server logs (startup, endpoints, status)
   - `--source model --filter input,output` streams formatted user input and model output
   - Append `--json` for machine‑readable logs; `--stats` adds tokens/sec and related metrics (model source)
-- See usage and examples: [/docs/cli/log-stream](/docs/cli/log-stream). Full release notes: [/blog/lmstudio-v0.3.26](/blog/lmstudio-v0.3.26).
+- See usage and examples: [/docs/cli/serve/log-stream](/docs/cli/serve/log-stream). Full release notes: [/blog/lmstudio-v0.3.26](/blog/lmstudio-v0.3.26).
 
 ---
 
@@ -113,7 +136,9 @@ index: 2
 
 ---
 
-###### [👾 LM Studio 0.3.15](/blog/lmstudio-v0.3.15) • 2025-04-24
+###### 👾 LM Studio 0.3.15 • 2025-04-24
+
+Release post: [LM Studio 0.3.15](/blog/lmstudio-v0.3.15)
 
 ### Improved Tool Use API Support
 
@@ -133,7 +158,9 @@ Chunked responses now set `"finish_reason": "tool_calls"` when appropriate.
 
 ---
 
-###### [👾 LM Studio 0.3.14](/blog/lmstudio-v0.3.14) • 2025-03-27
+###### 👾 LM Studio 0.3.14 • 2025-03-27
+
+Release post: [LM Studio 0.3.14](/blog/lmstudio-v0.3.14)
 
 ### [API/SDK] Preset Support
 
@@ -141,7 +168,9 @@ RESTful API and SDKs support specifying presets in requests.
 
 _(example needed)_
 
-###### [👾 LM Studio 0.3.10](/blog/lmstudio-v0.3.10) • 2025-02-18
+###### 👾 LM Studio 0.3.10 • 2025-02-18
+
+Release post: [LM Studio 0.3.10](/blog/lmstudio-v0.3.10)
 
 ### Speculative Decoding API
 
@@ -170,7 +199,9 @@ Responses now include a `stats` object for speculative decoding:
 
 ---
 
-###### [👾 LM Studio 0.3.9](blog/lmstudio-v0.3.9) • 2025-01-30
+###### 👾 LM Studio 0.3.9 • 2025-01-30
+
+Release post: [LM Studio 0.3.9](blog/lmstudio-v0.3.9)
 
 ### Idle TTL and Auto Evict
 
@@ -200,7 +231,9 @@ Turn this on in App Settings > Developer.
 
 ---
 
-###### [👾 LM Studio 0.3.6](blog/lmstudio-v0.3.6) • 2025-01-06
+###### 👾 LM Studio 0.3.6 • 2025-01-06
+
+Release post: [LM Studio 0.3.6](blog/lmstudio-v0.3.6)
 
 ### Tool and Function Calling API
 
@@ -210,7 +243,9 @@ Docs: [Tool Use and Function Calling](/docs/developer/core/tools).
 
 ---
 
-###### [👾 LM Studio 0.3.5](blog/lmstudio-v0.3.5) • 2024-10-22
+###### 👾 LM Studio 0.3.5 • 2024-10-22
+
+Release post: [LM Studio 0.3.5](blog/lmstudio-v0.3.5)
 
 ### Introducing `lms get`: download models from the terminal
 

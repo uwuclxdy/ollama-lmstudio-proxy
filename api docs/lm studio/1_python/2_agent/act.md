@@ -1,6 +1,6 @@
 ---
-title: The `.act()` call
-description: How to use the `.act()` call to turn LLMs into autonomous agents that can perform tasks on your local machine.
+title: The .act() call
+description: How to use the .act() call to turn LLMs into autonomous agents that can perform tasks on your local machine.
 index: 1
 ---
 
@@ -24,23 +24,19 @@ With this in mind, we say that the `.act()` API is an automatic "multi-round" to
 
 ### Quick Example
 
-```lms_code_snippet
-  variants:
-    "Python (convenience API)":
-      language: python
-      code: |
-        import lmstudio as lms
+```python
+import lmstudio as lms
 
-        def multiply(a: float, b: float) -> float:
-            """Given two numbers a and b. Returns the product of them."""
-            return a * b
+def multiply(a: float, b: float) -> float:
+    """Given two numbers a and b. Returns the product of them."""
+    return a * b
 
-        model = lms.llm("qwen2.5-7b-instruct")
-        model.act(
-          "What is the result of 12345 multiplied by 54321?",
-          [multiply],
-          on_message=print,
-        )
+model = lms.llm("qwen2.5-7b-instruct")
+model.act(
+  "What is the result of 12345 multiplied by 54321?",
+  [multiply],
+  on_message=print,
+)
 ```
 
 ### What does it mean for an LLM to "use a tool"?
@@ -76,88 +72,79 @@ Some general guidance when selecting a model:
 
 The following code demonstrates how to provide multiple tools in a single `.act()` call.
 
-```lms_code_snippet
-  variants:
-    "Python (convenience API)":
-      language: python
-      code: |
-        import math
-        import lmstudio as lms
+```python
+import math
+import lmstudio as lms
 
-        def add(a: int, b: int) -> int:
-            """Given two numbers a and b, returns the sum of them."""
-            return a + b
+def add(a: int, b: int) -> int:
+    """Given two numbers a and b, returns the sum of them."""
+    return a + b
 
-        def is_prime(n: int) -> bool:
-            """Given a number n, returns True if n is a prime number."""
-            if n < 2:
-                return False
-            sqrt = int(math.sqrt(n))
-            for i in range(2, sqrt):
-                if n % i == 0:
-                    return False
-            return True
+def is_prime(n: int) -> bool:
+    """Given a number n, returns True if n is a prime number."""
+    if n < 2:
+        return False
+    sqrt = int(math.sqrt(n))
+    for i in range(2, sqrt):
+        if n % i == 0:
+            return False
+    return True
 
-        model = lms.llm("qwen2.5-7b-instruct")
-        model.act(
-          "Is the result of 12345 + 45668 a prime? Think step by step.",
-          [add, is_prime],
-          on_message=print,
-        )
+model = lms.llm("qwen2.5-7b-instruct")
+model.act(
+  "Is the result of 12345 + 45668 a prime? Think step by step.",
+  [add, is_prime],
+  on_message=print,
+)
 ```
 
 ### Example: Chat Loop with Create File Tool
 
 The following code creates a conversation loop with an LLM agent that can create files.
 
-```lms_code_snippet
-  variants:
-    "Python (convenience API)":
-      language: python
-      code: |
-        import readline # Enables input line editing
-        from pathlib import Path
+```python
+import readline # Enables input line editing
+from pathlib import Path
 
-        import lmstudio as lms
+import lmstudio as lms
 
-        def create_file(name: str, content: str):
-            """Create a file with the given name and content."""
-            dest_path = Path(name)
-            if dest_path.exists():
-                return "Error: File already exists."
-            try:
-                dest_path.write_text(content, encoding="utf-8")
-            except Exception as exc:
-                return "Error: {exc!r}"
-            return "File created."
+def create_file(name: str, content: str):
+    """Create a file with the given name and content."""
+    dest_path = Path(name)
+    if dest_path.exists():
+        return "Error: File already exists."
+    try:
+        dest_path.write_text(content, encoding="utf-8")
+    except Exception as exc:
+        return "Error: {exc!r}"
+    return "File created."
 
-        def print_fragment(fragment, round_index=0):
-            # .act() supplies the round index as the second parameter
-            # Setting a default value means the callback is also
-            # compatible with .complete() and .respond().
-            print(fragment.content, end="", flush=True)
+def print_fragment(fragment, round_index=0):
+    # .act() supplies the round index as the second parameter
+    # Setting a default value means the callback is also
+    # compatible with .complete() and .respond().
+    print(fragment.content, end="", flush=True)
 
-        model = lms.llm()
-        chat = lms.Chat("You are a task focused AI assistant")
+model = lms.llm()
+chat = lms.Chat("You are a task focused AI assistant")
 
-        while True:
-            try:
-                user_input = input("You (leave blank to exit): ")
-            except EOFError:
-                print()
-                break
-            if not user_input:
-                break
-            chat.add_user_message(user_input)
-            print("Bot: ", end="", flush=True)
-            model.act(
-                chat,
-                [create_file],
-                on_message=chat.append,
-                on_prediction_fragment=print_fragment,
-            )
-            print()
-
+while True:
+    try:
+        user_input = input("You (leave blank to exit): ")
+    except EOFError:
+        print()
+        break
+    if not user_input:
+        break
+    chat.add_user_message(user_input)
+    print("Bot: ", end="", flush=True)
+    model.act(
+        chat,
+        [create_file],
+        on_message=chat.append,
+        on_prediction_fragment=print_fragment,
+    )
+    print()
 ```
 
 ### Progress Callbacks
@@ -167,31 +154,31 @@ Complex interactions with a tool using agent may take some time to process.
 The regular progress callbacks for any prediction request are available,
 but the expected capabilities differ from those for single round predictions.
 
-* `on_prompt_processing_progress`: called during prompt processing for each
+- `on_prompt_processing_progress`: called during prompt processing for each
   prediction round. Receives the progress ratio (as a float) and the round
   index as positional arguments.
-* `on_first_token`: called after prompt processing is complete for each prediction round.
+- `on_first_token`: called after prompt processing is complete for each prediction round.
   Receives the round index as its sole argument.
-* `on_prediction_fragment`: called for each prediction fragment received by the client.
+- `on_prediction_fragment`: called for each prediction fragment received by the client.
   Receives the prediction fragment and the round index as positional arguments.
-* `on_message`: called with an assistant response message when each prediction round is
+- `on_message`: called with an assistant response message when each prediction round is
   complete, and with tool result messages as each tool call request is completed.
   Intended for appending received messages to a chat history instance, and hence
-  does *not* receive the round index as an argument.
+  does _not_ receive the round index as an argument.
 
 The following additional callbacks are available to monitor the prediction rounds:
 
-* `on_round_start`: called before submitting the prediction request for each round.
+- `on_round_start`: called before submitting the prediction request for each round.
   Receives the round index as its sole argument.
-* `on_prediction_completed`: called after the prediction for the round has been completed,
+- `on_prediction_completed`: called after the prediction for the round has been completed,
   but before any requested tool calls have been initiated. Receives the round's prediction
   result as its sole argument. A round prediction result is a regular prediction result
   with an additional `round_index` attribute.
-* `on_round_end`: called after any tool call requests for the round have been resolved.
+- `on_round_end`: called after any tool call requests for the round have been resolved.
 
 Finally, applications may request notifications when agents emit invalid tool requests:
 
-* `handle_invalid_tool_request`: called when a tool request was unable to be processed.
+- `handle_invalid_tool_request`: called when a tool request was unable to be processed.
   Receives the exception that is about to be reported, as well as the original tool
   request that resulted in the problem. When no tool request is given, this is
   purely a notification of an unrecoverable error before the agent interaction raises
