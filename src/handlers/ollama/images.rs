@@ -63,7 +63,50 @@ fn content_to_text_part(content: &Value) -> Value {
     json!({ "type": "text", "text": text })
 }
 
-/// Injects base64 encoded images into chat messages
+fn attach_images_to_message(obj: &mut serde_json::Map<String, Value>, image_parts: Vec<Value>) {
+    let existing = obj
+        .get("content")
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
+    let mut parts: Vec<Value> = match existing {
+        Value::Array(existing_parts) => existing_parts,
+        other => vec![content_to_text_part(&other)],
+    };
+    parts.extend(image_parts);
+    obj.insert("content".to_string(), Value::Array(parts));
+}
+
+/// Convert Ollama `/api/chat` per-message `images` arrays into OpenAI content parts.
+///
+/// Each input message may carry its own `images: ["..."]` sibling alongside `content`.
+/// Per the Ollama spec the images attach to that specific message; the OpenAI-compat
+/// shape is a content array of typed parts. The `images` sibling is removed.
+pub fn convert_per_message_images(messages: Value) -> Value {
+    let Some(msg_array) = messages.as_array() else {
+        return messages;
+    };
+    let mut updated = Vec::with_capacity(msg_array.len());
+    for msg in msg_array {
+        let mut owned = msg.clone();
+        if let Some(obj) = owned.as_object_mut() {
+            let per_msg_images = obj.remove("images");
+            if let Some(images) = per_msg_images {
+                let parts = build_image_parts(&images);
+                if !parts.is_empty() {
+                    attach_images_to_message(obj, parts);
+                }
+            }
+        }
+        updated.push(owned);
+    }
+    Value::Array(updated)
+}
+
+/// Injects top-level images (from `/api/generate`-style requests routed through chat)
+/// into the LAST user message — never a system or assistant message.
+///
+/// Reference: api_docs/ollama.md §"Generate a chat completion" (with images): images
+/// travel as part of the user turn that submitted them.
 pub fn inject_images_into_messages(messages: Value, images: &Value) -> Value {
     let image_parts = build_image_parts(images);
     if image_parts.is_empty() {
@@ -74,13 +117,15 @@ pub fn inject_images_into_messages(messages: Value, images: &Value) -> Value {
     };
 
     let mut updated = msg_array.clone();
-    if let Some(last_msg) = updated.last_mut()
-        && let Some(obj) = last_msg.as_object_mut()
-        && let Some(content) = obj.get("content")
-    {
-        let mut parts = vec![content_to_text_part(content)];
-        parts.extend(image_parts);
-        obj.insert("content".to_string(), Value::Array(parts));
+    let last_user_idx = updated
+        .iter()
+        .rposition(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("user"));
+    let Some(idx) = last_user_idx else {
+        // No user message — do not silently attach to other roles.
+        return Value::Array(updated);
+    };
+    if let Some(obj) = updated[idx].as_object_mut() {
+        attach_images_to_message(obj, image_parts);
     }
 
     Value::Array(updated)

@@ -12,7 +12,7 @@ use crate::logging::{LogConfig, log_timed};
 use crate::server::ModelResolverType;
 
 use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
-use crate::handlers::ollama::images::inject_images_into_messages;
+use crate::handlers::ollama::images::{convert_per_message_images, inject_images_into_messages};
 use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
 use crate::handlers::transform::normalize_chat_messages;
 use crate::model::utils::extract_required_model_name;
@@ -82,10 +82,15 @@ pub async fn handle_ollama_chat(
 
             let normalized_messages =
                 normalize_chat_messages(messages, resolution_ctx.system_prompt.as_deref());
+            // /api/chat: each message may carry its own `images` array — pull those
+            // into OpenAI content parts on the same message first.
+            let with_per_message_images = convert_per_message_images(normalized_messages);
+            // Top-level `images` (rare on /api/chat, common on vision /api/generate
+            // bridged through chat) attaches to the LAST user message.
             let messages_with_images = if let Some(images) = ollama_images {
-                inject_images_into_messages(normalized_messages, images)
+                inject_images_into_messages(with_per_message_images, images)
             } else {
-                normalized_messages
+                with_per_message_images
             };
 
             let top_level_params = make_top_level_params(&body_clone);
