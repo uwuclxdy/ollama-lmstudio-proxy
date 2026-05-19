@@ -14,6 +14,21 @@ use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
+/// Mount a GET /api/v1/models stub returning a single native model for resolution.
+async fn mount_native_models(p: &crate::common::TestProxy, model_key: &str) {
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": model_key, "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+}
+
 // ── GET /api/v0/models (list all) ─────────────────────────────────────────────
 
 #[tokio::test]
@@ -112,6 +127,7 @@ async fn native_model_info_not_found_propagated() {
 #[tokio::test]
 async fn native_chat_completions_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/chat/completions"))
@@ -147,6 +163,7 @@ async fn native_chat_completions_forwarded() {
 #[tokio::test]
 async fn native_chat_completions_streaming_bytes_roundtrip() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b-instruct").await;
 
     // LM Studio native streaming uses NDJSON lines prefixed with "data: "
     let sse_payload = concat!(
@@ -188,6 +205,7 @@ async fn native_chat_completions_streaming_bytes_roundtrip() {
 #[tokio::test]
 async fn native_completions_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/completions"))
@@ -224,6 +242,7 @@ async fn native_completions_forwarded() {
 #[tokio::test]
 async fn native_embeddings_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "text-embedding-nomic-embed-text-v1.5").await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/embeddings"))
@@ -260,6 +279,7 @@ async fn native_embeddings_forwarded() {
 #[tokio::test]
 async fn native_model_download_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/models/download"))
@@ -355,6 +375,7 @@ async fn native_download_cancel_forwarded() {
 #[tokio::test]
 async fn native_model_load_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/models/load"))

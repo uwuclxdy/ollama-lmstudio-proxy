@@ -53,13 +53,16 @@ async fn health_check_reaches_lmstudio_backend() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Mount a stub that accepts any GET /v1/models (model resolution).
+/// Mount a stub that accepts any GET /api/v1/models (model resolution via LM Studio native).
 async fn mount_models_stub(p: &crate::common::TestProxy) {
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -233,10 +236,19 @@ async fn route_pull_is_present() {
 async fn route_delete_is_present() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
+
+    // Create a virtual alias first so the delete handler can find the model.
+    p.client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3", "destination": "llama3-to-delete"}))
+        .send()
+        .await
+        .expect("POST /api/copy pre-create");
+
     let resp = p
         .client
         .delete(p.url("/api/delete"))
-        .json(&json!({"model": "llama3"}))
+        .json(&json!({"model": "llama3-to-delete"}))
         .send()
         .await
         .expect("DELETE /api/delete");

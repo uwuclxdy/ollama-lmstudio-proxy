@@ -7,7 +7,7 @@
 
 use serde_json::{Value, json};
 use wiremock::{Mock, ResponseTemplate};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, path_regex};
 
 use crate::common::spawn_proxy;
 
@@ -158,8 +158,9 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
         .await;
 
     // Status poll: completed on first poll.
+    // The proxy appends the job_id: GET /api/v1/models/download/status/{job_id}.
     Mock::given(method("GET"))
-        .and(path("/api/v1/models/download/status"))
+        .and(path_regex(r"^/api/v1/models/download/status/.*"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lms_download_completed("job3")))
         .mount(&p.mock)
         .await;

@@ -11,6 +11,21 @@ use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
+/// Mount a GET /api/v1/models stub returning a single model whose key contains `model_key`.
+async fn mount_native_models(p: &crate::common::TestProxy, model_key: &str) {
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": model_key, "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+}
+
 // ── GET /v1/models ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -76,6 +91,7 @@ async fn openai_models_list_backend_error_propagated() {
 #[tokio::test]
 async fn openai_chat_completions_non_streaming_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
@@ -120,6 +136,7 @@ async fn openai_chat_completions_non_streaming_forwarded() {
 #[tokio::test]
 async fn openai_chat_completions_backend_error_propagated() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "missing").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
@@ -150,6 +167,7 @@ async fn openai_chat_completions_backend_error_propagated() {
 #[tokio::test]
 async fn openai_chat_completions_streaming_bytes_roundtrip() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     let sse_payload = concat!(
         "data: {\"id\":\"chatcmpl-2\",\"object\":\"chat.completion.chunk\",",
@@ -190,6 +208,7 @@ async fn openai_chat_completions_streaming_bytes_roundtrip() {
 #[tokio::test]
 async fn openai_completions_non_streaming_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
@@ -227,6 +246,7 @@ async fn openai_completions_non_streaming_forwarded() {
 #[tokio::test]
 async fn openai_completions_streaming_bytes_roundtrip() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     let sse_payload = concat!(
         "data: {\"id\":\"cmpl-2\",\"object\":\"text_completion.chunk\",",
@@ -267,6 +287,7 @@ async fn openai_completions_streaming_bytes_roundtrip() {
 #[tokio::test]
 async fn openai_embeddings_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "text-embedding-nomic-embed-text-v1.5").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
@@ -303,6 +324,7 @@ async fn openai_embeddings_forwarded() {
 #[tokio::test]
 async fn openai_embeddings_backend_error_propagated() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "nomic").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
@@ -329,6 +351,7 @@ async fn openai_embeddings_backend_error_propagated() {
 #[tokio::test]
 async fn openai_responses_non_streaming_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "openai/gpt-oss-20b").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
@@ -369,6 +392,7 @@ async fn openai_responses_non_streaming_forwarded() {
 #[tokio::test]
 async fn openai_responses_streaming_bytes_roundtrip() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "openai/gpt-oss-20b").await;
 
     let sse_payload = concat!(
         "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_002\"}}\n\n",
@@ -409,6 +433,7 @@ async fn openai_responses_streaming_bytes_roundtrip() {
 #[tokio::test]
 async fn openai_chat_completions_structured_output_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
@@ -464,6 +489,7 @@ async fn openai_chat_completions_structured_output_forwarded() {
 #[tokio::test]
 async fn openai_chat_completions_tools_forwarded() {
     let p = spawn_proxy().await;
+    mount_native_models(&p, "lmstudio-community/meta-llama-3.1-8b").await;
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))

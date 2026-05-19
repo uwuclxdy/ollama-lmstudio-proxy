@@ -7,7 +7,7 @@
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use wiremock::{Mock, ResponseTemplate};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, path_regex};
 
 use crate::common::spawn_proxy;
 
@@ -69,10 +69,13 @@ async fn chat_stream_emits_ndjson_chunks_with_done() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -142,10 +145,13 @@ async fn generate_stream_emits_ndjson_chunks_with_done() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -190,10 +196,13 @@ async fn embed_returns_single_json_no_streaming() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -245,10 +254,13 @@ async fn chat_stream_mid_error_yields_error_chunk() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -291,10 +303,13 @@ async fn chat_stream_backend_disconnect_without_done_terminates() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -344,10 +359,13 @@ async fn chat_stream_reasoning_delta_maps_to_thinking() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -411,10 +429,13 @@ async fn chat_stream_mixed_reasoning_and_content_chunk() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -470,10 +491,13 @@ async fn chat_stream_tool_calls_present_in_output() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -519,10 +543,13 @@ async fn chat_stream_empty_backend_emits_terminal_done() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -567,10 +594,13 @@ async fn chat_stream_sse_comments_are_ignored() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -609,27 +639,34 @@ async fn pull_stream_terminates_with_bare_success() {
 
     // Pull is handled locally by the proxy (downloads from LM Studio).
     // The proxy emits NDJSON progress lines then a terminal {"status":"success"}.
-    // Mock the backend download endpoint that pull uses.
+    // Return a completed download so no status polling is needed.
     Mock::given(method("POST"))
         .and(path("/api/v1/models/download"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "status": "ok"
+            "job_id": "stream-job-1",
+            "status": "completed",
+            "total_size_bytes": 4_000_000_000u64,
+            "downloaded_bytes": 4_000_000_000u64,
+            "completed_at": "2026-01-01T00:00:00Z"
         })))
         .mount(&p.mock)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
 
-    // Mock download status polling
+    // Mock download status polling — proxy appends job_id to the path.
     Mock::given(method("GET"))
-        .and(path("/api/v1/models/download/status"))
+        .and(path_regex(r"^/api/v1/models/download/status/.*"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status": "complete",
             "progress": 1.0
@@ -675,10 +712,13 @@ async fn create_stream_terminates_with_success() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -733,10 +773,13 @@ async fn chat_stream_split_sse_data_reassembled() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -786,10 +829,13 @@ async fn generate_stream_reasoning_goes_to_thinking_not_response() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -837,10 +883,13 @@ async fn chat_stream_one_to_one_chunk_mapping() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -891,10 +940,13 @@ async fn chat_non_stream_returns_single_object() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -941,10 +993,13 @@ async fn generate_non_stream_returns_single_object() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -988,10 +1043,13 @@ async fn chat_stream_client_drop_does_not_hang() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -1043,10 +1101,13 @@ async fn chat_stream_all_lines_are_valid_json() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{"id": "llama3", "object": "model"}]
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;

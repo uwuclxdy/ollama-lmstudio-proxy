@@ -14,16 +14,16 @@ use crate::common::spawn_proxy;
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// A minimal `/v1/models` mock that exposes one model so the resolver succeeds.
+/// A minimal `/api/v1/models` mock that exposes one model so the resolver succeeds.
 async fn mount_models(p: &crate::common::TestProxy, model_id: &str) {
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{
-                "id": model_id,
-                "object": "model"
-            }]
+            "models": [{"key": model_id, "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -207,10 +207,14 @@ async fn embed_model_resolution_from_catalog() {
 
     // Register a model with an internal LM Studio ID
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{ "id": "lmstudio-community/all-minilm-l6-v2", "object": "model" }]
+            "models": [{"key": "lmstudio-community/all-minilm-l6-v2", "type": "llm",
+                        "publisher": "lmstudio-community", "architecture": "bert",
+                        "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
@@ -578,10 +582,13 @@ async fn embed_model_name_with_tag() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
-        .and(path("/v1/models"))
+        .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [{ "id": "all-minilm:latest", "object": "model" }]
+            "models": [{"key": "all-minilm:latest", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
         })))
         .mount(&p.mock)
         .await;
