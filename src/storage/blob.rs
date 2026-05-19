@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use futures_util::{Stream, StreamExt};
@@ -89,7 +90,11 @@ impl BlobStore {
             ProxyError::internal_server_error(&format!("failed to flush blob data: {}", e))
         })?;
 
-        let actual_hex = format!("{:x}", hasher.finalize());
+        let digest_bytes = hasher.finalize();
+        let mut actual_hex = String::with_capacity(digest_bytes.len() * 2);
+        for byte in digest_bytes.iter() {
+            write!(&mut actual_hex, "{byte:02x}").unwrap();
+        }
         if actual_hex != hex {
             let _ = fs::remove_file(&tmp_path).await;
             return Err(ProxyError::bad_request(&format!(

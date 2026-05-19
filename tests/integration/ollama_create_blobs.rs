@@ -4,6 +4,8 @@
 // BlobStore is per-proxy instance (backed by a tempdir from spawn_proxy()).
 // VirtualModelStore is also per-instance, so tests are isolated.
 
+use std::fmt::Write as _;
+
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use wiremock::matchers::{method, path};
@@ -38,7 +40,13 @@ fn lms_models(models: Vec<Value>) -> Value {
 fn sha256_digest(data: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(data);
-    format!("sha256:{:x}", h.finalize())
+    let bytes = h.finalize();
+    let mut out = String::from("sha256:");
+    out.reserve(bytes.len() * 2);
+    for byte in bytes.iter() {
+        write!(&mut out, "{byte:02x}").unwrap();
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
