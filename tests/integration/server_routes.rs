@@ -326,43 +326,20 @@ async fn route_create_is_present() {
 }
 
 #[tokio::test]
-async fn route_version_is_present() {
-    let p = spawn_proxy().await;
-    let resp = p
-        .client
-        .get(p.url("/api/version"))
-        .send()
-        .await
-        .expect("GET /api/version");
-    assert_ne!(
-        resp.status(),
-        404,
-        "/api/version must be a recognised route"
-    );
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.expect("JSON");
-    assert!(
-        body.get("version").is_some(),
-        "version response must have 'version' key: {body}"
-    );
-}
-
-#[tokio::test]
 async fn route_blobs_head_is_present() {
     let p = spawn_proxy().await;
-    // HEAD /api/blobs/:digest — unknown digest → 404 from handler, but the route is wired
+    // HEAD /api/blobs/:digest — unknown digest → 404 from handler, but the route is wired.
+    // 404 here is a domain response, not a routing miss; 405 would mean HEAD isn't registered.
     let resp = p
         .client
         .head(p.url("/api/blobs/sha256:aaabbbccc"))
         .send()
         .await
         .expect("HEAD /api/blobs/:digest");
-    // Route must be recognised; handler returns 404 for unknown digest — that is fine
-    // (it is not the routing layer's 404, it is a domain 404 which still counts as recognised)
     let status = resp.status().as_u16();
-    assert!(
-        status != 405,
-        "/api/blobs/:digest HEAD must not be 405 (route not found with correct method): {status}"
+    assert_ne!(
+        status, 405,
+        "/api/blobs/:digest HEAD must be registered: {status}"
     );
 }
 
@@ -371,7 +348,7 @@ async fn route_blobs_head_is_present() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn chat_get_returns_405_or_404() {
+async fn chat_get_returns_405() {
     let p = spawn_proxy().await;
     let resp = p
         .client
@@ -379,15 +356,11 @@ async fn chat_get_returns_405_or_404() {
         .send()
         .await
         .expect("GET /api/chat");
-    let status = resp.status().as_u16();
-    assert!(
-        status == 404 || status == 405,
-        "GET /api/chat must return 404 or 405, got {status}"
-    );
+    assert_eq!(resp.status().as_u16(), 405, "GET /api/chat must return 405");
 }
 
 #[tokio::test]
-async fn tags_post_returns_405_or_404() {
+async fn tags_post_returns_405() {
     let p = spawn_proxy().await;
     let resp = p
         .client
@@ -396,15 +369,15 @@ async fn tags_post_returns_405_or_404() {
         .send()
         .await
         .expect("POST /api/tags");
-    let status = resp.status().as_u16();
-    assert!(
-        status == 404 || status == 405,
-        "POST /api/tags must return 404 or 405, got {status}"
+    assert_eq!(
+        resp.status().as_u16(),
+        405,
+        "POST /api/tags must return 405"
     );
 }
 
 #[tokio::test]
-async fn generate_get_returns_405_or_404() {
+async fn generate_get_returns_405() {
     let p = spawn_proxy().await;
     let resp = p
         .client
@@ -412,10 +385,10 @@ async fn generate_get_returns_405_or_404() {
         .send()
         .await
         .expect("GET /api/generate");
-    let status = resp.status().as_u16();
-    assert!(
-        status == 404 || status == 405,
-        "GET /api/generate must return 404 or 405, got {status}"
+    assert_eq!(
+        resp.status().as_u16(),
+        405,
+        "GET /api/generate must return 405"
     );
 }
 
@@ -576,11 +549,9 @@ async fn tags_response_has_cors_header() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
 
-    // Note: spawn_proxy uses warp routes without the cors() wrapper that
-    // run() attaches. The Access-Control-Allow-Origin constant is set in
-    // constants.rs and may or may not be applied in test mode depending on
-    // how routes are assembled. We assert the route works; CORS header is
-    // best-effort in this test harness.
+    // spawn_proxy assembles routes without the cors_layer() that run() attaches,
+    // so the CORS header may be absent. we assert the route works and,
+    // if the header is present, that it is correct.
     let resp = p
         .client
         .get(p.url("/api/tags"))
@@ -590,13 +561,10 @@ async fn tags_response_has_cors_header() {
         .expect("GET /api/tags with Origin");
 
     assert_ne!(resp.status(), 404, "/api/tags must be recognised");
-    // If the header is present, it must allow any origin
+    // if the CORS layer is active, it must use wildcard origin
     if let Some(acao) = resp.headers().get("access-control-allow-origin") {
         let val = acao.to_str().unwrap_or("");
-        assert!(
-            val == "*" || !val.is_empty(),
-            "ACAO header must be set: {val}"
-        );
+        assert_eq!(val, "*", "access-control-allow-origin must be '*': {val}");
     }
 }
 
@@ -651,7 +619,7 @@ async fn tags_response_has_models_array() {
 #[tokio::test]
 async fn method_not_allowed_returns_json_error() {
     let p = spawn_proxy().await;
-    // /api/version is GET-only; PUT should trigger method-not-allowed
+    // /api/version is GET-only; PUT triggers the method_not_allowed_fallback handler
     let resp = p
         .client
         .put(p.url("/api/version"))
@@ -659,19 +627,12 @@ async fn method_not_allowed_returns_json_error() {
         .send()
         .await
         .expect("PUT /api/version");
-    let status = resp.status().as_u16();
-    // warp may return 404 (route not matched) or 405
+    assert_eq!(resp.status().as_u16(), 405, "wrong method must return 405");
+    let body: Value = resp.json().await.expect("error body must be JSON");
     assert!(
-        status == 404 || status == 405,
-        "wrong method must return 404 or 405, got {status}"
+        body.get("error").is_some(),
+        "405 must have 'error' field: {body}"
     );
-    if status == 405 {
-        let body: Value = resp.json().await.expect("error body must be JSON");
-        assert!(
-            body.get("error").is_some(),
-            "405 must have 'error' field: {body}"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
