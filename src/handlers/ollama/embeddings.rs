@@ -62,6 +62,12 @@ pub async fn handle_ollama_embeddings(
                 .cloned()
                 .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_INPUT))?;
 
+            if let Some(s) = input_value.as_str() {
+                if s.is_empty() {
+                    return Err(ProxyError::bad_request(ERROR_MISSING_INPUT));
+                }
+            }
+
             let resolution_ctx = resolve_model_with_context(
                 &context,
                 &model_resolver,
