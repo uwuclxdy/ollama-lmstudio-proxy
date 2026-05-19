@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-pub use super::download_utils::{determine_download_identifier, looks_like_remote_identifier};
+pub use super::download::{determine_download_identifier, looks_like_remote_identifier};
 pub use super::keep_alive::{keep_alive_requests_unload, parse_keep_alive_seconds};
 pub use super::model_resolution::{resolve_model_target, resolve_model_with_context};
 pub use super::status_streaming::{

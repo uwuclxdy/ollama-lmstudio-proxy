@@ -7,7 +7,7 @@ use crate::error::ProxyError;
 pub fn stream_status_messages(
     chunks: Vec<serde_json::Value>,
     error_label: &str,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let (tx, rx) = mpsc::unbounded_channel();
     for chunk in chunks {
         if !send_status_chunk(&tx, &chunk) {

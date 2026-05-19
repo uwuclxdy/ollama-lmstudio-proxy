@@ -33,7 +33,7 @@ pub async fn handle_streaming_response(
     start_time: Instant,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let runtime_config = get_runtime_config();
     let ollama_model_name = ollama_model_name.to_string();
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
@@ -248,7 +248,7 @@ pub async fn handle_passthrough_streaming_response(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
     let stream_id = STREAM_COUNTER.fetch_add(1, Ordering::Relaxed) % 1_000_000;
     let start_time = Instant::now();

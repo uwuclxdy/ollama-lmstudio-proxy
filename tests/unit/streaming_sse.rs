@@ -49,8 +49,8 @@ fn parse_sse_buffer(input: &str) -> (Vec<String>, bool) {
 
 #[test]
 fn single_data_event_parsed() {
-    let input = format!("data: {{\"id\":\"1\"}}\n\n");
-    let (payloads, done) = parse_sse_buffer(&input);
+    let input = "data: {\"id\":\"1\"}\n\n";
+    let (payloads, done) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 1);
     assert!(payloads[0].contains("\"id\""));
     assert!(!done);
@@ -58,18 +58,16 @@ fn single_data_event_parsed() {
 
 #[test]
 fn done_message_terminates_parsing() {
-    let input = format!(
-        "data: {{\"a\":1}}\n\ndata: [DONE]\n\n"
-    );
-    let (payloads, done) = parse_sse_buffer(&input);
+    let input = "data: {\"a\":1}\n\ndata: [DONE]\n\n";
+    let (payloads, done) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 1, "payload before [DONE] must be collected");
     assert!(done, "[DONE] must set done flag");
 }
 
 #[test]
 fn done_before_data_terminates_immediately() {
-    let input = format!("data: [DONE]\n\ndata: {{\"a\":1}}\n\n");
-    let (payloads, done) = parse_sse_buffer(&input);
+    let input = "data: [DONE]\n\ndata: {\"a\":1}\n\n";
+    let (payloads, done) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 0, "data after [DONE] must be ignored");
     assert!(done);
 }
@@ -77,7 +75,7 @@ fn done_before_data_terminates_immediately() {
 #[test]
 fn blank_line_only_events_are_skipped() {
     let input = "\n\n\n\n";
-    let (payloads, done) = parse_sse_buffer(&input);
+    let (payloads, done) = parse_sse_buffer(input);
     assert!(payloads.is_empty());
     assert!(!done);
 }
@@ -103,8 +101,11 @@ fn multiple_events_all_collected() {
 fn partial_buffer_without_boundary_yields_no_payloads() {
     // If the stream is split mid-event (no \n\n yet), nothing must be emitted
     let input = "data: {\"incomplete\"";
-    let (payloads, done) = parse_sse_buffer(&input);
-    assert!(payloads.is_empty(), "incomplete event must not emit a payload");
+    let (payloads, done) = parse_sse_buffer(input);
+    assert!(
+        payloads.is_empty(),
+        "incomplete event must not emit a payload"
+    );
     assert!(!done);
 }
 
@@ -112,7 +113,7 @@ fn partial_buffer_without_boundary_yields_no_payloads() {
 fn event_without_data_prefix_is_not_collected() {
     // Lines without "data: " prefix are skipped (logged as non-standard)
     let input = "event: something\n\ndata: {\"ok\":true}\n\n";
-    let (payloads, done) = parse_sse_buffer(&input);
+    let (payloads, done) = parse_sse_buffer(input);
     // Only the "data: " line must be in payloads
     assert_eq!(payloads.len(), 1);
     assert!(payloads[0].contains("\"ok\""));
@@ -124,7 +125,7 @@ fn done_with_surrounding_whitespace_recognized() {
     // data_content.trim() == SSE_DONE_MESSAGE  — leading/trailing spaces count
     let input = "data:  [DONE] \n\n";
     // strip_prefix(SSE_DATA_PREFIX) gives " [DONE] ", trim gives "[DONE]"
-    let (payloads, done) = parse_sse_buffer(&input);
+    let (payloads, done) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 0);
     assert!(done, "trimmed [DONE] must terminate stream");
 }
@@ -144,7 +145,7 @@ fn large_single_chunk_with_many_events_processed() {
 #[test]
 fn whitespace_only_message_between_events_is_skipped() {
     let input = "data: {\"a\":1}\n\n   \n\ndata: {\"b\":2}\n\n";
-    let (payloads, _) = parse_sse_buffer(&input);
+    let (payloads, _) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 2);
 }
 
@@ -184,7 +185,10 @@ fn stream_id_modulo_stays_below_million() {
     // Verify the modulo arithmetic keeps the id < 1_000_000
     for raw in [0u64, 999_999, 1_000_000, 2_000_001, u64::MAX] {
         let stream_id = raw % 1_000_000;
-        assert!(stream_id < 1_000_000, "stream_id {stream_id} must be < 1_000_000");
+        assert!(
+            stream_id < 1_000_000,
+            "stream_id {stream_id} must be < 1_000_000"
+        );
     }
 }
 
@@ -259,19 +263,23 @@ fn pipeline_with_recovery_on_truncated_json() {
     // Simulates the recovery path: data content is not valid top-level JSON
     // but recover_json_from_chunk can salvage the choices array.
     let malformed = r#"data: NOISE{"choices":[{"delta":{"content":"recovered"},"finish_reason":null}]}NOISE\n\n"#;
-    let data = malformed
-        .strip_prefix(SSE_DATA_PREFIX)
-        .unwrap_or(malformed);
+    let data = malformed.strip_prefix(SSE_DATA_PREFIX).unwrap_or(malformed);
 
     // Direct parse fails
     assert!(serde_json::from_str::<serde_json::Value>(data).is_err());
 
     // Recovery path
     let recovered = recover_json_from_chunk(data);
-    assert!(recovered.is_some(), "recovery must salvage the choices object");
+    assert!(
+        recovered.is_some(),
+        "recovery must salvage the choices object"
+    );
     let v = recovered.unwrap();
     let choice = extract_first_choice(&v);
-    assert!(choice.is_some(), "choices must be extractable after recovery");
+    assert!(
+        choice.is_some(),
+        "choices must be extractable after recovery"
+    );
 }
 
 #[test]
@@ -344,7 +352,10 @@ fn pipeline_stream_split_across_two_chunks_reassembled() {
     if p1.is_empty() && !d1 {
         buffer.push_str(second_half);
         let (p2, _) = parse_sse_buffer(&buffer);
-        assert!(!p2.is_empty(), "after second chunk, complete event must be parsed");
+        assert!(
+            !p2.is_empty(),
+            "after second chunk, complete event must be parsed"
+        );
     }
     // If the split happened after the \n\n then p1 would have one entry — also fine
 }

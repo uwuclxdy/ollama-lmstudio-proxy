@@ -6,8 +6,8 @@
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -161,7 +161,12 @@ async fn blob_head_absent_after_mismatch_upload() {
     let _ = p.client.post(&url).body(data.to_vec()).send().await;
 
     // HEAD should still return 404 because the blob was not stored.
-    let head = p.client.head(&url).send().await.expect("HEAD after failed upload");
+    let head = p
+        .client
+        .head(&url)
+        .send()
+        .await
+        .expect("HEAD after failed upload");
     assert_eq!(
         head.status(),
         404,
@@ -180,9 +185,9 @@ async fn create_from_existing_model_registers_virtual() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -194,13 +199,21 @@ async fn create_from_existing_model_registers_virtual() {
         .await
         .expect("POST /api/create");
 
-    assert_eq!(resp.status(), 200, "create should return 200; got {}", resp.status());
+    assert_eq!(
+        resp.status(),
+        200,
+        "create should return 200; got {}",
+        resp.status()
+    );
 
     let body: Value = resp.json().await.expect("json body");
     // Non-stream response from create — either success field or status.
     let has_success = body.get("status").and_then(|v| v.as_str()) == Some("success")
         || body.get("virtual").and_then(|v| v.as_bool()) == Some(true);
-    assert!(has_success, "expected success in create response; got {body}");
+    assert!(
+        has_success,
+        "expected success in create response; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -209,9 +222,9 @@ async fn create_result_appears_in_api_tags() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -222,16 +235,32 @@ async fn create_result_appears_in_api_tags() {
         .send()
         .await
         .expect("POST /api/create");
-    assert!(!create.status().is_server_error(), "create failed: {}", create.status());
+    assert!(
+        !create.status().is_server_error(),
+        "create failed: {}",
+        create.status()
+    );
 
-    let tags = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let tags = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     let body: Value = tags.json().await.expect("tags body");
     let models = body["models"].as_array().expect("models");
     let has_created = models.iter().any(|m| {
-        m["name"].as_str().map_or(false, |n| n.contains("created-model"))
-            || m["model"].as_str().map_or(false, |n| n.contains("created-model"))
+        m["name"]
+            .as_str()
+            .is_some_and(|n| n.contains("created-model"))
+            || m["model"]
+                .as_str()
+                .is_some_and(|n| n.contains("created-model"))
     });
-    assert!(has_created, "created model should appear in /api/tags; got {body}");
+    assert!(
+        has_created,
+        "created model should appear in /api/tags; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -240,9 +269,9 @@ async fn create_stream_true_final_chunk_is_bare_success() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -281,9 +310,9 @@ async fn create_with_system_prompt_stored_in_virtual() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -313,7 +342,10 @@ async fn create_with_system_prompt_stored_in_virtual() {
     let body: Value = show.json().await.expect("show body");
     // The system prompt either appears as "system" field or inside model metadata.
     let has_system = body.get("system").is_some();
-    assert!(has_system, "system prompt should appear in show response; got {body}");
+    assert!(
+        has_system,
+        "system prompt should appear in show response; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -322,9 +354,9 @@ async fn create_with_template_stored_in_virtual() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -353,7 +385,10 @@ async fn create_with_template_stored_in_virtual() {
     let body: Value = show.json().await.expect("show body");
     // The template either appears at top-level or in model metadata.
     let has_template = body.get("template").is_some();
-    assert!(has_template, "template should appear in show response; got {body}");
+    assert!(
+        has_template,
+        "template should appear in show response; got {body}"
+    );
 }
 
 #[tokio::test]

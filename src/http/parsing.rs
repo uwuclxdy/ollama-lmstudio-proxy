@@ -1,5 +1,5 @@
+use http::HeaderMap;
 use serde_json::Value;
-use warp::http::HeaderMap;
 
 use crate::error::ProxyError;
 

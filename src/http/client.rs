@@ -46,15 +46,6 @@ impl<'a> CancellableRequest<'a> {
         }
     }
 
-    pub async fn make_request_with_response(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-        body: Option<impl Serialize>,
-    ) -> Result<reqwest::Response, ProxyError> {
-        self.make_request(method, url, body).await
-    }
-
     /// Make a raw HTTP request with custom headers and optional body
     pub async fn make_raw_request(
         &self,

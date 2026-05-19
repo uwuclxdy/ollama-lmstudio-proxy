@@ -81,7 +81,7 @@ fn tool_calls_end_to_end_in_chat_response() {
         }],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5}
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 2, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 2, Instant::now());
     let msg = result.get("message").unwrap();
     let tc = msg.get("tool_calls").unwrap().as_array().unwrap();
     assert_eq!(tc.len(), 1);
@@ -94,8 +94,7 @@ fn tool_calls_end_to_end_in_chat_response() {
 #[test]
 fn chat_response_thinking_in_message_not_content() {
     let lm = lm_chat_response("The answer is 42", Some("Let me think..."));
-    let result =
-        ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now());
     let msg = result.get("message").unwrap();
     assert_eq!(
         msg.get("content").and_then(|v| v.as_str()),
@@ -117,8 +116,7 @@ fn chat_response_thinking_in_message_not_content() {
 #[test]
 fn chat_response_no_thinking_field_when_absent() {
     let lm = lm_chat_response("The answer is 42", None);
-    let result =
-        ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now());
     let msg = result.get("message").unwrap();
     assert!(msg.get("thinking").is_none());
 }
@@ -131,7 +129,6 @@ fn generate_response_thinking_top_level() {
         "mymodel",
         "what is the answer?",
         Instant::now(),
-        false,
     );
     assert_eq!(result.get("response").and_then(|v| v.as_str()), Some("42"));
     assert_eq!(
@@ -144,7 +141,7 @@ fn generate_response_thinking_top_level() {
 fn generate_response_no_thinking_field_when_absent() {
     let lm = lm_completion_response("42", None);
     let result =
-        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now(), false);
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
     assert!(result.get("thinking").is_none());
 }
 
@@ -166,7 +163,6 @@ fn generate_response_does_not_emit_empty_context_array() {
         "model",
         "prompt text",
         Instant::now(),
-        false,
     );
     assert!(
         result.get("context").is_none(),
@@ -185,8 +181,7 @@ fn chat_response_does_not_emit_context() {
         }],
         "usage": {"prompt_tokens": 5, "completion_tokens": 1}
     });
-    let result =
-        ResponseTransformer::convert_to_ollama_chat(&lm, "model", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "model", 1, Instant::now());
     assert!(result.get("context").is_none(), "got {}", result);
 }
 
@@ -280,7 +275,7 @@ fn timing_from_native_v0_stats_does_not_subtract_ttft() {
         }
     });
 
-    let timing = TimingInfo::from_native_stats(&lm, 24, 53);
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 24, 53);
 
     let ttft_ns = 111_000_000u64;
     let gen_ns = 954_000_000u64;
@@ -288,14 +283,12 @@ fn timing_from_native_v0_stats_does_not_subtract_ttft() {
     assert_eq!(
         timing.prompt_eval_duration, ttft_ns,
         "prompt_eval_duration must equal time_to_first_token (got {}, want {})",
-        timing.prompt_eval_duration,
-        ttft_ns
+        timing.prompt_eval_duration, ttft_ns
     );
     assert_eq!(
         timing.eval_duration, gen_ns,
         "eval_duration must equal generation_time, NOT generation_time - ttft (got {}, want {})",
-        timing.eval_duration,
-        gen_ns
+        timing.eval_duration, gen_ns
     );
     assert_eq!(
         timing.total_duration,
@@ -325,7 +318,7 @@ fn timing_from_native_v1_responses_stats() {
         }
     });
 
-    let timing = TimingInfo::from_native_stats(&lm, 0, 0);
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 0, 0);
 
     let ttft_ns = 1_088_000_000u64;
     let expected_gen_ns = ((586.0_f64 / 29.753900615398926_f64) * 1_000_000_000.0) as u64;
@@ -367,8 +360,7 @@ fn chat_response_contains_full_ollama_shape() {
         }],
         "usage": {"prompt_tokens": 7, "completion_tokens": 3}
     });
-    let result =
-        ResponseTransformer::convert_to_ollama_chat(&lm, "llama3", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "llama3", 1, Instant::now());
 
     assert_eq!(result.get("model").and_then(|v| v.as_str()), Some("llama3"));
 
@@ -422,7 +414,7 @@ fn chat_response_uses_usage_counts_when_present() {
         }],
         "usage": {"prompt_tokens": 42, "completion_tokens": 17}
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
 
     assert_eq!(
         result.get("prompt_eval_count").and_then(|v| v.as_u64()),
@@ -444,7 +436,7 @@ fn chat_response_falls_back_to_estimates_without_usage() {
             "finish_reason": "stop"
         }]
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 2, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 2, Instant::now());
 
     let prompt = result
         .get("prompt_eval_count")
@@ -465,8 +457,7 @@ fn chat_response_done_reason_passthrough() {
             }],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1}
         });
-        let result =
-            ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now(), false);
+        let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
         assert_eq!(
             result.get("done_reason").and_then(|v| v.as_str()),
             Some(reason),
@@ -492,7 +483,7 @@ fn chat_response_null_content_with_tool_calls_becomes_empty_string() {
         }],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
     let msg = result.get("message").unwrap();
     let content = msg
         .get("content")
@@ -530,7 +521,7 @@ fn chat_response_forwards_multiple_tool_calls() {
         }],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
     let tcs = result
         .get("message")
         .unwrap()
@@ -559,7 +550,7 @@ fn chat_response_role_is_always_assistant() {
         }],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     });
-    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
     assert_eq!(
         result
             .get("message")
@@ -576,13 +567,8 @@ fn generate_response_contains_full_ollama_shape() {
         "choices": [{"text": "hi", "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 4, "completion_tokens": 1}
     });
-    let result = ResponseTransformer::convert_to_ollama_generate(
-        &lm,
-        "model-x",
-        "prompt",
-        Instant::now(),
-        false,
-    );
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "model-x", "prompt", Instant::now());
     assert_eq!(
         result.get("model").and_then(|v| v.as_str()),
         Some("model-x")
@@ -612,8 +598,7 @@ fn generate_response_extracts_completion_text() {
     let lm = json!({
         "choices": [{"text": "completion-style output", "finish_reason": "stop"}]
     });
-    let result =
-        ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert_eq!(
         result.get("response").and_then(|v| v.as_str()),
         Some("completion-style output")
@@ -628,8 +613,7 @@ fn generate_response_falls_back_to_message_content() {
             "finish_reason": "stop"
         }]
     });
-    let result =
-        ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert_eq!(
         result.get("response").and_then(|v| v.as_str()),
         Some("chat-shaped output")
@@ -640,12 +624,12 @@ fn generate_response_falls_back_to_message_content() {
 fn generate_response_omits_thinking_when_empty_or_missing() {
     // missing
     let lm = json!({"choices": [{"text": "x", "finish_reason": "stop"}]});
-    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert!(r.get("thinking").is_none(), "no field if absent");
 
     // empty string
     let lm = json!({"choices": [{"text": "x", "reasoning": "", "finish_reason": "stop"}]});
-    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert!(
         r.get("thinking").is_none(),
         "empty reasoning must not emit thinking field"
@@ -653,7 +637,7 @@ fn generate_response_omits_thinking_when_empty_or_missing() {
 
     // empty `thinking` field on the choice
     let lm = json!({"choices": [{"text": "x", "thinking": "", "finish_reason": "stop"}]});
-    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert!(r.get("thinking").is_none());
 }
 
@@ -663,7 +647,7 @@ fn generate_response_emits_thinking_from_choice_thinking_field() {
         "choices": [{"text": "answer", "thinking": "let me think",
                      "finish_reason": "stop"}]
     });
-    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now(), false);
+    let r = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "p", Instant::now());
     assert_eq!(
         r.get("thinking").and_then(|v| v.as_str()),
         Some("let me think")
@@ -681,7 +665,7 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
         "usage": {"prompt_tokens": 8}
     });
     let result =
-        ResponseTransformer::convert_to_ollama_embeddings(&lm, "all-minilm", Instant::now(), false);
+        ResponseTransformer::convert_to_ollama_embeddings(&lm, "all-minilm", Instant::now());
     assert_eq!(
         result.get("model").and_then(|v| v.as_str()),
         Some("all-minilm")
@@ -717,7 +701,7 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
 #[test]
 fn embeddings_response_empty_data_yields_empty_embeddings() {
     let lm = json!({"data": [], "usage": {"prompt_tokens": 0}});
-    let result = ResponseTransformer::convert_to_ollama_embeddings(&lm, "m", Instant::now(), false);
+    let result = ResponseTransformer::convert_to_ollama_embeddings(&lm, "m", Instant::now());
     let embeds = result
         .get("embeddings")
         .and_then(|v| v.as_array())

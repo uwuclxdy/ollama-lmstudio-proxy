@@ -6,8 +6,8 @@
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path, path_regex};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -106,10 +106,17 @@ async fn chat_stream_emits_ndjson_chunks_with_done() {
                 .unwrap_or(false)
         })
         .collect();
-    assert!(!content_chunks.is_empty(), "expected at least one content delta chunk");
+    assert!(
+        !content_chunks.is_empty(),
+        "expected at least one content delta chunk"
+    );
 
     let last = chunks.last().expect("last chunk");
-    assert_eq!(last.get("done"), Some(&json!(true)), "last chunk must have done:true");
+    assert_eq!(
+        last.get("done"),
+        Some(&json!(true)),
+        "last chunk must have done:true"
+    );
     assert!(
         last.get("done_reason").is_some()
             || last.get("total_duration").is_some()
@@ -229,7 +236,10 @@ async fn embed_returns_single_json_no_streaming() {
 
     let body: Value = resp.json().await.expect("JSON body");
     // body should not be an array of NDJSON lines — it is a single object
-    assert!(body.is_object(), "embed must return a JSON object, not a stream");
+    assert!(
+        body.is_object(),
+        "embed must return a JSON object, not a stream"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +252,12 @@ async fn chat_stream_mid_error_yields_error_chunk() {
 
     // Two good chunks then an error event
     let mut body = String::new();
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n");
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":null}]}\n\n");
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n",
+    );
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":null}]}\n\n",
+    );
     body.push_str("data: {\"error\":{\"message\":\"internal model error\"}}\n\n");
     body.push_str("data: [DONE]\n\n");
 
@@ -281,7 +295,11 @@ async fn chat_stream_mid_error_yields_error_chunk() {
     assert!(!chunks.is_empty());
     // The stream must terminate — no hang. The final chunk should have done:true.
     let last = chunks.last().expect("last chunk");
-    assert_eq!(last.get("done"), Some(&json!(true)), "stream must terminate with done:true: {last}");
+    assert_eq!(
+        last.get("done"),
+        Some(&json!(true)),
+        "stream must terminate with done:true: {last}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +312,9 @@ async fn chat_stream_backend_disconnect_without_done_terminates() {
 
     // No [DONE] at the end — wiremock closes after last chunk
     let mut body = String::new();
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n");
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
+    );
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
@@ -328,7 +348,10 @@ async fn chat_stream_backend_disconnect_without_done_terminates() {
 
     // Key assertion: the proxy must not hang — we must be able to collect all chunks.
     let chunks = collect_ndjson(resp).await;
-    assert!(!chunks.is_empty(), "expected at least one chunk before close");
+    assert!(
+        !chunks.is_empty(),
+        "expected at least one chunk before close"
+    );
 
     // With enable_chunk_recovery=true a synthetic done:true chunk should appear.
     let last = chunks.last().expect("last chunk");
@@ -407,7 +430,10 @@ async fn chat_stream_reasoning_delta_maps_to_thinking() {
             .map(|s| s.contains("let me think"))
             .unwrap_or(false)
     });
-    assert!(!reasoning_as_content, "reasoning text must not appear in content field");
+    assert!(
+        !reasoning_as_content,
+        "reasoning text must not appear in content field"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +548,10 @@ async fn chat_stream_tool_calls_present_in_output() {
             .map(|a| !a.is_empty())
             .unwrap_or(false)
     });
-    assert!(has_tool_calls, "expected tool_calls in at least one chunk; got: {chunks:?}");
+    assert!(
+        has_tool_calls,
+        "expected tool_calls in at least one chunk; got: {chunks:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -568,9 +597,16 @@ async fn chat_stream_empty_backend_emits_terminal_done() {
 
     let chunks = collect_ndjson(resp).await;
     // Must emit at least the terminal done chunk
-    assert!(!chunks.is_empty(), "expected at least one chunk (terminal done)");
+    assert!(
+        !chunks.is_empty(),
+        "expected at least one chunk (terminal done)"
+    );
     let last = chunks.last().expect("last chunk");
-    assert_eq!(last.get("done"), Some(&json!(true)), "terminal done required: {last}");
+    assert_eq!(
+        last.get("done"),
+        Some(&json!(true)),
+        "terminal done required: {last}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +619,9 @@ async fn chat_stream_sse_comments_are_ignored() {
 
     let mut body = String::new();
     body.push_str(": keep-alive\n\n");
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n");
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+    );
     body.push_str(": another comment\n\n");
     body.push_str("data: [DONE]\n\n");
 
@@ -684,7 +722,10 @@ async fn pull_stream_terminates_with_bare_success() {
 
     assert_eq!(resp.status(), 200);
     let chunks = collect_ndjson(resp).await;
-    assert!(!chunks.is_empty(), "pull must emit at least one NDJSON chunk");
+    assert!(
+        !chunks.is_empty(),
+        "pull must emit at least one NDJSON chunk"
+    );
 
     let last = chunks.last().expect("last chunk");
     // Per commit 229f417: terminal chunk is bare {"status":"success"}
@@ -737,7 +778,10 @@ async fn create_stream_terminates_with_success() {
 
     assert_eq!(resp.status(), 200);
     let chunks = collect_ndjson(resp).await;
-    assert!(!chunks.is_empty(), "create must emit at least one NDJSON chunk");
+    assert!(
+        !chunks.is_empty(),
+        "create must emit at least one NDJSON chunk"
+    );
 
     let last = chunks.last().expect("last chunk");
     assert_eq!(
@@ -762,8 +806,12 @@ async fn chat_stream_split_sse_data_reassembled() {
     // In practice the proxy sees these as a single event.
     let mut body = String::new();
     // Write two separate complete events; each must produce one Ollama chunk.
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n");
-    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":\"stop\"}]}\n\n");
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n",
+    );
+    body.push_str(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":\"stop\"}]}\n\n",
+    );
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
@@ -805,8 +853,14 @@ async fn chat_stream_split_sse_data_reassembled() {
                 .and_then(|v| v.as_str())
         })
         .collect();
-    assert!(full_content.contains('A'), "expected 'A' in accumulated content: {full_content:?}");
-    assert!(full_content.contains('B'), "expected 'B' in accumulated content: {full_content:?}");
+    assert!(
+        full_content.contains('A'),
+        "expected 'A' in accumulated content: {full_content:?}"
+    );
+    assert!(
+        full_content.contains('B'),
+        "expected 'B' in accumulated content: {full_content:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -965,8 +1019,15 @@ async fn chat_non_stream_returns_single_object() {
 
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON body");
-    assert!(body.is_object(), "non-streaming response must be a JSON object");
-    assert_eq!(body.get("done"), Some(&json!(true)), "non-streaming must have done:true");
+    assert!(
+        body.is_object(),
+        "non-streaming response must be a JSON object"
+    );
+    assert_eq!(
+        body.get("done"),
+        Some(&json!(true)),
+        "non-streaming must have done:true"
+    );
     assert!(
         body.get("message").is_some(),
         "non-streaming chat must have message field: {body}"
@@ -1016,7 +1077,10 @@ async fn generate_non_stream_returns_single_object() {
     let body: Value = resp.json().await.expect("JSON body");
     assert!(body.is_object());
     assert_eq!(body.get("done"), Some(&json!(true)));
-    assert!(body.get("response").is_some(), "generate non-streaming must have response: {body}");
+    assert!(
+        body.get("response").is_some(),
+        "generate non-streaming must have response: {body}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,8 +1192,17 @@ async fn chat_stream_all_lines_are_valid_json() {
     let chunks = collect_ndjson(resp).await;
     assert!(!chunks.is_empty());
     for chunk in &chunks {
-        assert!(chunk.is_object(), "every chunk must be a JSON object: {chunk}");
-        assert!(chunk.get("model").is_some(), "every chunk must have model: {chunk}");
-        assert!(chunk.get("done").is_some(), "every chunk must have done: {chunk}");
+        assert!(
+            chunk.is_object(),
+            "every chunk must be a JSON object: {chunk}"
+        );
+        assert!(
+            chunk.get("model").is_some(),
+            "every chunk must have model: {chunk}"
+        );
+        assert!(
+            chunk.get("done").is_some(),
+            "every chunk must have done: {chunk}"
+        );
     }
 }

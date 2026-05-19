@@ -76,7 +76,9 @@ async fn native_model_info_forwarded() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v0/models/lmstudio-community/meta-llama-3.1-8b-instruct"))
+        .and(path(
+            "/api/v0/models/lmstudio-community/meta-llama-3.1-8b-instruct",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "lmstudio-community/meta-llama-3.1-8b-instruct",
             "object": "model",
@@ -176,8 +178,7 @@ async fn native_chat_completions_streaming_bytes_roundtrip() {
         .and(path("/api/v0/chat/completions"))
         .and(body_partial_json(json!({ "stream": true })))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
         )
         .expect(1)
         .mount(&p.mock)
@@ -405,10 +406,7 @@ async fn native_model_load_forwarded() {
         .expect("POST /api/v0/models/load");
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        resp.headers().get("x-lmstudio-load-time").unwrap(),
-        "1.23"
-    );
+    assert_eq!(resp.headers().get("x-lmstudio-load-time").unwrap(), "1.23");
     let body: serde_json::Value = resp.json().await.expect("json body");
     assert_eq!(body["status"], "loaded");
 }

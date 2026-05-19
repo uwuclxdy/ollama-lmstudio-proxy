@@ -1,7 +1,7 @@
 use super::*;
+use http::HeaderMap;
+use http::header::{HeaderName, HeaderValue};
 use serde_json::json;
-use warp::http::HeaderMap;
-use warp::http::header::{HeaderName, HeaderValue};
 
 fn make_warp_headers(pairs: &[(&str, &str)]) -> HeaderMap {
     let mut h = HeaderMap::new();
@@ -19,7 +19,7 @@ fn make_warp_headers(pairs: &[(&str, &str)]) -> HeaderMap {
 #[test]
 fn json_response_status_is_200() {
     let resp = json_response(&json!({"ok": true}));
-    assert_eq!(resp.status(), warp::http::StatusCode::OK);
+    assert_eq!(resp.status(), http::StatusCode::OK);
 }
 
 #[test]
@@ -168,10 +168,7 @@ fn custom_headers_pass_through() {
 #[test]
 fn header_names_are_case_insensitively_stripped() {
     // warp HeaderMap normalizes to lowercase, but test the edge explicitly
-    let h = make_warp_headers(&[
-        ("host", "example.com"),
-        ("content-length", "0"),
-    ]);
+    let h = make_warp_headers(&[("host", "example.com"), ("content-length", "0")]);
     let out = build_forward_headers(&h, false);
     assert!(!out.contains_key("host"));
     assert!(!out.contains_key("content-length"));

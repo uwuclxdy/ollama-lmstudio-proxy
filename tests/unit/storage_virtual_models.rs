@@ -45,16 +45,20 @@ fn build_metadata_all_fields_populated() {
 
 #[test]
 fn build_metadata_base_preserved_when_body_empty() {
-    let mut base = VirtualModelMetadata::default();
-    base.system_prompt = Some("inherited".to_string());
+    let base = VirtualModelMetadata {
+        system_prompt: Some("inherited".to_string()),
+        ..VirtualModelMetadata::default()
+    };
     let meta = VirtualModelStore::build_metadata_from_request(&json!({}), Some(base));
     assert_eq!(meta.system_prompt.as_deref(), Some("inherited"));
 }
 
 #[test]
 fn build_metadata_body_overrides_base() {
-    let mut base = VirtualModelMetadata::default();
-    base.system_prompt = Some("old".to_string());
+    let base = VirtualModelMetadata {
+        system_prompt: Some("old".to_string()),
+        ..VirtualModelMetadata::default()
+    };
     let body = json!({"system": "new"});
     let meta = VirtualModelStore::build_metadata_from_request(&body, Some(base));
     assert_eq!(meta.system_prompt.as_deref(), Some("new"));
@@ -137,7 +141,12 @@ async fn create_alias_and_get() {
     let store = make_store(&dir);
 
     store
-        .create_alias("myalias", "llama3".to_string(), "llama-3-8b".to_string(), default_metadata())
+        .create_alias(
+            "myalias",
+            "llama3".to_string(),
+            "llama-3-8b".to_string(),
+            default_metadata(),
+        )
         .await
         .unwrap();
 
@@ -160,12 +169,22 @@ async fn duplicate_alias_returns_error() {
     let store = make_store(&dir);
 
     store
-        .create_alias("alias", "src".to_string(), "tgt".to_string(), default_metadata())
+        .create_alias(
+            "alias",
+            "src".to_string(),
+            "tgt".to_string(),
+            default_metadata(),
+        )
         .await
         .unwrap();
 
     let err = store
-        .create_alias("alias", "src2".to_string(), "tgt2".to_string(), default_metadata())
+        .create_alias(
+            "alias",
+            "src2".to_string(),
+            "tgt2".to_string(),
+            default_metadata(),
+        )
         .await
         .unwrap_err();
 
@@ -178,7 +197,12 @@ async fn delete_existing_removes_entry() {
     let store = make_store(&dir);
 
     store
-        .create_alias("to_del", "s".to_string(), "t".to_string(), default_metadata())
+        .create_alias(
+            "to_del",
+            "s".to_string(),
+            "t".to_string(),
+            default_metadata(),
+        )
         .await
         .unwrap();
 
@@ -222,7 +246,12 @@ async fn persistence_round_trip() {
     {
         let store = VirtualModelStore::load(path.clone()).unwrap();
         store
-            .create_alias("persisted", "src".to_string(), "tgt-id".to_string(), default_metadata())
+            .create_alias(
+                "persisted",
+                "src".to_string(),
+                "tgt-id".to_string(),
+                default_metadata(),
+            )
             .await
             .unwrap();
     }
@@ -240,7 +269,12 @@ async fn get_normalizes_model_name_tag() {
     let store = make_store(&dir);
 
     store
-        .create_alias("llama3", "s".to_string(), "t".to_string(), default_metadata())
+        .create_alias(
+            "llama3",
+            "s".to_string(),
+            "t".to_string(),
+            default_metadata(),
+        )
         .await
         .unwrap();
 

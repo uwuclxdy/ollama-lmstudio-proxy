@@ -43,7 +43,10 @@ fn clean_model_name_empty_string_is_identity() {
 
 #[test]
 fn clean_model_name_no_colon_at_all() {
-    assert_eq!(clean_model_name("meta-llama-3-8b-instruct"), "meta-llama-3-8b-instruct");
+    assert_eq!(
+        clean_model_name("meta-llama-3-8b-instruct"),
+        "meta-llama-3-8b-instruct"
+    );
 }
 
 #[test]
@@ -176,7 +179,10 @@ fn extract_required_model_name_with_tag_returned_verbatim() {
 #[test]
 fn extract_required_model_name_with_latest_tag_returned_verbatim() {
     let body = json!({ "model": "mistral:latest" });
-    assert_eq!(extract_required_model_name(&body).unwrap(), "mistral:latest");
+    assert_eq!(
+        extract_required_model_name(&body).unwrap(),
+        "mistral:latest"
+    );
 }
 
 #[test]

@@ -7,10 +7,7 @@ use serde_json::json;
 #[test]
 fn extract_system_prompt_finds_top_level_system() {
     let body = json!({ "system": "be concise" });
-    assert_eq!(
-        extract_system_prompt(&body),
-        Some("be concise".to_string())
-    );
+    assert_eq!(extract_system_prompt(&body), Some("be concise".to_string()));
 }
 
 /// Some clients place the system prompt inside `options`. The helper falls
@@ -32,10 +29,7 @@ fn extract_system_prompt_top_level_wins_over_options() {
         "system": "top wins",
         "options": { "system": "should be ignored" }
     });
-    assert_eq!(
-        extract_system_prompt(&body),
-        Some("top wins".to_string())
-    );
+    assert_eq!(extract_system_prompt(&body), Some("top wins".to_string()));
 }
 
 /// Neither location populated → None.

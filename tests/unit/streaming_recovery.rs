@@ -66,11 +66,17 @@ fn choices_array_extracted_when_top_level_broken() {
     let input = r#"BROKEN{"choices":[{"delta":{"content":"ok"}}]BROKEN"#;
     let result = recover_json_from_chunk(input);
     // Either brace extraction finds it or choices-key path handles it
-    assert!(result.is_some(), "must recover choices array from broken wrapper");
+    assert!(
+        result.is_some(),
+        "must recover choices array from broken wrapper"
+    );
     let v = result.unwrap();
     // The recovered value has a choices key (either at root or the parsed array itself)
     let has_choices = v.get("choices").is_some() || v.is_array();
-    assert!(has_choices, "recovered value must contain choices data; got {v}");
+    assert!(
+        has_choices,
+        "recovered value must contain choices data; got {v}"
+    );
 }
 
 #[test]

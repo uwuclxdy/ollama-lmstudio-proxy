@@ -6,15 +6,15 @@ use tokio_util::sync::CancellationToken;
 use crate::constants::{ERROR_MISSING_INPUT, LM_STUDIO_NATIVE_EMBEDDINGS, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
-use crate::handlers::retry::execute_request_with_retry;
+use crate::handlers::retry::with_retry_and_cancellation;
 use crate::handlers::transform::ResponseTransformer;
 use crate::http::client::handle_json_response;
 use crate::http::json_response;
 use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
-use crate::server::ModelResolverType;
+use crate::model::ModelResolver;
+use std::sync::Arc;
 
-use super::embed_params::lift_embed_top_level_params;
 use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
 use crate::model::utils::extract_required_model_name;
 
@@ -26,12 +26,12 @@ pub enum EmbeddingResponseMode {
 
 pub async fn handle_ollama_embeddings(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     response_mode: EmbeddingResponseMode,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let mut body = body;
     lift_embed_top_level_params(&mut body);
@@ -62,10 +62,10 @@ pub async fn handle_ollama_embeddings(
                 .cloned()
                 .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_INPUT))?;
 
-            if let Some(s) = input_value.as_str() {
-                if s.is_empty() {
-                    return Err(ProxyError::bad_request(ERROR_MISSING_INPUT));
-                }
+            if let Some(s) = input_value.as_str()
+                && s.is_empty()
+            {
+                return Err(ProxyError::bad_request(ERROR_MISSING_INPUT));
             }
 
             let resolution_ctx = resolve_model_with_context(
@@ -111,7 +111,6 @@ pub async fn handle_ollama_embeddings(
                 &lm_response_value,
                 &ollama_model_name_clone,
                 start_time,
-                matches!(model_resolver, ModelResolverType::Native(_)),
             );
             let final_payload =
                 finalize_embedding_response(ollama_response, response_mode_for_request);
@@ -125,12 +124,11 @@ pub async fn handle_ollama_embeddings(
         }
     };
 
-    let result = execute_request_with_retry(
+    let result = with_retry_and_cancellation(
         &context,
         ollama_model_name,
-        operation,
-        true,
         load_timeout_seconds,
+        operation,
         cancellation_token.clone(),
     )
     .await?;
@@ -156,3 +154,46 @@ fn finalize_embedding_response(mut response: Value, mode: EmbeddingResponseMode)
 
     response
 }
+
+/// Lift Ollama's top-level `/api/embed` advanced parameters (`truncate`, `dimensions`)
+/// into the `options` map so the shared option-mapper picks them up.
+///
+/// Per Ollama spec (api_docs/ollama.md §"Generate Embeddings"), `truncate` and
+/// `dimensions` sit at the top level of the request body, peers of `model` and
+/// `input`. Values inside an existing `options` object take precedence.
+pub fn lift_embed_top_level_params(body: &mut Value) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+
+    let truncate = obj.remove("truncate");
+    let dimensions = obj.remove("dimensions");
+    if truncate.is_none() && dimensions.is_none() {
+        return;
+    }
+
+    let options_entry = obj
+        .entry("options")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(options) = options_entry.as_object_mut() else {
+        // `options` is set to a non-object value; restore top-level fields and bail.
+        if let Some(t) = truncate {
+            obj.insert("truncate".to_string(), t);
+        }
+        if let Some(d) = dimensions {
+            obj.insert("dimensions".to_string(), d);
+        }
+        return;
+    };
+
+    if let Some(t) = truncate {
+        options.entry("truncate".to_string()).or_insert(t);
+    }
+    if let Some(d) = dimensions {
+        options.entry("dimensions".to_string()).or_insert(d);
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_embed_params.rs"]
+mod tests_embed_params;

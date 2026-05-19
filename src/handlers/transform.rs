@@ -20,6 +20,7 @@ pub struct TimingInfo {
 impl TimingInfo {
     pub fn from_native_stats(
         lm_response: &Value,
+        start_time: Instant,
         estimated_input_tokens: u64,
         estimated_output_tokens: u64,
     ) -> Self {
@@ -86,7 +87,7 @@ impl TimingInfo {
         }
 
         Self::from_legacy_estimation(
-            Instant::now(),
+            start_time,
             estimated_input_tokens,
             estimated_output_tokens,
             lm_response
@@ -179,35 +180,16 @@ impl ResponseTransformer {
         model_ollama_name: &str,
         message_count_for_estimation: usize,
         start_time: Instant,
-        use_native_stats: bool,
     ) -> Value {
         let content = extract_chat_content(lm_response);
         let thinking = extract_reasoning_content(lm_response);
 
-        let timing = if use_native_stats {
-            TimingInfo::from_native_stats(
-                lm_response,
-                (message_count_for_estimation * 10).max(1) as u64,
-                estimate_token_count(&content),
-            )
-        } else {
-            let actual_prompt_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|t| t.as_u64());
-            let actual_completion_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|t| t.as_u64());
-
-            TimingInfo::from_legacy_estimation(
-                start_time,
-                (message_count_for_estimation * 10).max(1) as u64,
-                estimate_token_count(&content),
-                actual_prompt_tokens,
-                actual_completion_tokens,
-            )
-        };
+        let timing = TimingInfo::from_native_stats(
+            lm_response,
+            start_time,
+            (message_count_for_estimation * 10).max(1) as u64,
+            estimate_token_count(&content),
+        );
 
         let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
         let mut ollama_message = json!({
@@ -255,35 +237,16 @@ impl ResponseTransformer {
         model_ollama_name: &str,
         prompt_for_estimation: &str,
         start_time: Instant,
-        use_native_stats: bool,
     ) -> Value {
         let content = Self::extract_completion_content(lm_response);
         let thinking = extract_completion_thinking(lm_response);
 
-        let timing = if use_native_stats {
-            TimingInfo::from_native_stats(
-                lm_response,
-                estimate_token_count(prompt_for_estimation),
-                estimate_token_count(&content),
-            )
-        } else {
-            let actual_prompt_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|t| t.as_u64());
-            let actual_completion_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|t| t.as_u64());
-
-            TimingInfo::from_legacy_estimation(
-                start_time,
-                estimate_token_count(prompt_for_estimation),
-                estimate_token_count(&content),
-                actual_prompt_tokens,
-                actual_completion_tokens,
-            )
-        };
+        let timing = TimingInfo::from_native_stats(
+            lm_response,
+            start_time,
+            estimate_token_count(prompt_for_estimation),
+            estimate_token_count(&content),
+        );
 
         let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
         // `context` (token-ID encoding of conversation) is deprecated in Ollama and
@@ -317,33 +280,18 @@ impl ResponseTransformer {
         lm_response: &Value,
         model_ollama_name: &str,
         start_time: Instant,
-        use_native_stats: bool,
     ) -> Value {
         let embeddings = Self::extract_embeddings(lm_response);
 
         let estimated_input_tokens = 10;
         let estimated_output_tokens = embeddings.len().max(1) as u64;
 
-        let timing = if use_native_stats {
-            TimingInfo::from_native_stats(
-                lm_response,
-                estimated_input_tokens,
-                estimated_output_tokens,
-            )
-        } else {
-            let actual_prompt_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|t| t.as_u64());
-
-            TimingInfo::from_legacy_estimation(
-                start_time,
-                estimated_input_tokens,
-                estimated_output_tokens,
-                actual_prompt_tokens,
-                None,
-            )
-        };
+        let timing = TimingInfo::from_native_stats(
+            lm_response,
+            start_time,
+            estimated_input_tokens,
+            estimated_output_tokens,
+        );
 
         json!({
             "model": model_ollama_name,

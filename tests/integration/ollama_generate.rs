@@ -201,8 +201,7 @@ async fn stream_absent_defaults_to_non_streaming() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("OK", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -263,8 +262,14 @@ async fn streaming_generate_emits_ndjson_with_final_done_chunk() {
 
     let final_chunk = chunks.last().expect("last chunk");
     assert_eq!(final_chunk["done"], true, "last chunk must be done:true");
-    assert!(final_chunk.get("done_reason").is_some(), "done_reason missing");
-    assert!(final_chunk.get("eval_count").is_some(), "eval_count missing");
+    assert!(
+        final_chunk.get("done_reason").is_some(),
+        "done_reason missing"
+    );
+    assert!(
+        final_chunk.get("eval_count").is_some(),
+        "eval_count missing"
+    );
     assert!(
         final_chunk.get("total_duration").is_some(),
         "total_duration missing"
@@ -292,8 +297,7 @@ async fn stream_explicit_false_returns_single_object() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Done.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Done.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -328,8 +332,7 @@ async fn options_temperature_and_num_predict_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Counted.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Counted.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -367,8 +370,7 @@ async fn options_num_ctx_forwarded_as_context_length() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("OK", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -402,8 +404,7 @@ async fn options_stop_array_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Stopped.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Stopped.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -474,8 +475,7 @@ async fn raw_mode_skips_system_prompt_injection() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Raw reply.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Raw reply.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -511,8 +511,7 @@ async fn suffix_forwarded_to_completions_endpoint() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("middle text", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("middle text", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -671,8 +670,7 @@ async fn generate_with_images_routes_to_chat_completions() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("A cat is shown.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("A cat is shown.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -836,8 +834,7 @@ async fn finish_reason_length_maps_to_done_reason_length() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Truncated", "length")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Truncated", "length")),
         )
         .mount(&p.mock)
         .await;
@@ -871,8 +868,7 @@ async fn keep_alive_duration_string_accepted() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("OK", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -935,8 +931,7 @@ async fn repeat_penalty_option_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("No repeats.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("No repeats.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -970,8 +965,7 @@ async fn vision_raw_skips_system_injection() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Raw vision reply.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Raw vision reply.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -1009,8 +1003,7 @@ async fn logprobs_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Logged.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Logged.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -1045,8 +1038,7 @@ async fn context_array_in_request_accepted() {
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Continued.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Continued.", "stop")),
         )
         .mount(&p.mock)
         .await;

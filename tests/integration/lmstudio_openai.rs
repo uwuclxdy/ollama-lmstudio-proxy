@@ -140,11 +140,9 @@ async fn openai_chat_completions_backend_error_propagated() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(400).set_body_json(json!({
-                "error": { "message": "model not found", "type": "invalid_request_error" }
-            })),
-        )
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": { "message": "model not found", "type": "invalid_request_error" }
+        })))
         .expect(1)
         .mount(&p.mock)
         .await;
@@ -179,8 +177,7 @@ async fn openai_chat_completions_streaming_bytes_roundtrip() {
         .and(path("/v1/chat/completions"))
         .and(body_partial_json(json!({ "stream": true })))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
         )
         .expect(1)
         .mount(&p.mock)
@@ -258,8 +255,7 @@ async fn openai_completions_streaming_bytes_roundtrip() {
         .and(path("/v1/completions"))
         .and(body_partial_json(json!({ "stream": true })))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
         )
         .expect(1)
         .mount(&p.mock)
@@ -404,8 +400,7 @@ async fn openai_responses_streaming_bytes_roundtrip() {
         .and(path("/v1/responses"))
         .and(body_partial_json(json!({ "stream": true })))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse_payload.as_bytes(), "text/event-stream"),
         )
         .expect(1)
         .mount(&p.mock)

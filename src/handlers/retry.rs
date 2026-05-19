@@ -171,44 +171,6 @@ where
     }
 }
 
-pub async fn with_simple_retry<F, Fut, T>(
-    operation: F,
-    cancellation_token: CancellationToken,
-) -> Result<T, ProxyError>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, ProxyError>>,
-{
-    check_cancelled!(cancellation_token);
-    operation().await
-}
-
-pub async fn execute_request_with_retry<F, Fut, T>(
-    context: &RequestContext<'_>,
-    model_name_for_retry_logic: &str,
-    operation: F,
-    use_model_retry: bool,
-    load_timeout_seconds: u64,
-    cancellation_token: CancellationToken,
-) -> Result<T, ProxyError>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, ProxyError>>,
-{
-    if use_model_retry {
-        with_retry_and_cancellation(
-            context,
-            model_name_for_retry_logic,
-            load_timeout_seconds,
-            operation,
-            cancellation_token,
-        )
-        .await
-    } else {
-        with_simple_retry(operation, cancellation_token).await
-    }
-}
-
 #[cfg(test)]
 #[path = "../../tests/unit/handlers_retry.rs"]
 mod tests;

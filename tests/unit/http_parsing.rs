@@ -1,6 +1,6 @@
 use super::*;
-use warp::http::HeaderMap;
-use warp::http::header::{HeaderName, HeaderValue};
+use http::HeaderMap;
+use http::header::{HeaderName, HeaderValue};
 
 fn headers_with_content_type(ct: &'static str) -> HeaderMap {
     let mut h = HeaderMap::new();

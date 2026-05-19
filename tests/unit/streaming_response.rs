@@ -174,7 +174,10 @@ async fn ndjson_stream_response_content_type_matches_direct_call() {
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert_eq!(ct1, ct2, "convenience wrapper must produce same content-type");
+    assert_eq!(
+        ct1, ct2,
+        "convenience wrapper must produce same content-type"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -20,12 +20,16 @@ fn make_virtual_entry(parameters: Option<serde_json::Value>) -> VirtualModelEntr
 
 #[test]
 fn http_url_is_remote() {
-    assert!(looks_like_remote_identifier("http://example.com/model.gguf"));
+    assert!(looks_like_remote_identifier(
+        "http://example.com/model.gguf"
+    ));
 }
 
 #[test]
 fn https_url_is_remote() {
-    assert!(looks_like_remote_identifier("https://huggingface.co/org/model"));
+    assert!(looks_like_remote_identifier(
+        "https://huggingface.co/org/model"
+    ));
 }
 
 #[test]

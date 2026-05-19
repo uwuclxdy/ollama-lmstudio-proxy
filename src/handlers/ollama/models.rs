@@ -9,7 +9,8 @@ use crate::handlers::RequestContext;
 use crate::handlers::retry::trigger_model_loading_for_ollama;
 use crate::http::json_response;
 use crate::logging::{LogConfig, log_request, log_timed};
-use crate::server::ModelResolverType;
+use crate::model::ModelResolver;
+use std::sync::Arc;
 
 use super::utils::{keep_alive_requests_unload, parse_keep_alive_seconds, resolve_model_target};
 use crate::logging::log_handler_io;
@@ -18,10 +19,10 @@ use crate::model::utils::extract_required_model_name;
 
 pub async fn handle_ollama_show(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     if LogConfig::get().debug_enabled {
         log::debug!(
@@ -48,13 +49,9 @@ pub async fn handle_ollama_show(
     )
     .await?;
 
-    let models = match &model_resolver {
-        ModelResolverType::Native(resolver) => {
-            resolver
-                .get_all_models(context.client, cancellation_token)
-                .await?
-        }
-    };
+    let models = model_resolver
+        .get_all_models(context.client, cancellation_token)
+        .await?;
 
     let base_model = models.iter().find(|m| m.id == resolved_id);
 
@@ -91,18 +88,14 @@ pub async fn handle_ollama_show(
 
 pub async fn handle_ollama_ps(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
 
-    let loaded_models = match &model_resolver {
-        ModelResolverType::Native(resolver) => {
-            resolver
-                .get_loaded_models(context.client, cancellation_token)
-                .await?
-        }
-    };
+    let loaded_models = model_resolver
+        .get_loaded_models(context.client, cancellation_token)
+        .await?;
 
     let virtual_entries = context.virtual_models.list().await;
     let loaded_virtuals: Vec<_> = virtual_entries
@@ -117,5 +110,46 @@ pub async fn handle_ollama_ps(
     let response = json!({ "models": ollama_models });
     log_timed(LOG_PREFIX_SUCCESS, "Ollama ps", start_time);
     log_handler_io("ps", None, Some(&response));
+    Ok(json_response(&response))
+}
+
+pub async fn handle_ollama_tags(
+    context: RequestContext<'_>,
+    model_resolver: Arc<ModelResolver>,
+    cancellation_token: CancellationToken,
+) -> Result<axum::response::Response, ProxyError> {
+    let start_time = Instant::now();
+
+    let models = model_resolver
+        .get_all_models(context.client, cancellation_token)
+        .await?;
+
+    let virtual_entries = context.virtual_models.list().await;
+    let mut ollama_models =
+        ModelInfo::merge_with_virtuals(&models, &virtual_entries, |m| m.to_ollama_tags_model());
+
+    for entry in &virtual_entries {
+        if models.iter().all(|m| m.id != entry.target_model_id) {
+            ollama_models.push(json!({
+                "name": entry.name,
+                "model": entry.name,
+                "modified_at": entry.updated_at.to_rfc3339(),
+                "size": 0,
+                "digest": format!("{:x}", md5::compute(entry.name.as_bytes())),
+                "details": {
+                    "parent_model": entry.source_model,
+                    "format": "virtual",
+                    "family": "unknown",
+                    "families": ["unknown"],
+                    "parameter_size": "unknown",
+                    "quantization_level": "unknown"
+                }
+            }));
+        }
+    }
+
+    let response = json!({ "models": ollama_models });
+    log_timed(LOG_PREFIX_SUCCESS, "Ollama tags", start_time);
+    log_handler_io("tags", None, Some(&response));
     Ok(json_response(&response))
 }

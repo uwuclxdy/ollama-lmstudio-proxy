@@ -13,13 +13,13 @@ use std::sync::Once;
 
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
-use warp::Filter;
 use wiremock::MockServer;
 
 use ollama_lmstudio_proxy::config::{Config, RuntimeConfig, init_runtime_config};
 use ollama_lmstudio_proxy::logging::LogConfig;
-use ollama_lmstudio_proxy::server::{ProxyServer, handle_rejection};
-use ollama_lmstudio_proxy::server::routes::create_routes;
+use ollama_lmstudio_proxy::server::ProxyServer;
+use ollama_lmstudio_proxy::server::proxy::cors_layer;
+use ollama_lmstudio_proxy::server::routes::create_router;
 
 static INIT_RUNTIME: Once = Once::new();
 
@@ -68,20 +68,7 @@ pub async fn spawn_proxy() -> TestProxy {
         .expect("ProxyServer::new_with_state_dir");
     let server = Arc::new(server);
 
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_headers(vec![
-            "Content-Type",
-            "Authorization",
-            "Accept",
-            "Origin",
-            "X-Requested-With",
-        ])
-        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]);
-
-    let routes = create_routes(server)
-        .recover(handle_rejection)
-        .with(cors);
+    let app = create_router(server).layer(cors_layer());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -89,7 +76,7 @@ pub async fn spawn_proxy() -> TestProxy {
     let addr = listener.local_addr().expect("local_addr");
 
     let handle = tokio::spawn(async move {
-        warp::serve(routes).incoming(listener).run().await;
+        axum::serve(listener, app).await.expect("axum::serve");
     });
 
     let client = reqwest::Client::builder()

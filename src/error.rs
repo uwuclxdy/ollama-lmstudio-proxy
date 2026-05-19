@@ -1,7 +1,10 @@
 pub(crate) use std::error::Error;
 use std::fmt;
 
-use warp::reject::Reject;
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde_json::json;
 
 use crate::constants::ERROR_CANCELLED;
 
@@ -79,7 +82,17 @@ impl fmt::Display for ProxyError {
 
 impl Error for ProxyError {}
 
-impl Reject for ProxyError {}
+impl IntoResponse for ProxyError {
+    fn into_response(self) -> Response {
+        let status =
+            StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let body = Json(json!({
+            "error": self.message,
+            "status": status.as_u16(),
+        }));
+        (status, body).into_response()
+    }
+}
 
 pub fn is_model_loading_error(message: &str) -> bool {
     let lower = message.to_lowercase();
@@ -150,16 +163,6 @@ pub fn is_model_loading_error(message: &str) -> bool {
 
 #[macro_export]
 macro_rules! check_cancelled {
-    ($token:expr) => {
-        if $token.is_cancelled() {
-            return Err($crate::error::ProxyError::request_cancelled());
-        }
-    };
-}
-
-/// Async variant of check_cancelled that can be used in async contexts
-#[macro_export]
-macro_rules! check_cancelled_async {
     ($token:expr) => {
         if $token.is_cancelled() {
             return Err($crate::error::ProxyError::request_cancelled());

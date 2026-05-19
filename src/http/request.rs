@@ -2,33 +2,6 @@ use std::borrow::Cow;
 
 use serde_json::{Value, json};
 
-pub struct RequestBuilder {
-    body: serde_json::Map<String, Value>,
-}
-
-impl RequestBuilder {
-    pub fn new() -> Self {
-        Self {
-            body: serde_json::Map::new(),
-        }
-    }
-
-    pub fn add_required<T: Into<Value>>(mut self, key: &str, value: T) -> Self {
-        self.body.insert(key.to_string(), value.into());
-        self
-    }
-
-    pub fn build(self) -> Value {
-        Value::Object(self.body)
-    }
-}
-
-impl Default for RequestBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub enum LMStudioRequestType<'a> {
     Chat { messages: &'a Value, stream: bool },
     Completion { prompt: Cow<'a, str>, stream: bool },
@@ -120,44 +93,38 @@ pub fn build_lm_studio_request(
     structured_format: Option<&Value>,
     top_level: Option<&TopLevelParams<'_>>,
 ) -> Value {
-    let mut builder = RequestBuilder::new().add_required("model", model_lm_studio_id);
+    let mut body = serde_json::Map::new();
+    body.insert("model".to_string(), json!(model_lm_studio_id));
 
     match request_type {
         LMStudioRequestType::Chat { messages, stream } => {
-            builder = builder
-                .add_required("messages", messages.clone())
-                .add_required("stream", stream);
+            body.insert("messages".to_string(), messages.clone());
+            body.insert("stream".to_string(), json!(stream));
             if let Some(tools_val) = ollama_tools
-                && tools_val.is_array()
-                && !tools_val.as_array().unwrap().is_empty()
+                && let Some(tools_arr) = tools_val.as_array()
+                && !tools_arr.is_empty()
             {
-                builder = builder.add_required("tools", tools_val.clone());
+                body.insert("tools".to_string(), tools_val.clone());
             }
         }
         LMStudioRequestType::Completion { prompt, stream } => {
-            builder = builder
-                .add_required("prompt", prompt.as_ref())
-                .add_required("stream", stream);
+            body.insert("prompt".to_string(), json!(prompt.as_ref()));
+            body.insert("stream".to_string(), json!(stream));
         }
         LMStudioRequestType::Embeddings { input } => {
-            builder = builder.add_required("input", input.clone());
+            body.insert("input".to_string(), input.clone());
         }
     }
 
-    let lm_studio_mapped_params = map_ollama_to_lmstudio_params(ollama_options, structured_format);
-    let mut request_json = builder.build();
-
-    if let Some(request_obj) = request_json.as_object_mut() {
-        for (key, value) in lm_studio_mapped_params {
-            request_obj.insert(key, value);
-        }
+    for (key, value) in map_ollama_to_lmstudio_params(ollama_options, structured_format) {
+        body.insert(key, value);
     }
 
-    if let (Some(top), Some(request_obj)) = (top_level, request_json.as_object_mut()) {
-        apply_top_level_params(top, request_obj);
+    if let Some(top) = top_level {
+        apply_top_level_params(top, &mut body);
     }
 
-    request_json
+    Value::Object(body)
 }
 
 fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {

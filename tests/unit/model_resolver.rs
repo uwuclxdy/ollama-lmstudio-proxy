@@ -39,16 +39,16 @@ fn resolve_match_exact_id_returns_that_model() {
         mi("meta-llama-3.1-8b-instruct", false),
         mi("mistral-7b-instruct-v0.3", false),
     ];
-    let result = ModelResolver::resolve_match("meta-llama-3.1-8b-instruct", &models)
-        .expect("should match");
+    let result =
+        ModelResolver::resolve_match("meta-llama-3.1-8b-instruct", &models).expect("should match");
     assert_eq!(result.id, "meta-llama-3.1-8b-instruct");
 }
 
 #[test]
 fn resolve_match_exact_match_case_insensitive() {
     let models = vec![mi("Meta-Llama-3-8B-Instruct", false)];
-    let result = ModelResolver::resolve_match("meta-llama-3-8b-instruct", &models)
-        .expect("should match");
+    let result =
+        ModelResolver::resolve_match("meta-llama-3-8b-instruct", &models).expect("should match");
     assert_eq!(result.id, "Meta-Llama-3-8B-Instruct");
 }
 
@@ -67,20 +67,22 @@ fn resolve_match_ollama_shorthand_llama3_8b() {
     // At minimum it should not panic; the exact match depends on scorer weights.
     // We only assert that if anything comes back, it starts with "meta-llama".
     if let Some(m) = result {
-        assert!(
-            m.id.starts_with("meta-llama"),
-            "unexpected match: {}",
-            m.id
-        );
+        assert!(m.id.starts_with("meta-llama"), "unexpected match: {}", m.id);
     }
 }
 
 #[test]
 fn resolve_match_query_with_numeric_tag_stripped_matches() {
     // Simulates the cleaned name "llama3" reaching resolve_match.
-    let models = vec![mi("llama3-8b-instruct", false), mi("llama3-70b-instruct", false)];
+    let models = vec![
+        mi("llama3-8b-instruct", false),
+        mi("llama3-70b-instruct", false),
+    ];
     let result = ModelResolver::resolve_match("llama3", &models);
-    assert!(result.is_some(), "should find at least one candidate for 'llama3'");
+    assert!(
+        result.is_some(),
+        "should find at least one candidate for 'llama3'"
+    );
 }
 
 // ─── resolve_match: no candidate ─────────────────────────────────────────────
@@ -104,10 +106,7 @@ fn resolve_match_single_unrelated_model_returns_none() {
 
 #[test]
 fn resolve_match_prefers_loaded_model() {
-    let models = vec![
-        mi("llama3-8b-instruct", false),
-        mi("llama3-8b-chat", true),
-    ];
+    let models = vec![mi("llama3-8b-instruct", false), mi("llama3-8b-chat", true)];
     let result = ModelResolver::resolve_match("llama3-8b", &models).expect("should match");
     assert_eq!(
         result.id, "llama3-8b-chat",
@@ -178,7 +177,10 @@ fn resolve_match_result_is_stable_across_input_order() {
 
     let r1 = ModelResolver::resolve_match("llama3-8b", &base).map(|m| m.id.clone());
     let r2 = ModelResolver::resolve_match("llama3-8b", &reversed).map(|m| m.id.clone());
-    assert_eq!(r1, r2, "result must be deterministic regardless of input ordering");
+    assert_eq!(
+        r1, r2,
+        "result must be deterministic regardless of input ordering"
+    );
 }
 
 // ─── clean_model_name integration (called inside resolve_model_name) ──────────

@@ -50,7 +50,7 @@ impl BlobStore {
 
     pub async fn save_stream<S>(&self, digest: &str, mut stream: S) -> Result<(), ProxyError>
     where
-        S: Stream<Item = Result<bytes::Bytes, warp::Error>> + Unpin,
+        S: Stream<Item = Result<bytes::Bytes, axum::Error>> + Unpin,
     {
         let final_path = self.validated_blob_path(digest)?;
         let hex = digest.split_once(':').map(|(_, h)| h).unwrap();

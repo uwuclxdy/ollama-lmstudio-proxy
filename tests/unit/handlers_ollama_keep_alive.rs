@@ -13,11 +13,11 @@ use super::*;
 // When keep_alive == 0 it spawns a task that tries to reach LM Studio;
 // that path is an integration concern and is skipped here.
 
-fn make_resolver() -> crate::server::ModelResolverType {
+fn make_resolver() -> std::sync::Arc<crate::model::ModelResolver> {
     use moka::future::Cache;
     let cache: Cache<String, String> = Cache::builder().max_capacity(128).build();
     let resolver = crate::model::ModelResolver::new("http://127.0.0.1:0".to_string(), cache);
-    crate::server::ModelResolverType::Native(std::sync::Arc::new(resolver))
+    std::sync::Arc::new(resolver)
 }
 
 #[test]

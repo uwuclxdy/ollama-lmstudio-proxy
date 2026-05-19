@@ -1,6 +1,5 @@
 use super::*;
 use bytes::Bytes;
-use warp::http;
 
 // handlers/lmstudio.rs exposes one public function (handle_lmstudio_passthrough)
 // and one pub struct (LmStudioPassthroughRequest).

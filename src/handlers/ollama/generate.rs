@@ -9,31 +9,25 @@ use crate::constants::{
 };
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
-use crate::handlers::retry::execute_request_with_retry;
-use crate::http::request::{LMStudioRequestType, TopLevelParams};
+use crate::handlers::retry::with_retry_and_cancellation;
+use crate::http::request::LMStudioRequestType;
 use crate::logging::{LogConfig, log_timed};
-use crate::server::ModelResolverType;
+use crate::model::ModelResolver;
+use std::sync::Arc;
 
+use super::shared::make_top_level_params;
 use super::utils::{parse_keep_alive_seconds, resolve_model_with_context};
 use crate::handlers::ollama::images::build_vision_chat_messages;
 use crate::handlers::response::{ResponseContext, ResponseParams, handle_response};
 use crate::model::utils::extract_required_model_name;
 
-fn make_top_level_params(body: &serde_json::Value) -> TopLevelParams<'_> {
-    TopLevelParams {
-        think: body.get("think"),
-        logprobs: body.get("logprobs"),
-        top_logprobs: body.get("top_logprobs"),
-    }
-}
-
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?;
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
@@ -183,19 +177,17 @@ pub async fn handle_ollama_generate(
                 context: ResponseContext::Generate {
                     prompt: prompt_for_estimation.to_string(),
                 },
-                model_resolver: &model_resolver,
                 cancellation_token: cancellation_token_clone,
             })
             .await
         }
     };
 
-    let result = execute_request_with_retry(
+    let result = with_retry_and_cancellation(
         &context,
         &resolved_model_id_for_retry,
-        operation,
-        true,
         load_timeout_seconds,
+        operation,
         cancellation_token.clone(),
     )
     .await?;

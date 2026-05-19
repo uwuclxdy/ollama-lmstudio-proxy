@@ -1,25 +1,23 @@
+use std::sync::Arc;
 use std::time::Instant;
 
+use axum::body::Body;
+use axum::response::Response;
 use bytes::Bytes;
-use futures_util::StreamExt;
-use http_body_util::StreamBody;
-use reqwest::header::{self};
+use http::{HeaderName, HeaderValue};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-use warp::http::{self, Response as WarpResponse};
 
 use crate::constants::{LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
 use crate::handlers::RequestContext;
-use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
+use crate::handlers::retry::with_retry_and_cancellation;
 use crate::http::{
-    build_forward_headers,
-    client::CancellableRequest,
-    parsing::parse_json_body_template,
+    build_forward_headers, client::CancellableRequest, parsing::parse_json_body_template,
     request::prepare_request_body,
 };
 use crate::logging::{LogConfig, format_duration, log_request, log_timed};
-use crate::server::ModelResolverType;
+use crate::model::ModelResolver;
 use crate::streaming::{handle_passthrough_streaming_response, is_streaming_request};
 
 pub struct LmStudioPassthroughRequest {
@@ -32,11 +30,11 @@ pub struct LmStudioPassthroughRequest {
 
 pub async fn handle_lmstudio_passthrough(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     request: LmStudioPassthroughRequest,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let LmStudioPassthroughRequest {
         method,
@@ -92,17 +90,9 @@ pub async fn handle_lmstudio_passthrough(
                     && let Some(model_name) =
                         body_json.get("model").and_then(|m: &Value| m.as_str())
                 {
-                    let resolved_model = match &model_resolver {
-                        ModelResolverType::Native(resolver) => {
-                            resolver
-                                .resolve_model_name(
-                                    model_name,
-                                    context.client,
-                                    cancellation_token.clone(),
-                                )
-                                .await?
-                        }
-                    };
+                    let resolved_model = model_resolver
+                        .resolve_model_name(model_name, context.client, cancellation_token.clone())
+                        .await?;
                     resolved_model_name = Some(resolved_model.clone());
                     if let Some(obj) = body_json.as_object_mut() {
                         obj.insert("model".to_string(), Value::String(resolved_model));
@@ -151,17 +141,21 @@ pub async fn handle_lmstudio_passthrough(
         }
     };
 
-    let result = if let Some(ref model) = original_model_name {
-        with_retry_and_cancellation(
-            &context,
-            model.as_str(),
-            load_timeout_seconds,
-            operation,
-            cancellation_token,
-        )
-        .await?
-    } else {
-        with_simple_retry(operation, cancellation_token).await?
+    let result = match original_model_name.as_deref() {
+        Some(model) => {
+            with_retry_and_cancellation(
+                &context,
+                model,
+                load_timeout_seconds,
+                operation,
+                cancellation_token,
+            )
+            .await?
+        }
+        None => {
+            crate::check_cancelled!(cancellation_token);
+            operation().await?
+        }
     };
 
     log_timed(LOG_PREFIX_SUCCESS, "LM Studio passthrough", start_time);
@@ -182,7 +176,7 @@ struct ForwardJsonRequest<'a> {
 
 async fn forward_json_body_request(
     req: ForwardJsonRequest<'_>,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let ForwardJsonRequest {
         client,
         method,
@@ -229,7 +223,7 @@ async fn forward_raw_body_request(
     headers: &http::HeaderMap,
     body_bytes: &Bytes,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let forward_headers = build_forward_headers(headers, false);
     let prepared_body = prepare_request_body(None, body_bytes)
         .map_err(|e| ProxyError::bad_request(&format!("Failed to prepare request body: {}", e)))?;
@@ -246,7 +240,7 @@ async fn route_response(
     response: reqwest::Response,
     is_streaming: bool,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if is_streaming {
         if LogConfig::get().debug_enabled {
             log::debug!("passthrough response: (streaming)");
@@ -260,7 +254,7 @@ async fn route_response(
 async fn route_non_streaming_response(
     response: reqwest::Response,
     _cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if LogConfig::get().debug_enabled {
         log::debug!("passthrough response: (verbatim)");
     }
@@ -270,53 +264,30 @@ async fn route_non_streaming_response(
 fn determine_passthrough_endpoint_url(
     lmstudio_base_url: &str,
     requested_endpoint: &str,
-    _model_resolver: &ModelResolverType,
+    _model_resolver: &Arc<ModelResolver>,
 ) -> String {
     format!("{}{}", lmstudio_base_url, requested_endpoint)
 }
 
-async fn forward_raw_response(
-    response: reqwest::Response,
-) -> Result<warp::reply::Response, ProxyError> {
+async fn forward_raw_response(response: reqwest::Response) -> Result<Response, ProxyError> {
     let status = http::StatusCode::from_u16(response.status().as_u16())
         .map_err(|_| ProxyError::internal_server_error("invalid status code from LM Studio"))?;
     let headers = response.headers().clone();
-    let stream = response.bytes_stream();
+    let body = Body::from_stream(response.bytes_stream());
 
-    // Create a body using the same pattern as warp's internal wrap_stream
-    let mapped_stream = stream.map(|item: Result<Bytes, _>| {
-        item.map(warp::hyper::body::Frame::data)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-    });
-
-    let body_impl = StreamBody::new(mapped_stream);
-    let boxed_body = http_body_util::BodyExt::boxed(body_impl);
-
-    let mut builder = WarpResponse::builder().status(status);
+    let mut builder = Response::builder().status(status);
     for (name, value) in headers.iter() {
-        if let (Ok(warp_name), Ok(warp_value)) = (
-            header::HeaderName::from_bytes(name.as_str().as_bytes()),
-            header::HeaderValue::from_bytes(value.as_bytes()),
+        if let (Ok(hn), Ok(hv)) = (
+            HeaderName::from_bytes(name.as_str().as_bytes()),
+            HeaderValue::from_bytes(value.as_bytes()),
         ) {
-            builder = builder.header(warp_name, warp_value);
+            builder = builder.header(hn, hv);
         }
     }
 
-    let temp_response = builder
-        .body(boxed_body)
-        .map_err(|_| ProxyError::internal_server_error("failed to build passthrough response"))?;
-
-    Ok(unsafe {
-        std::mem::transmute::<
-            http::Response<
-                http_body_util::combinators::BoxBody<
-                    Bytes,
-                    Box<dyn std::error::Error + Send + Sync>,
-                >,
-            >,
-            warp::reply::Response,
-        >(temp_response)
-    })
+    builder
+        .body(body)
+        .map_err(|_| ProxyError::internal_server_error("failed to build passthrough response"))
 }
 
 #[cfg(test)]

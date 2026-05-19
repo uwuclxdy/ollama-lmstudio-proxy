@@ -1,8 +1,10 @@
 use std::time::Instant;
 
+use axum::body::Body;
+use axum::response::Response;
 use bytes::Buf;
 use futures_util::{Stream, TryStreamExt};
-use http_body_util::Empty;
+use http::StatusCode;
 
 use crate::constants::LOG_PREFIX_SUCCESS;
 use crate::error::ProxyError;
@@ -12,46 +14,34 @@ use crate::logging::{LogConfig, log_request, log_timed};
 pub async fn handle_blob_head(
     context: RequestContext<'_>,
     digest: String,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<Response, ProxyError> {
     if LogConfig::get().debug_enabled {
         log::debug!("blob head request: {}", digest);
     }
     let exists = context.blob_store.exists(&digest).await?;
     let status = if exists {
-        warp::http::StatusCode::OK
+        StatusCode::OK
     } else {
-        warp::http::StatusCode::NOT_FOUND
+        StatusCode::NOT_FOUND
     };
 
     if LogConfig::get().debug_enabled {
         log::debug!("blob head response: {}", status);
     }
 
-    let body_impl = Empty::<bytes::Bytes>::new();
-    let boxed_body = http_body_util::BodyExt::boxed(body_impl);
-
-    let temp_response = warp::http::Response::builder()
+    Response::builder()
         .status(status)
-        .body(boxed_body)
-        .map_err(|_| ProxyError::internal_server_error("failed to build blob response"))?;
-
-    Ok(unsafe {
-        std::mem::transmute::<
-            warp::http::Response<
-                http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>,
-            >,
-            warp::reply::Response,
-        >(temp_response)
-    })
+        .body(Body::empty())
+        .map_err(|_| ProxyError::internal_server_error("failed to build blob response"))
 }
 
 pub async fn handle_blob_upload<S, B>(
     context: RequestContext<'_>,
     digest: String,
     stream: S,
-) -> Result<warp::reply::Response, ProxyError>
+) -> Result<Response, ProxyError>
 where
-    S: Stream<Item = Result<B, warp::Error>> + Unpin,
+    S: Stream<Item = Result<B, axum::Error>> + Unpin,
     B: Buf,
 {
     let start_time = Instant::now();
@@ -74,20 +64,8 @@ where
         log::debug!("blob upload response: created");
     }
 
-    let body_impl = Empty::<bytes::Bytes>::new();
-    let boxed_body = http_body_util::BodyExt::boxed(body_impl);
-
-    let temp_response = warp::http::Response::builder()
-        .status(warp::http::StatusCode::CREATED)
-        .body(boxed_body)
-        .map_err(|_| ProxyError::internal_server_error("failed to build blob upload response"))?;
-
-    Ok(unsafe {
-        std::mem::transmute::<
-            warp::http::Response<
-                http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>,
-            >,
-            warp::reply::Response,
-        >(temp_response)
-    })
+    Response::builder()
+        .status(StatusCode::CREATED)
+        .body(Body::empty())
+        .map_err(|_| ProxyError::internal_server_error("failed to build blob upload response"))
 }

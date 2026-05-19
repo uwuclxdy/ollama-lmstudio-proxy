@@ -78,7 +78,10 @@ fn display_includes_code_and_message() {
     let e = ProxyError::new("some error".to_string(), 422);
     let s = format!("{e}");
     assert!(s.contains("422"), "display must include status code: {s}");
-    assert!(s.contains("some error"), "display must include message: {s}");
+    assert!(
+        s.contains("some error"),
+        "display must include message: {s}"
+    );
 }
 
 // ── is_model_loading_error ───────────────────────────────────────────────────

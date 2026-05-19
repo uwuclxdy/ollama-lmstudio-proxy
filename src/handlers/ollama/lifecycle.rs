@@ -9,9 +9,11 @@ use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::http::json_response;
 use crate::logging::{log_request, log_timed};
+use crate::model::ModelResolver;
 use crate::model::utils::extract_required_model_name;
-use crate::server::ModelResolverType;
+use crate::storage::VirtualModelStore;
 use crate::storage::virtual_models::VirtualModelMetadata;
+use std::sync::Arc;
 
 use super::download::{
     initiate_lmstudio_download, stream_download_status_updates, wait_for_download_completion,
@@ -25,10 +27,10 @@ use crate::streaming::create_ndjson_stream_response;
 
 pub async fn handle_ollama_pull(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("pull", Some(&body), None);
     let requested_model = extract_required_model_name(&body)?;
@@ -127,10 +129,10 @@ pub async fn handle_ollama_pull(
 
 pub async fn handle_ollama_create(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("create", Some(&body), None);
     let new_model_name = extract_required_model_name(&body)?;
@@ -142,15 +144,44 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
+    if let Some(files) = body.get("files") {
+        let has_content = match files {
+            Value::Object(map) => !map.is_empty(),
+            Value::Array(arr) => !arr.is_empty(),
+            Value::Null => false,
+            _ => true,
+        };
+        if has_content {
+            return Err(ProxyError::bad_request(
+                "creating models from custom blobs is not supported via LM Studio proxy",
+            ));
+        }
+    }
+
+    if body.get("quantize").is_some() {
+        return Err(ProxyError::bad_request(
+            "quantization is not available via LM Studio proxy",
+        ));
+    }
+
+    let (resolved_id, source_virtual_entry) = resolve_model_target(
+        &context,
+        &model_resolver,
+        source_model_name,
+        cancellation_token,
+    )
+    .await?;
+
+    let base_metadata = source_virtual_entry.map(|entry| entry.metadata);
+    let metadata = VirtualModelStore::build_metadata_from_request(&body, base_metadata);
+
     let entry = context
         .virtual_models
-        .create_from_request(
-            &context,
-            &model_resolver,
+        .create_alias(
             new_model_name,
-            source_model_name,
-            &body,
-            cancellation_token,
+            source_model_name.to_string(),
+            resolved_id,
+            metadata,
         )
         .await?;
 
@@ -179,10 +210,10 @@ pub async fn handle_ollama_create(
 
 pub async fn handle_ollama_copy(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("copy", Some(&body), None);
     let source = body
@@ -230,7 +261,7 @@ pub async fn handle_ollama_copy(
 pub async fn handle_ollama_delete(
     context: RequestContext<'_>,
     body: Value,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("delete", Some(&body), None);
     let model_name = extract_required_model_name(&body)?;
@@ -252,10 +283,10 @@ pub async fn handle_ollama_delete(
 
 pub async fn handle_ollama_push(
     context: RequestContext<'_>,
-    model_resolver: ModelResolverType,
+    model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-) -> Result<warp::reply::Response, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("push", Some(&body), None);
     let model_name = extract_required_model_name(&body)?;

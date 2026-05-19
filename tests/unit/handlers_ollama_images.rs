@@ -113,7 +113,10 @@ fn top_level_images_target_last_user_message_not_last_message() {
     let arr = result.as_array().unwrap();
     // assistant message should be untouched
     assert_eq!(arr[1]["role"], json!("assistant"));
-    assert!(arr[1]["content"].is_string(), "assistant must keep string content");
+    assert!(
+        arr[1]["content"].is_string(),
+        "assistant must keep string content"
+    );
     // user message should have image content parts
     let content = arr[0]["content"].as_array().unwrap();
     assert_eq!(content[1]["type"], json!("image_url"));
@@ -175,8 +178,7 @@ fn vision_messages_system_plus_no_images_keeps_string_content() {
 #[test]
 fn vision_messages_system_plus_images_yields_typed_parts() {
     let images_val = json!(["iVBORw0KGgoAAA"]);
-    let messages =
-        build_vision_chat_messages(Some("be brief"), "describe", Some(&images_val));
+    let messages = build_vision_chat_messages(Some("be brief"), "describe", Some(&images_val));
     let arr = messages.as_array().unwrap();
     assert_eq!(arr.len(), 2);
     assert_eq!(arr[0]["role"], json!("system"));

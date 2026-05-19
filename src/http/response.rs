@@ -1,6 +1,7 @@
+use axum::body::Body;
+use axum::response::Response;
+use http::{HeaderMap, StatusCode, header};
 use serde_json::Value;
-use warp::http::HeaderMap;
-use warp::http::header;
 
 use crate::constants::{
     CONTENT_TYPE_JSON, HEADER_ACCESS_CONTROL_ALLOW_HEADERS, HEADER_ACCESS_CONTROL_ALLOW_METHODS,
@@ -16,12 +17,12 @@ pub fn is_json_response(response: &reqwest::Response) -> bool {
         .unwrap_or(false)
 }
 
-pub fn json_response(value: &Value) -> warp::reply::Response {
+pub fn json_response(value: &Value) -> Response {
     let json_string = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
     let content_length = json_string.len();
 
-    warp::http::Response::builder()
-        .status(warp::http::StatusCode::OK)
+    Response::builder()
+        .status(StatusCode::OK)
         .header("Content-Type", CONTENT_TYPE_JSON)
         .header("Content-Length", content_length.to_string())
         .header("Cache-Control", HEADER_CACHE_CONTROL)
@@ -37,21 +38,18 @@ pub fn json_response(value: &Value) -> warp::reply::Response {
             "Access-Control-Allow-Headers",
             HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
         )
-        .body(json_string.into())
+        .body(Body::from(json_string))
         .unwrap_or_else(|_| {
-            warp::http::Response::builder()
-                .status(warp::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Internal Server Error".into())
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("Internal Server Error"))
                 .unwrap()
         })
 }
 
-/// Build forward headers for requests, filtering out hop-by-hop headers
-pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> HeaderMap {
-    use reqwest::header::{
-        HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
-    };
-    use warp::http::header;
+/// Build forward headers for requests, filtering out hop-by-hop headers.
+pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> reqwest::header::HeaderMap {
+    use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue};
 
     let mut filtered = ReqHeaderMap::new();
 
@@ -68,8 +66,8 @@ pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> HeaderMa
         }
 
         if let (Ok(req_name), Ok(req_value)) = (
-            name_str.parse::<ReqHeaderName>(),
-            ReqHeaderValue::from_bytes(value.as_bytes()),
+            name_str.parse::<HeaderName>(),
+            HeaderValue::from_bytes(value.as_bytes()),
         ) {
             filtered.append(req_name, req_value);
         }
@@ -77,8 +75,8 @@ pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> HeaderMa
 
     if force_json {
         filtered.insert(
-            header::CONTENT_TYPE,
-            ReqHeaderValue::from_static(CONTENT_TYPE_JSON),
+            reqwest::header::CONTENT_TYPE,
+            HeaderValue::from_static(CONTENT_TYPE_JSON),
         );
     }
 

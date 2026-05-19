@@ -13,20 +13,21 @@ use crate::handlers::RequestContext;
 use crate::http::CancellableRequest;
 use crate::logging::{LogConfig, log_timed};
 
-pub async fn handle_ollama_root() -> Result<warp::reply::Response, ProxyError> {
-    Ok(warp::http::Response::builder()
-        .status(warp::http::StatusCode::OK)
+pub async fn handle_ollama_root() -> Result<axum::response::Response, ProxyError> {
+    use axum::body::Body;
+    Ok(axum::response::Response::builder()
+        .status(http::StatusCode::OK)
         .header("Content-Type", "text/plain; charset=utf-8")
-        .body("Ollama is running".into())
+        .body(Body::from("Ollama is running"))
         .unwrap_or_else(|_| {
-            warp::http::Response::builder()
-                .status(warp::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Internal Server Error".into())
+            axum::response::Response::builder()
+                .status(http::StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("Internal Server Error"))
                 .unwrap()
         }))
 }
 
-pub async fn handle_ollama_version() -> Result<warp::reply::Response, ProxyError> {
+pub async fn handle_ollama_version() -> Result<axum::response::Response, ProxyError> {
     if LogConfig::get().debug_enabled {
         log::debug!("version request");
     }

@@ -33,7 +33,7 @@ fn quantization_from_body(body: &serde_json::Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn source_override_from_body<'a>(body: &'a serde_json::Value) -> Option<&'a str> {
+fn source_override_from_body(body: &serde_json::Value) -> Option<&str> {
     body.get("source").and_then(|s| s.as_str())
 }
 

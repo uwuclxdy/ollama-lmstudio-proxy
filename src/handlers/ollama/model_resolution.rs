@@ -5,8 +5,9 @@ use crate::error::ProxyError;
 use crate::handlers::RequestContext;
 use crate::handlers::ollama::utils::extract_system_prompt;
 use crate::model::ModelInfo;
-use crate::server::ModelResolverType;
+use crate::model::ModelResolver;
 use crate::storage::VirtualModelEntry;
+use std::sync::Arc;
 
 pub struct ModelResolutionContext {
     pub lm_studio_model_id: String,
@@ -17,7 +18,7 @@ pub struct ModelResolutionContext {
 
 pub async fn resolve_model_target<'a>(
     context: &RequestContext<'a>,
-    model_resolver: &ModelResolverType,
+    model_resolver: &Arc<ModelResolver>,
     requested_model: &str,
     cancellation_token: CancellationToken,
 ) -> Result<(String, Option<VirtualModelEntry>), ProxyError> {
@@ -25,17 +26,15 @@ pub async fn resolve_model_target<'a>(
         return Ok((entry.target_model_id.clone(), Some(entry)));
     }
 
-    match model_resolver {
-        ModelResolverType::Native(resolver) => resolver
-            .resolve_model_name(requested_model, context.client, cancellation_token)
-            .await
-            .map(|id| (id, None)),
-    }
+    model_resolver
+        .resolve_model_name(requested_model, context.client, cancellation_token)
+        .await
+        .map(|id| (id, None))
 }
 
 pub async fn resolve_model_with_context<'a>(
     context: &RequestContext<'a>,
-    model_resolver: &ModelResolverType,
+    model_resolver: &Arc<ModelResolver>,
     requested_model: &str,
     request_body: &Value,
     cancellation_token: CancellationToken,
@@ -76,18 +75,14 @@ pub async fn resolve_model_with_context<'a>(
 
 pub async fn fetch_model_info_for_id(
     context: &RequestContext<'_>,
-    model_resolver: &ModelResolverType,
+    model_resolver: &Arc<ModelResolver>,
     target_model_id: &str,
     cancellation_token: CancellationToken,
 ) -> Result<Option<ModelInfo>, ProxyError> {
-    match model_resolver {
-        ModelResolverType::Native(resolver) => {
-            let models = resolver
-                .get_all_models(context.client, cancellation_token)
-                .await?;
-            Ok(models.into_iter().find(|model| model.id == target_model_id))
-        }
-    }
+    let models = model_resolver
+        .get_all_models(context.client, cancellation_token)
+        .await?;
+    Ok(models.into_iter().find(|model| model.id == target_model_id))
 }
 
 fn merge_option_maps(base: Option<&Value>, overrides: Option<&Value>) -> Option<Value> {

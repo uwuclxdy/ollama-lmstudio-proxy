@@ -65,5 +65,8 @@ fn results_are_stable_across_input_order_permutations() {
     let reversed: Vec<_> = base.iter().rev().cloned().collect();
     let r1 = find_best_match("qwen2-7b", &base).map(|m| m.id.clone());
     let r2 = find_best_match("qwen2-7b", &reversed).map(|m| m.id.clone());
-    assert_eq!(r1, r2, "result must be deterministic regardless of input order");
+    assert_eq!(
+        r1, r2,
+        "result must be deterministic regardless of input order"
+    );
 }
