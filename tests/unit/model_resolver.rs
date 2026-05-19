@@ -185,10 +185,11 @@ fn resolve_match_result_is_stable_across_input_order() {
 // Verify the clean step that precedes resolve_match produces the expected input.
 
 #[test]
-fn clean_model_name_feeds_stripped_query_to_resolver() {
-    // Mirrors what resolve_model_name does: clean first, then resolve.
+fn clean_model_name_feeds_query_to_resolver_with_tag_preserved() {
+    // Per api_docs/ollama.md "Model names": ":8b" is a version identifier, not
+    // the default ":latest", so it is preserved into the resolver.
     let cleaned = crate::model::utils::clean_model_name("llama3.1:8b");
-    assert_eq!(cleaned, "llama3.1", "resolver receives cleaned name");
+    assert_eq!(cleaned, "llama3.1:8b");
 }
 
 #[test]

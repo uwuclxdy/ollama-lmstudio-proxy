@@ -13,14 +13,15 @@ fn clean_model_name_strips_latest_suffix() {
 }
 
 #[test]
-fn clean_model_name_strips_numeric_tag() {
-    // "llama3.1:8b" → "llama3.1"
-    assert_eq!(clean_model_name("llama3.1:8b"), "llama3.1");
+fn clean_model_name_preserves_size_tag() {
+    // Per api_docs/ollama.md "Model names": tags identify specific versions;
+    // only ":latest" is the default and gets stripped.
+    assert_eq!(clean_model_name("llama3.1:8b"), "llama3.1:8b");
 }
 
 #[test]
-fn clean_model_name_strips_multi_digit_numeric_tag() {
-    assert_eq!(clean_model_name("mistral:70b"), "mistral");
+fn clean_model_name_preserves_multi_digit_size_tag() {
+    assert_eq!(clean_model_name("mistral:70b"), "mistral:70b");
 }
 
 #[test]
@@ -52,9 +53,9 @@ fn clean_model_name_latest_takes_precedence_over_numeric_colon() {
 }
 
 #[test]
-fn clean_model_name_namespace_slash_with_numeric_tag() {
-    // "user/model:7b" — numeric tag stripped leaving "user/model"
-    assert_eq!(clean_model_name("user/model:7b"), "user/model");
+fn clean_model_name_namespace_slash_preserves_size_tag() {
+    // Per spec: only ":latest" is stripped — size tags like ":7b" identify a version.
+    assert_eq!(clean_model_name("user/model:7b"), "user/model:7b");
 }
 
 #[test]
@@ -75,11 +76,10 @@ fn clean_model_name_very_long_name_no_tag() {
 }
 
 #[test]
-fn clean_model_name_very_long_name_with_numeric_tag() {
+fn clean_model_name_very_long_name_with_size_tag_preserved() {
     let mut name = "a".repeat(512);
     name.push_str(":8b");
-    let expected = &name[..512];
-    assert_eq!(clean_model_name(&name), expected);
+    assert_eq!(clean_model_name(&name), name.as_str());
 }
 
 #[test]
@@ -97,9 +97,9 @@ fn clean_model_name_only_digits_no_colon() {
 }
 
 #[test]
-fn clean_model_name_multiple_colons_only_last_is_examined() {
-    // "a:b:70b" — rfind(':') hits the second colon, suffix "70b" is all digits
-    assert_eq!(clean_model_name("a:b:70b"), "a:b");
+fn clean_model_name_multiple_colons_preserve_non_latest_tag() {
+    // Per spec: only ":latest" is stripped — ":70b" is a version tag and stays.
+    assert_eq!(clean_model_name("a:b:70b"), "a:b:70b");
 }
 
 #[test]
