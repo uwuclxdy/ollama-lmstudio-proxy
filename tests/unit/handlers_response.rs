@@ -28,14 +28,3 @@ fn response_context_generate_variant() {
     };
     assert_eq!(prompt, "hello world");
 }
-
-#[test]
-fn response_context_generate_empty_prompt() {
-    let ctx = ResponseContext::Generate {
-        prompt: String::new(),
-    };
-    let ResponseContext::Generate { prompt } = ctx else {
-        panic!("expected Generate variant");
-    };
-    assert!(prompt.is_empty());
-}

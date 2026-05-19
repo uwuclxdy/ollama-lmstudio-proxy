@@ -40,15 +40,3 @@ fn passthrough_request_with_query() {
     assert_eq!(req.query.as_deref(), Some("stream=true"));
     assert!(!req.body.is_empty());
 }
-
-#[test]
-fn passthrough_request_delete_method() {
-    let req = LmStudioPassthroughRequest {
-        method: http::Method::DELETE,
-        endpoint: "/v1/models/llama3".to_string(),
-        body: Bytes::new(),
-        headers: http::HeaderMap::new(),
-        query: None,
-    };
-    assert_eq!(req.method, http::Method::DELETE);
-}

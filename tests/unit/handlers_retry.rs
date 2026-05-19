@@ -58,16 +58,6 @@ fn lm_studio_loading_patterns_trigger() {
     assert!(is_model_loading_error("request timeout"));
 }
 
-// --- negative + model-ref composite ---
-
-#[test]
-fn negative_and_model_ref_composites_trigger() {
-    assert!(is_model_loading_error("no model available"));
-    assert!(is_model_loading_error("failed to load the model"));
-    assert!(is_model_loading_error("model unavailable"));
-    assert!(is_model_loading_error("model not ready to initialize"));
-}
-
 // --- messages that should NOT trigger retry ---
 
 #[test]

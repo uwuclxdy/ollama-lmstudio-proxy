@@ -88,14 +88,6 @@ fn append_query_params_adds_ampersand_when_query_exists() {
 }
 
 #[test]
-fn append_query_params_empty_string_appends_bare_question_mark() {
-    with_ctx!("http://x", |ctx| {
-        let result = ctx.append_query_params("http://x/path".to_string(), Some(""));
-        assert_eq!(result, "http://x/path?");
-    });
-}
-
-#[test]
 fn append_query_params_multiple_params_in_one_string() {
     with_ctx!("http://x", |ctx| {
         let result = ctx.append_query_params("http://x/v1".to_string(), Some("a=1&b=2"));

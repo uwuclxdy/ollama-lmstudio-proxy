@@ -153,4 +153,3 @@ async fn ndjson_stream_response_convenience_returns_ok() {
     let result = create_ndjson_stream_response(rx, "test error message");
     assert!(result.is_ok());
 }
-
