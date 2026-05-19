@@ -1,6 +1,12 @@
 use serde_json::{Value, json};
 
 pub fn recover_json_from_chunk(chunk_data: &str) -> Option<Value> {
+    if let Ok(parsed) = serde_json::from_str::<Value>(chunk_data.trim())
+        && (parsed.is_object() || parsed.is_array())
+    {
+        return Some(parsed);
+    }
+
     if let Some(start_brace) = chunk_data.find('{')
         && let Some(end_brace) = chunk_data.rfind('}')
         && start_brace < end_brace
