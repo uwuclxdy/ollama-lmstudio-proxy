@@ -7,7 +7,7 @@
 // resolves to.
 
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
@@ -133,8 +133,7 @@ async fn non_streaming_chat_returns_ollama_shape() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Hello there!", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -179,10 +178,7 @@ async fn stream_absent_defaults_to_non_streaming() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Sure!", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Sure!", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -243,8 +239,14 @@ async fn streaming_chat_emits_ndjson_with_final_done_chunk() {
     // Final chunk has done:true and timing stats
     let final_chunk = chunks.last().expect("last chunk");
     assert_eq!(final_chunk["done"], true, "last chunk must be done:true");
-    assert!(final_chunk.get("done_reason").is_some(), "done_reason missing");
-    assert!(final_chunk.get("eval_count").is_some(), "eval_count missing");
+    assert!(
+        final_chunk.get("done_reason").is_some(),
+        "done_reason missing"
+    );
+    assert!(
+        final_chunk.get("eval_count").is_some(),
+        "eval_count missing"
+    );
     assert!(
         final_chunk.get("total_duration").is_some(),
         "total_duration missing"
@@ -275,10 +277,7 @@ async fn stream_explicit_false_returns_single_object() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("OK", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -312,10 +311,7 @@ async fn options_temperature_num_predict_seed_forwarded() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Fine.", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Fine.", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -352,10 +348,7 @@ async fn options_num_ctx_forwarded_as_context_length() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("OK", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -387,10 +380,7 @@ async fn options_stop_array_forwarded() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Done.", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Done.", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -421,10 +411,7 @@ async fn options_stop_scalar_forwarded() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Done.", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Done.", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -537,8 +524,7 @@ async fn format_json_schema_object_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("{\"answer\":42}", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("{\"answer\":42}", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -573,12 +559,21 @@ async fn format_json_string_shorthand_forwarded() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
+    // Wire-level pin: Ollama's `"format": "json"` shorthand is translated to
+    // OpenAI's `response_format: {"type": "json_object"}` in the LM Studio
+    // request. Note that lmstudio_ollama_openai.md flags that LM Studio
+    // itself rejects `json_object`; documenting current proxy behaviour
+    // here ensures any future translation change (e.g. to `json_schema`)
+    // updates this test deliberately.
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
+        .and(body_partial_json(json!({
+            "response_format": {"type": "json_object"}
+        })))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("{\"ok\":true}", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("{\"ok\":true}", "stop")),
         )
+        .expect(1)
         .mount(&p.mock)
         .await;
 
@@ -596,6 +591,7 @@ async fn format_json_string_shorthand_forwarded() {
         .expect("POST /api/chat format json string");
 
     assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -647,8 +643,7 @@ async fn think_flag_forwarded_and_reasoning_in_message() {
     let body: Value = resp.json().await.expect("JSON");
     assert_eq!(body["message"]["content"], "The answer is 42.");
     assert_eq!(
-        body["message"]["thinking"],
-        "Let me think step by step...",
+        body["message"]["thinking"], "Let me think step by step...",
         "thinking field must appear in the Ollama message"
     );
 }
@@ -665,8 +660,7 @@ async fn per_message_images_converted_to_multimodal_content() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("I see a cat.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("I see a cat.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -706,10 +700,7 @@ async fn keep_alive_duration_string_accepted() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("OK", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -730,7 +721,7 @@ async fn keep_alive_duration_string_accepted() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 15. keep_alive 0 (unload immediately) accepted
+// 15. keep_alive 0 (unload immediately) triggers LM Studio unload
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -740,10 +731,17 @@ async fn keep_alive_zero_accepted() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("OK", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    // Per spec, `keep_alive: 0` must trigger an explicit unload via the LM
+    // Studio native endpoint after the response is returned. The unload runs
+    // in a tokio::spawn background task, so we poll the mock briefly.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
         .mount(&p.mock)
         .await;
 
@@ -761,6 +759,26 @@ async fn keep_alive_zero_accepted() {
         .expect("POST /api/chat keep_alive 0");
 
     assert_eq!(resp.status(), 200);
+
+    let unload_was_called = async {
+        for _ in 0..50 {
+            let received = p.mock.received_requests().await.unwrap_or_default();
+            if received
+                .iter()
+                .any(|r| r.url.path() == "/api/v1/models/unload")
+            {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    }
+    .await;
+
+    assert!(
+        unload_was_called,
+        "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -845,8 +863,7 @@ async fn finish_reason_length_maps_to_done_reason_length() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Truncated...", "length")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Truncated...", "length")),
         )
         .mount(&p.mock)
         .await;
@@ -880,8 +897,7 @@ async fn penalty_options_forwarded_successfully() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Penalized.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Penalized.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -917,10 +933,7 @@ async fn logprobs_and_top_logprobs_forwarded() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("Yes.", "stop")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Yes.", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -954,8 +967,7 @@ async fn multi_turn_messages_forwarded_intact() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("I remember.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("I remember.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -1085,8 +1097,7 @@ async fn system_message_in_messages_forwarded_without_duplication() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_chat_response("As instructed.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("As instructed.", "stop")),
         )
         .mount(&p.mock)
         .await;
