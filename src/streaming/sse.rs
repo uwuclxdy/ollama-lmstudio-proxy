@@ -301,3 +301,7 @@ pub async fn handle_passthrough_streaming_response(
 
     create_streaming_response(rx, StreamContentType::Sse)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/streaming_sse.rs"]
+mod tests;

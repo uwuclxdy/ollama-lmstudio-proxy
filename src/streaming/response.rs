@@ -97,3 +97,7 @@ pub fn create_ndjson_stream_response(
     }
     result
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/streaming_response.rs"]
+mod tests;

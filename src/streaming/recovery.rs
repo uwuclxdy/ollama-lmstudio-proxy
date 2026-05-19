@@ -46,3 +46,7 @@ pub fn recover_json_from_chunk(chunk_data: &str) -> Option<Value> {
 
     None
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/streaming_recovery.rs"]
+mod tests;
