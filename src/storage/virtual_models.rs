@@ -101,14 +101,14 @@ impl VirtualModelStore {
                 _ => true,
             };
             if has_content {
-                return Err(ProxyError::not_implemented(
+                return Err(ProxyError::bad_request(
                     "creating models from custom blobs is not supported via LM Studio proxy",
                 ));
             }
         }
 
         if body.get("quantize").is_some() {
-            return Err(ProxyError::not_implemented(
+            return Err(ProxyError::bad_request(
                 "quantization is not available via LM Studio proxy",
             ));
         }
