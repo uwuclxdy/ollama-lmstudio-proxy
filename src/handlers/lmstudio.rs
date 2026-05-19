@@ -14,8 +14,7 @@ use crate::handlers::RequestContext;
 use crate::handlers::retry::{with_retry_and_cancellation, with_simple_retry};
 use crate::http::{
     build_forward_headers,
-    client::{CancellableRequest, handle_json_response},
-    json_response,
+    client::CancellableRequest,
     parsing::parse_json_body_template,
     request::prepare_request_body,
 };
@@ -260,24 +259,12 @@ async fn route_response(
 
 async fn route_non_streaming_response(
     response: reqwest::Response,
-    cancellation_token: CancellationToken,
+    _cancellation_token: CancellationToken,
 ) -> Result<warp::reply::Response, ProxyError> {
-    let is_json_response = crate::http::response::is_json_response(&response);
-    if is_json_response {
-        let json_body = handle_json_response(response, cancellation_token).await?;
-        if LogConfig::get().debug_enabled {
-            log::debug!(
-                "passthrough response: {}",
-                serde_json::to_string_pretty(&json_body).unwrap_or_default()
-            );
-        }
-        Ok(json_response(&json_body))
-    } else {
-        if LogConfig::get().debug_enabled {
-            log::debug!("passthrough response: (raw/non-json)");
-        }
-        forward_raw_response(response).await
+    if LogConfig::get().debug_enabled {
+        log::debug!("passthrough response: (verbatim)");
     }
+    forward_raw_response(response).await
 }
 
 fn determine_passthrough_endpoint_url(
