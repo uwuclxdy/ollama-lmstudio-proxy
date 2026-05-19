@@ -108,6 +108,12 @@ fn clean_model_name_multiple_colons_last_is_non_numeric() {
     assert_eq!(clean_model_name("a:70b:instruct"), "a:70b:instruct");
 }
 
+#[test]
+fn clean_model_name_strips_latest_after_size_tag() {
+    // "model:7b:latest" — only ":latest" strips; the residual ":7b" stays.
+    assert_eq!(clean_model_name("model:7b:latest"), "model:7b");
+}
+
 // ─── extract_required_model_name ─────────────────────────────────────────────
 
 use serde_json::json;
