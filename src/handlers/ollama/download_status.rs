@@ -120,3 +120,7 @@ impl LmStudioDownloadStatus {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_download_status.rs"]
+mod tests;

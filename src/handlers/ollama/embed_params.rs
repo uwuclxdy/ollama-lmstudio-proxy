@@ -38,3 +38,7 @@ pub fn lift_embed_top_level_params(body: &mut Value) {
         options.entry("dimensions".to_string()).or_insert(d);
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_embed_params.rs"]
+mod tests;

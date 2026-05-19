@@ -124,3 +124,7 @@ fn calculate_match_score(query: &str, model: &ModelMatchView, model_id_lower: &s
 
     score
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/model_matcher.rs"]
+mod tests;

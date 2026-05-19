@@ -108,3 +108,7 @@ pub fn apply_keep_alive_ttl(target: &mut Value, keep_alive_seconds: Option<i64>)
 pub fn keep_alive_requests_unload(ttl: Option<i64>) -> bool {
     matches!(ttl, Some(value) if value == 0)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_keep_alive_parse.rs"]
+mod tests;

@@ -33,3 +33,7 @@ pub fn parse_parameter_count(s: &str) -> Option<u64> {
     }
     Some((number * multiplier as f64).round() as u64)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/model_param_count.rs"]
+mod tests;

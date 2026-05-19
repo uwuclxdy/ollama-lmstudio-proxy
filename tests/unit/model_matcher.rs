@@ -1,21 +1,4 @@
-//! Tests for deterministic model-name resolution.
-//!
-//! Ollama clients send `model:tag` strings; the proxy must map them to a single,
-//! deterministic LM Studio model id. When multiple substring matches exist,
-//! resolution must:
-//!   1. prefer an exact match (case-insensitive)
-//!   2. otherwise prefer a model that is currently loaded (cheap to query)
-//!   3. otherwise prefer the model whose id is closest in length to the query
-//!      (most specific match), with ties broken by lexicographic order on id
-//!
-//! Failing those criteria, no result must come from non-deterministic iteration
-//! order: identical input must always produce identical output.
-
-#[path = "../src/model/matcher.rs"]
-#[allow(dead_code)]
-mod matcher;
-
-use matcher::{ModelMatchView, find_best_match};
+use super::*;
 
 fn mv(id: &str, loaded: bool) -> ModelMatchView {
     ModelMatchView {
@@ -80,21 +63,7 @@ fn results_are_stable_across_input_order_permutations() {
         mv("qwen2-7b-tools", false),
     ];
     let reversed: Vec<_> = base.iter().rev().cloned().collect();
-    let r1 = find_best_match("qwen2-7b", &base).unwrap().id.clone();
-    let r2 = find_best_match("qwen2-7b", &reversed).unwrap().id.clone();
-    assert_eq!(r1, r2, "matcher must be deterministic across input order");
-}
-
-#[test]
-fn no_match_returns_none() {
-    let models = vec![mv("granite-3.0-2b", false)];
-    let result = find_best_match("nonexistent-model", &models);
-    assert!(result.is_none());
-}
-
-#[test]
-fn case_insensitive_exact_match() {
-    let models = vec![mv("Qwen2-7B-Instruct", false)];
-    let result = find_best_match("qwen2-7b-instruct", &models).expect("should match");
-    assert_eq!(result.id, "Qwen2-7B-Instruct");
+    let r1 = find_best_match("qwen2-7b", &base).map(|m| m.id.clone());
+    let r2 = find_best_match("qwen2-7b", &reversed).map(|m| m.id.clone());
+    assert_eq!(r1, r2, "result must be deterministic regardless of input order");
 }

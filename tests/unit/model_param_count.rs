@@ -1,15 +1,4 @@
-//! Tests for parameter-count parsing used to populate Ollama's
-//! `general.parameter_count` field on /api/show.
-//!
-//! Reference: api_docs/ollama.md line 1485:
-//!   "general.parameter_count": 8030261248
-//! (8030261248 ≈ 8 billion — paired with parameter_size: "8.0B").
-
-#[path = "../src/model/param_count.rs"]
-#[allow(dead_code)]
-mod param_count;
-
-use param_count::parse_parameter_count;
+use super::*;
 
 #[test]
 fn parses_billions() {

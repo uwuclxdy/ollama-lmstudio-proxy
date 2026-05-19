@@ -19,3 +19,7 @@ fn process_start() -> &'static DateTime<Utc> {
 pub fn process_start_modified_at() -> String {
     process_start().to_rfc3339()
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/model_timestamps.rs"]
+mod tests;

@@ -18,3 +18,7 @@ pub fn extract_system_prompt(body: &Value) -> Option<String> {
                 .map(|s| s.to_string())
         })
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_utils.rs"]
+mod tests;

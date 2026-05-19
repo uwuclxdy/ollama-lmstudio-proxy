@@ -1,24 +1,4 @@
-//! Tests for /api/embed top-level parameter lifting.
-//!
-//! Ollama /api/embed spec (api_docs/ollama.md lines 1708-1713):
-//!   Advanced parameters at the **top level** of the request body:
-//!     - truncate (default true)
-//!     - options { ... }
-//!     - keep_alive
-//!     - dimensions
-//!
-//! The proxy's option-mapping reads `truncate`/`dimensions` only from `options`,
-//! so a request like {"model":..., "input":..., "truncate": false, "dimensions": 256}
-//! must have those top-level fields lifted into the options map before mapping.
-
-#[path = "../src/constants.rs"]
-#[allow(dead_code)]
-mod constants;
-
-#[path = "../src/handlers/ollama/embed_params.rs"]
-mod embed_params;
-
-use embed_params::lift_embed_top_level_params;
+use super::*;
 use serde_json::json;
 
 #[test]

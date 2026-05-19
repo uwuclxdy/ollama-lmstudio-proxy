@@ -1,28 +1,4 @@
-//! Tests for keep_alive translation.
-//!
-//! Ollama keep_alive semantics (api_docs/ollama.md, Modelfile keep_alive section):
-//!   - positive int N seconds        → keep loaded for N seconds
-//!   - 0                              → unload immediately
-//!   - negative (e.g. -1, "-1s")      → keep loaded forever (no TTL)
-//!   - duration string ("10m", "5h", "500ms")
-//!
-//! LM Studio /api/v0/* `ttl` field expects a non-negative number of seconds.
-//! Therefore negative Ollama values must NOT be forwarded as a negative ttl;
-//! the proxy should omit the field (LM Studio default = unbounded) instead.
-
-#[path = "../src/constants.rs"]
-#[allow(dead_code)]
-mod constants;
-
-#[path = "../src/error.rs"]
-#[allow(dead_code)]
-mod error;
-
-#[path = "../src/handlers/ollama/keep_alive_parse.rs"]
-#[allow(dead_code)]
-mod keep_alive_parse;
-
-use keep_alive_parse::{apply_keep_alive_ttl, parse_keep_alive_seconds};
+use super::*;
 use serde_json::{Value, json};
 
 fn parse(v: Value) -> Option<i64> {
@@ -107,8 +83,28 @@ fn apply_ttl_zero_sets_field() {
 }
 
 #[test]
-fn apply_ttl_none_omits_field() {
+fn apply_ttl_none_does_nothing() {
     let mut target = json!({"model": "x"});
     apply_keep_alive_ttl(&mut target, None);
     assert!(target.get("ttl").is_none());
+}
+
+#[test]
+fn keep_alive_requests_unload_true_for_zero() {
+    assert!(keep_alive_requests_unload(Some(0)));
+}
+
+#[test]
+fn keep_alive_requests_unload_false_for_positive() {
+    assert!(!keep_alive_requests_unload(Some(300)));
+}
+
+#[test]
+fn keep_alive_requests_unload_false_for_negative() {
+    assert!(!keep_alive_requests_unload(Some(-1)));
+}
+
+#[test]
+fn keep_alive_requests_unload_false_for_none() {
+    assert!(!keep_alive_requests_unload(None));
 }

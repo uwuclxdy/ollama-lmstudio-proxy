@@ -1,15 +1,4 @@
-//! /api/tags `modified_at` must be stable across calls within a single proxy run.
-//!
-//! Per Ollama spec, `modified_at` is the on-disk modification time of the model.
-//! LM Studio does not expose that, but emitting a fresh timestamp every call
-//! defeats clients that use the field for cache invalidation. The proxy must
-//! therefore return a process-stable value.
-
-#[path = "../src/model/timestamps.rs"]
-#[allow(dead_code)]
-mod timestamps;
-
-use timestamps::process_start_modified_at;
+use super::*;
 
 #[test]
 fn modified_at_is_stable_across_calls() {

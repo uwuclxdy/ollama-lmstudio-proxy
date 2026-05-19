@@ -106,3 +106,7 @@ impl BlobStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/storage_blob.rs"]
+mod tests;
