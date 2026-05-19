@@ -6,8 +6,8 @@
 // Delete and copy operate on the in-process VirtualModelStore.
 
 use serde_json::{Value, json};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path, path_regex};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -81,9 +81,9 @@ async fn pull_stream_false_returns_status_success() {
     // Model lookup for name resolution.
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -116,9 +116,9 @@ async fn pull_already_downloaded_returns_status_success() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -151,8 +151,11 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
     Mock::given(method("POST"))
         .and(path("/api/v1/models/download"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lms_download_downloading("job3", 0, 4_000_000_000)),
+            ResponseTemplate::new(200).set_body_json(lms_download_downloading(
+                "job3",
+                0,
+                4_000_000_000,
+            )),
         )
         .mount(&p.mock)
         .await;
@@ -167,9 +170,9 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -188,8 +191,7 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
     // NDJSON: find the last non-empty line.
     let last_line = text
         .lines()
-        .filter(|l| !l.trim().is_empty())
-        .last()
+        .rfind(|l| !l.trim().is_empty())
         .expect("at least one NDJSON line");
 
     let last_chunk: Value = serde_json::from_str(last_line)
@@ -210,6 +212,88 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
 }
 
 #[tokio::test]
+async fn pull_stream_true_in_progress_chunk_carries_total_completed() {
+    // While LM Studio reports `downloading`, the proxy emits in-progress NDJSON
+    // chunks. Per `src/handlers/ollama/download.rs` (`StatusResponse::to_chunk`),
+    // these carry `status`, `model`, `detail`, `job_id`, `total`, `completed`.
+    // The terminal chunk drops everything except `{"status":"success"}`.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/download"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_download_downloading(
+                "job-prog",
+                1_000_000,
+                4_000_000_000,
+            )),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/api/v1/models/download/status/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_download_completed("job-prog")))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/pull"))
+        .json(&json!({"model": "llama3.2:3b", "stream": true}))
+        .send()
+        .await
+        .expect("POST /api/pull stream");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    let mut chunks: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            serde_json::from_str(l).unwrap_or_else(|e| panic!("invalid ndjson line '{l}': {e}"))
+        })
+        .collect();
+
+    let terminal = chunks.pop().expect("at least one chunk");
+    assert_eq!(
+        terminal,
+        json!({"status": "success"}),
+        "terminal chunk must be bare success; got {terminal}"
+    );
+
+    // At least one in-progress chunk preceded it.
+    let in_progress = chunks
+        .iter()
+        .find(|c| c["status"].as_str() != Some("success"))
+        .expect("expected at least one in-progress chunk before terminal success");
+
+    assert_eq!(
+        in_progress["model"].as_str(),
+        Some("llama3.2:3b"),
+        "in-progress chunk must echo the requested model; got {in_progress}"
+    );
+    assert_eq!(
+        in_progress["total"].as_u64(),
+        Some(4_000_000_000),
+        "in-progress chunk must carry `total` from LM Studio; got {in_progress}"
+    );
+    assert_eq!(
+        in_progress["completed"].as_u64(),
+        Some(1_000_000),
+        "in-progress chunk must carry `completed` (downloaded_bytes); got {in_progress}"
+    );
+}
+
+#[tokio::test]
 async fn pull_stream_true_already_downloaded_bare_success() {
     let p = spawn_proxy().await;
 
@@ -221,9 +305,9 @@ async fn pull_stream_true_already_downloaded_bare_success() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -237,9 +321,16 @@ async fn pull_stream_true_already_downloaded_bare_success() {
     assert_eq!(resp.status(), 200);
 
     let text = resp.text().await.expect("body text");
-    let last_line = text.lines().filter(|l| !l.trim().is_empty()).last().expect("last line");
+    let last_line = text
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
+        .expect("last line");
     let last: Value = serde_json::from_str(last_line).expect("valid JSON");
-    assert_eq!(last, json!({"status": "success"}), "terminal chunk must be bare; got {last}");
+    assert_eq!(
+        last,
+        json!({"status": "success"}),
+        "terminal chunk must be bare; got {last}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -260,9 +351,9 @@ async fn pull_model_name_forwarded_to_lmstudio() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("phi3:mini"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("phi3:mini")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -310,9 +401,9 @@ async fn delete_virtual_model_succeeds() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -324,7 +415,11 @@ async fn delete_virtual_model_succeeds() {
         .send()
         .await
         .expect("POST /api/copy");
-    assert!(!copy.status().is_server_error(), "copy failed: {}", copy.status());
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
 
     // Delete it.
     let del = p
@@ -369,9 +464,9 @@ async fn delete_virtual_model_removed_from_tags() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -382,7 +477,11 @@ async fn delete_virtual_model_removed_from_tags() {
         .send()
         .await
         .expect("POST /api/copy");
-    assert!(!copy.status().is_server_error(), "copy failed: {}", copy.status());
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
 
     // Delete.
     let del = p
@@ -395,14 +494,22 @@ async fn delete_virtual_model_removed_from_tags() {
     assert_eq!(del.status(), 200);
 
     // The model should no longer appear in /api/tags virtual overlay.
-    let tags = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let tags = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     let body: Value = tags.json().await.expect("tags body");
     let models = body["models"].as_array().expect("models");
     let still_present = models.iter().any(|m| {
-        m["name"].as_str().map_or(false, |n| n.contains("ephemeral"))
-            || m["model"].as_str().map_or(false, |n| n.contains("ephemeral"))
+        m["name"].as_str().is_some_and(|n| n.contains("ephemeral"))
+            || m["model"].as_str().is_some_and(|n| n.contains("ephemeral"))
     });
-    assert!(!still_present, "deleted model should not appear in /api/tags; got {body}");
+    assert!(
+        !still_present,
+        "deleted model should not appear in /api/tags; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -434,9 +541,9 @@ async fn copy_creates_virtual_alias_in_tags() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -447,16 +554,33 @@ async fn copy_creates_virtual_alias_in_tags() {
         .send()
         .await
         .expect("POST /api/copy");
-    assert_eq!(copy.status(), 200, "copy should return 200; got {}", copy.status());
+    assert_eq!(
+        copy.status(),
+        200,
+        "copy should return 200; got {}",
+        copy.status()
+    );
 
-    let tags = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let tags = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     let body: Value = tags.json().await.expect("tags body");
     let models = body["models"].as_array().expect("models");
     let has_copy = models.iter().any(|m| {
-        m["name"].as_str().map_or(false, |n| n.contains("copy-target"))
-            || m["model"].as_str().map_or(false, |n| n.contains("copy-target"))
+        m["name"]
+            .as_str()
+            .is_some_and(|n| n.contains("copy-target"))
+            || m["model"]
+                .as_str()
+                .is_some_and(|n| n.contains("copy-target"))
     });
-    assert!(has_copy, "copy destination should appear in /api/tags; got {body}");
+    assert!(
+        has_copy,
+        "copy destination should appear in /api/tags; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -509,9 +633,9 @@ async fn copy_creates_virtual_model_showable_via_show() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("mistral:7b"),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("mistral:7b")])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -522,7 +646,11 @@ async fn copy_creates_virtual_model_showable_via_show() {
         .send()
         .await
         .expect("POST /api/copy");
-    assert!(!copy.status().is_server_error(), "copy failed: {}", copy.status());
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
 
     let show = p
         .client
@@ -531,5 +659,10 @@ async fn copy_creates_virtual_model_showable_via_show() {
         .send()
         .await
         .expect("POST /api/show copied model");
-    assert_eq!(show.status(), 200, "show on copied alias should succeed; got {}", show.status());
+    assert_eq!(
+        show.status(),
+        200,
+        "show on copied alias should succeed; got {}",
+        show.status()
+    );
 }
