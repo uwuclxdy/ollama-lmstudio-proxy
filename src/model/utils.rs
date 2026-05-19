@@ -27,3 +27,7 @@ pub fn clean_model_name(name: &str) -> &str {
     }
     after_latest
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/model_utils.rs"]
+mod tests;

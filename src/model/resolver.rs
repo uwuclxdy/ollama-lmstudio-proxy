@@ -170,3 +170,7 @@ impl ModelResolver {
         Ok(all_models.into_iter().filter(|m| m.is_loaded).collect())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/model_resolver.rs"]
+mod tests;
