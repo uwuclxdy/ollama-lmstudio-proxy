@@ -249,3 +249,7 @@ impl VirtualModelStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/storage_virtual_models.rs"]
+mod tests;
