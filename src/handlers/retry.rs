@@ -110,6 +110,7 @@ where
             log::error!("request failed: LM Studio unavailable - failing fast");
             Err(e)
         }
+        Err(e) if (400..500).contains(&e.status_code) => Err(e),
         Err(e) => {
             if is_model_loading_error(&e.message) {
                 let model_loading_start = Instant::now();
