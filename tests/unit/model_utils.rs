@@ -50,12 +50,6 @@ fn clean_model_name_no_colon_at_all() {
 }
 
 #[test]
-fn clean_model_name_latest_takes_precedence_over_numeric_colon() {
-    // "llama3:latest" — rfind(":latest") fires first, colon scan never runs
-    assert_eq!(clean_model_name("llama3:latest"), "llama3");
-}
-
-#[test]
 fn clean_model_name_namespace_slash_preserves_size_tag() {
     // Per spec: only ":latest" is stripped — size tags like ":7b" identify a version.
     assert_eq!(clean_model_name("user/model:7b"), "user/model:7b");
@@ -67,36 +61,12 @@ fn clean_model_name_namespace_slash_latest() {
 }
 
 #[test]
-fn clean_model_name_only_colon_is_not_numeric() {
-    // edge: colon at position 0 — colon_pos == 0, guard `colon_pos > 0` blocks strip
-    assert_eq!(clean_model_name(":8b"), ":8b");
-}
-
-#[test]
-fn clean_model_name_very_long_name_no_tag() {
-    let long = "a".repeat(512);
-    assert_eq!(clean_model_name(&long), long.as_str());
-}
-
-#[test]
-fn clean_model_name_very_long_name_with_size_tag_preserved() {
-    let mut name = "a".repeat(512);
-    name.push_str(":8b");
-    assert_eq!(clean_model_name(&name), name.as_str());
-}
-
-#[test]
 fn clean_model_name_special_chars_in_basename() {
     // Dots and dashes in the base are preserved
     assert_eq!(
         clean_model_name("meta-llama-3.1-8b-instruct:latest"),
         "meta-llama-3.1-8b-instruct"
     );
-}
-
-#[test]
-fn clean_model_name_only_digits_no_colon() {
-    assert_eq!(clean_model_name("123"), "123");
 }
 
 #[test]

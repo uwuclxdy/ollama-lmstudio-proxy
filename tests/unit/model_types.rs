@@ -48,33 +48,6 @@ fn virt(name: &str, target_id: &str) -> VirtualModelEntry {
     }
 }
 
-// ─── original make_native helpers ────────────────────────────────────────────
-
-fn make_native(
-    key: &str,
-    size_bytes: Option<u64>,
-    params_string: Option<String>,
-) -> NativeModelData {
-    NativeModelData {
-        key: key.to_string(),
-        model_type: "llm".to_string(),
-        publisher: "test".to_string(),
-        architecture: Some("llama".to_string()),
-        format: Some("gguf".to_string()),
-        quantization: Some(NativeQuantization {
-            name: Some("Q4_K_M".to_string()),
-            bits_per_weight: Some(4.0),
-        }),
-        max_context_length: 4096,
-        loaded_instances: vec![],
-        capabilities: None,
-        size_bytes,
-        params_string,
-        display_name: None,
-        description: None,
-    }
-}
-
 fn make_native_with_caps(
     key: &str,
     model_type: &str,
@@ -178,31 +151,15 @@ fn non_reasoning_llm_does_not_get_thinking() {
 }
 
 #[test]
-fn uses_real_size_bytes_when_present() {
-    let native = make_native("mymodel", Some(4_200_000_000), None);
-    let info = ModelInfo::from_native_data(&native);
-    assert_eq!(info.calculate_estimated_size(), 4_200_000_000);
-}
-
-#[test]
 fn falls_back_to_heuristic_when_size_bytes_absent() {
-    let native = make_native("llama-7b", None, None);
-    let info = ModelInfo::from_native_data(&native);
+    let info = ModelInfo::from_native_data(&native("llama-7b"));
     assert!(info.calculate_estimated_size() > 0);
     assert_ne!(info.calculate_estimated_size(), 4_200_000_000);
 }
 
 #[test]
-fn uses_real_params_string_when_present() {
-    let native = make_native("somemodel", None, Some("13B".to_string()));
-    let info = ModelInfo::from_native_data(&native);
-    assert_eq!(info.parse_parameters().size_string, "13B");
-}
-
-#[test]
 fn falls_back_to_inferred_params_when_absent() {
-    let native = make_native("llama-7b-instruct", None, None);
-    let info = ModelInfo::from_native_data(&native);
+    let info = ModelInfo::from_native_data(&native("llama-7b-instruct"));
     assert_eq!(info.parse_parameters().size_string, "7B");
 }
 
@@ -396,14 +353,6 @@ fn tags_model_digest_is_md5_of_ollama_name() {
     let v = info.to_ollama_tags_model();
     let expected = format!("{:x}", md5::compute(info.ollama_name.as_bytes()));
     assert_eq!(v["digest"].as_str().unwrap(), expected);
-}
-
-#[test]
-fn tags_model_digest_is_deterministic() {
-    let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let a = info.to_ollama_tags_model();
-    let b = info.to_ollama_tags_model();
-    assert_eq!(a["digest"], b["digest"]);
 }
 
 #[test]

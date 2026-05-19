@@ -264,7 +264,7 @@ async fn persistence_round_trip() {
 // --- canonical name normalization ---
 
 #[tokio::test]
-async fn get_normalizes_model_name_tag() {
+async fn get_strips_latest_tag_to_match_stored_alias() {
     let dir = TempDir::new().unwrap();
     let store = make_store(&dir);
 
@@ -278,9 +278,9 @@ async fn get_normalizes_model_name_tag() {
         .await
         .unwrap();
 
-    // "llama3" and "llama3:latest" should resolve to the same entry
-    // (depends on clean_model_name stripping :latest)
-    // If clean_model_name does strip :latest this passes; if not, get returns None
-    // Either way the store must not panic
-    let _ = store.get("llama3:latest").await;
+    let entry = store
+        .get("llama3:latest")
+        .await
+        .expect("':latest' must canonicalize to bare name");
+    assert_eq!(entry.name, "llama3");
 }
