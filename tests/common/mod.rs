@@ -68,7 +68,20 @@ pub async fn spawn_proxy() -> TestProxy {
         .expect("ProxyServer::new_with_state_dir");
     let server = Arc::new(server);
 
-    let routes = create_routes(server).recover(handle_rejection);
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_headers(vec![
+            "Content-Type",
+            "Authorization",
+            "Accept",
+            "Origin",
+            "X-Requested-With",
+        ])
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]);
+
+    let routes = create_routes(server)
+        .recover(handle_rejection)
+        .with(cors);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
