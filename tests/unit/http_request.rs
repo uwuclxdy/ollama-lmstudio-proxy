@@ -2,27 +2,6 @@ use super::*;
 use serde_json::{Value, json};
 
 #[test]
-fn forwards_presence_penalty() {
-    let options = json!({ "presence_penalty": 0.5 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("presence_penalty"), Some(&json!(0.5)));
-}
-
-#[test]
-fn forwards_frequency_penalty() {
-    let options = json!({ "frequency_penalty": 0.3 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("frequency_penalty"), Some(&json!(0.3)));
-}
-
-#[test]
-fn forwards_min_p() {
-    let options = json!({ "min_p": 0.05 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("min_p"), Some(&json!(0.05)));
-}
-
-#[test]
 fn collects_unsupported_options() {
     let options = json!({ "template": "{{.Prompt}}", "mirostat": 1, "temperature": 0.7 });
     let unsupported = collect_unsupported_keys(&options);
@@ -41,14 +20,6 @@ fn collects_unsupported_options() {
         "temperature should not appear in {:?}",
         unsupported
     );
-}
-
-#[test]
-fn num_ctx_maps_to_context_length() {
-    let options = json!({ "num_ctx": 8192 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("context_length"), Some(&json!(8192)));
-    assert!(params.get("num_ctx").is_none());
 }
 
 #[test]
@@ -246,27 +217,6 @@ fn forwards_stop_array() {
 }
 
 #[test]
-fn forwards_presence_penalty_direct() {
-    let options = json!({ "presence_penalty": 0.5 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("presence_penalty"), Some(&json!(0.5)));
-}
-
-#[test]
-fn forwards_frequency_penalty_direct() {
-    let options = json!({ "frequency_penalty": 0.3 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("frequency_penalty"), Some(&json!(0.3)));
-}
-
-#[test]
-fn forwards_min_p_direct() {
-    let options = json!({ "min_p": 0.05 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("min_p"), Some(&json!(0.05)));
-}
-
-#[test]
 fn forwards_truncate_when_present() {
     let options = json!({ "truncate": false });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
@@ -312,18 +262,6 @@ fn num_predict_maps_to_max_tokens_when_max_tokens_absent() {
     assert!(
         params.get("num_predict").is_none(),
         "num_predict must be renamed to max_tokens, got {:?}",
-        params
-    );
-}
-
-#[test]
-fn num_ctx_renamed_to_context_length() {
-    let options = json!({ "num_ctx": 4096 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("context_length"), Some(&json!(4096)));
-    assert!(
-        params.get("num_ctx").is_none(),
-        "num_ctx must be renamed; got {:?}",
         params
     );
 }

@@ -80,16 +80,6 @@ fn choices_array_extracted_when_top_level_broken() {
 }
 
 #[test]
-fn choices_only_array_extracted_and_wrapped() {
-    // "choices": [...] present, outer braces broken
-    let input = r#"{"choices":[{"delta":{"content":"text"}}]"#; // missing closing brace
-    // brace search won't find valid JSON, falls to choices-key extraction path
-    let result = recover_json_from_chunk(input);
-    // May succeed or fail depending on parse path order — just must not panic
-    let _ = result;
-}
-
-#[test]
 fn object_with_nested_braces_recovered_correctly() {
     let input = r#"{"outer":{"inner":"value"},"num":42}"#;
     let result = recover_json_from_chunk(input);
@@ -115,16 +105,6 @@ fn array_with_nested_brackets_extracted() {
     let v = result.unwrap();
     assert!(v.is_array());
     assert_eq!(v.as_array().unwrap().len(), 2);
-}
-
-#[test]
-fn colon_newline_recovered_as_empty_string() {
-    // ":\n" is replaced with ": \"\"" in the cleaning path
-    let input = "{\n\"key\":\n}";
-    // After cleaning: {"key": ""} — valid
-    let result = recover_json_from_chunk(input);
-    // May or may not succeed depending on other chars; at minimum must not panic
-    let _ = result;
 }
 
 #[test]

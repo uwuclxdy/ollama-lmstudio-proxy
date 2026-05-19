@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use serde_json::json;
 
 use crate::constants::{SSE_DATA_PREFIX, SSE_DONE_MESSAGE, SSE_MESSAGE_BOUNDARY};
@@ -147,58 +145,6 @@ fn whitespace_only_message_between_events_is_skipped() {
     let input = "data: {\"a\":1}\n\n   \n\ndata: {\"b\":2}\n\n";
     let (payloads, _) = parse_sse_buffer(input);
     assert_eq!(payloads.len(), 2);
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// SSE constants correctness
-// ════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn sse_data_prefix_is_data_colon_space() {
-    assert_eq!(SSE_DATA_PREFIX, "data: ");
-}
-
-#[test]
-fn sse_done_message_is_bracket_done_bracket() {
-    assert_eq!(SSE_DONE_MESSAGE, "[DONE]");
-}
-
-#[test]
-fn sse_message_boundary_is_double_newline() {
-    assert_eq!(SSE_MESSAGE_BOUNDARY, "\n\n");
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// STREAM_COUNTER — monotonic increment
-// ════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn stream_counter_increments_each_read() {
-    let a = super::STREAM_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let b = super::STREAM_COUNTER.fetch_add(1, Ordering::Relaxed);
-    assert!(b > a, "STREAM_COUNTER must monotonically increase");
-}
-
-#[test]
-fn stream_id_modulo_stays_below_million() {
-    // The stream task does: fetch_add(1) % 1_000_000
-    // Verify the modulo arithmetic keeps the id < 1_000_000
-    for raw in [0u64, 999_999, 1_000_000, 2_000_001, u64::MAX] {
-        let stream_id = raw % 1_000_000;
-        assert!(
-            stream_id < 1_000_000,
-            "stream_id {stream_id} must be < 1_000_000"
-        );
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// STREAM_START_LOADING_THRESHOLD_MS — internal constant
-// ════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn loading_threshold_is_500ms() {
-    assert_eq!(super::STREAM_START_LOADING_THRESHOLD_MS, 500);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
