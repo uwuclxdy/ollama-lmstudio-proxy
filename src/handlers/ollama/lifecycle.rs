@@ -296,3 +296,7 @@ pub async fn handle_ollama_push(
     log_handler_io("push", None, Some(&response));
     Ok(json_response(&response))
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_lifecycle.rs"]
+mod tests;

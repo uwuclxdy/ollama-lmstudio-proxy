@@ -82,3 +82,7 @@ pub async fn handle_response(
         Ok(json_response(&ollama_response))
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/handlers_response.rs"]
+mod tests;

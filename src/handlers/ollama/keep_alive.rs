@@ -90,3 +90,7 @@ async fn unload_model_instances(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_keep_alive.rs"]
+mod tests;

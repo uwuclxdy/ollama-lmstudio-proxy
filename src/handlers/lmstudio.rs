@@ -331,3 +331,7 @@ async fn forward_raw_response(
         >(temp_response)
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/handlers_lmstudio.rs"]
+mod tests;

@@ -207,3 +207,7 @@ where
         with_simple_retry(operation, cancellation_token).await
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/handlers_retry.rs"]
+mod tests;

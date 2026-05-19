@@ -110,3 +110,7 @@ fn merge_option_maps(base: Option<&Value>, overrides: Option<&Value>) -> Option<
         },
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_model_resolution.rs"]
+mod tests;

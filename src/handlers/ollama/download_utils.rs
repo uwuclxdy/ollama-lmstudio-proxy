@@ -105,3 +105,7 @@ pub async fn determine_download_identifier(
 
     Ok(requested_model.to_string())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/handlers_ollama_download_utils.rs"]
+mod tests;

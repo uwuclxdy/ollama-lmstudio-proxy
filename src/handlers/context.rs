@@ -29,3 +29,7 @@ impl<'a> RequestContext<'a> {
         base
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/handlers_context.rs"]
+mod tests;
