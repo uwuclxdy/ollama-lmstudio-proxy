@@ -11,3 +11,7 @@ pub fn map_reqwest_error(err: reqwest::Error) -> ProxyError {
         ProxyError::internal_server_error(&format!("LM Studio request failed: {}", err))
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/http_error.rs"]
+mod tests;

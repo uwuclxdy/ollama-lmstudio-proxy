@@ -126,3 +126,7 @@ pub async fn handle_json_response(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/http_client.rs"]
+mod tests;

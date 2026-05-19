@@ -46,3 +46,7 @@ pub fn body_looks_like_json(body: &[u8]) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/http_parsing.rs"]
+mod tests;

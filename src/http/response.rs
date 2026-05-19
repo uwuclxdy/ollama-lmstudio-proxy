@@ -84,3 +84,7 @@ pub fn build_forward_headers(original: &HeaderMap, force_json: bool) -> HeaderMa
 
     filtered
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/http_response.rs"]
+mod tests;
