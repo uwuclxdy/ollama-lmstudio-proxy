@@ -5,7 +5,7 @@
 //   POST /api/embeddings  — Ollama legacy, single `prompt`, returns singular `embedding`
 
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
@@ -97,12 +97,19 @@ async fn embed_batch_array_input() {
     let p = spawn_proxy().await;
     mount_models(&p, "all-minilm").await;
 
+    // Match the exact array body the proxy should forward — if the proxy
+    // splits the batch into per-item calls or drops items, this mock will
+    // not match and the request will fail rather than silently passing.
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({
+            "input": ["first sentence", "second sentence", "third sentence"]
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_response_multi(
             "all-minilm",
             vec![vec![0.1, 0.2], vec![0.3, 0.4], vec![0.5, 0.6]],
         )))
+        .expect(1)
         .mount(&p.mock)
         .await;
 
@@ -121,6 +128,7 @@ async fn embed_batch_array_input() {
     let body: Value = resp.json().await.expect("json body");
     let embeddings = body["embeddings"].as_array().expect("embeddings array");
     assert_eq!(embeddings.len(), 3, "one vector per input string");
+    p.mock.verify().await;
 }
 
 // ---------------------------------------------------------------------------
