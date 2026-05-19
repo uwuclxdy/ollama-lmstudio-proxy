@@ -5,8 +5,8 @@
 // these — the wiremock mock must be registered on that path.
 
 use serde_json::{Value, json};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -53,7 +53,12 @@ async fn tags_empty_model_list() {
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -74,7 +79,12 @@ async fn tags_multiple_models_ollama_shape() {
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -90,8 +100,14 @@ async fn tags_multiple_models_ollama_shape() {
 
         let d = &m["details"];
         assert!(d["family"].is_string(), "missing details.family in {m}");
-        assert!(d["parameter_size"].is_string(), "missing details.parameter_size in {m}");
-        assert!(d["quantization_level"].is_string(), "missing details.quantization_level in {m}");
+        assert!(
+            d["parameter_size"].is_string(),
+            "missing details.parameter_size in {m}"
+        );
+        assert!(
+            d["quantization_level"].is_string(),
+            "missing details.quantization_level in {m}"
+        );
     }
 }
 
@@ -101,13 +117,19 @@ async fn tags_model_without_tag_gets_colon_suffix() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("qwen2.5", "qwen2", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lms_models(vec![native_model("qwen2.5", "qwen2", false)])),
+        )
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -126,9 +148,13 @@ async fn tags_virtual_model_created_via_copy_appears_in_list() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b", "llama", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -140,18 +166,30 @@ async fn tags_virtual_model_created_via_copy_appears_in_list() {
         .await
         .expect("POST /api/copy");
     // Accept any non-5xx; the important part is the alias is stored.
-    assert!(!copy.status().is_server_error(), "copy failed: {}", copy.status());
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
 
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags after copy");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags after copy");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
     let models = body["models"].as_array().expect("models array");
     let has_alias = models.iter().any(|m| {
-        m["name"].as_str().map_or(false, |n| n.contains("my-alias"))
-            || m["model"].as_str().map_or(false, |n| n.contains("my-alias"))
+        m["name"].as_str().is_some_and(|n| n.contains("my-alias"))
+            || m["model"].as_str().is_some_and(|n| n.contains("my-alias"))
     });
-    assert!(has_alias, "expected 'my-alias' in /api/tags list; got {body}");
+    assert!(
+        has_alias,
+        "expected 'my-alias' in /api/tags list; got {body}"
+    );
 }
 
 #[tokio::test]
@@ -164,7 +202,12 @@ async fn tags_backend_5xx_returns_error() {
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert!(
         resp.status().is_server_error() || resp.status().is_client_error(),
         "expected error status for backend 5xx; got {}",
@@ -182,9 +225,13 @@ async fn show_present_model_returns_full_shape() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b", "llama", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -203,7 +250,10 @@ async fn show_present_model_returns_full_shape() {
     assert!(body["template"].is_string(), "missing template; {body}");
     assert!(body["details"].is_object(), "missing details; {body}");
     assert!(body["model_info"].is_object(), "missing model_info; {body}");
-    assert!(body["capabilities"].is_array(), "missing capabilities; {body}");
+    assert!(
+        body["capabilities"].is_array(),
+        "missing capabilities; {body}"
+    );
 }
 
 #[tokio::test]
@@ -212,9 +262,13 @@ async fn show_model_info_contains_parameter_count() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3:8b", "llama", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3:8b",
+                "llama",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -229,7 +283,10 @@ async fn show_model_info_contains_parameter_count() {
 
     let body: Value = resp.json().await.expect("json body");
     let model_info = &body["model_info"];
-    assert!(model_info.is_object(), "model_info must be an object; {body}");
+    assert!(
+        model_info.is_object(),
+        "model_info must be an object; {body}"
+    );
 
     let count = &model_info["general.parameter_count"];
     assert!(
@@ -248,9 +305,13 @@ async fn show_model_info_contains_architecture() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("mistral:7b", "mistral", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "mistral:7b",
+                "mistral",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -264,8 +325,13 @@ async fn show_model_info_contains_architecture() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
-    let arch = body["model_info"]["general.architecture"].as_str().expect("architecture");
-    assert_eq!(arch, "mistral", "expected architecture 'mistral'; got '{arch}'");
+    let arch = body["model_info"]["general.architecture"]
+        .as_str()
+        .expect("architecture");
+    assert_eq!(
+        arch, "mistral",
+        "expected architecture 'mistral'; got '{arch}'"
+    );
 }
 
 #[tokio::test]
@@ -288,7 +354,8 @@ async fn show_missing_model_returns_error_indication() {
 
     let status = resp.status();
     let body: Value = resp.json().await.expect("json body");
-    let is_err = status.is_client_error() || status.is_server_error() || body.get("error").is_some();
+    let is_err =
+        status.is_client_error() || status.is_server_error() || body.get("error").is_some();
     assert!(
         is_err,
         "expected error for missing model; got status={status} body={body}"
@@ -326,9 +393,13 @@ async fn show_virtual_model_includes_alias_metadata() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b", "llama", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
@@ -340,7 +411,11 @@ async fn show_virtual_model_includes_alias_metadata() {
         .send()
         .await
         .expect("POST /api/copy");
-    assert!(!copy.status().is_server_error(), "copy failed: {}", copy.status());
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
 
     let resp = p
         .client
@@ -354,7 +429,9 @@ async fn show_virtual_model_includes_alias_metadata() {
     let body: Value = resp.json().await.expect("json body");
     // Virtual models include extra metadata fields.
     assert!(
-        body.get("virtual").is_some() || body.get("alias_name").is_some() || body.get("source_model").is_some(),
+        body.get("virtual").is_some()
+            || body.get("alias_name").is_some()
+            || body.get("source_model").is_some(),
         "expected virtual model metadata in show response; got {body}"
     );
 }
@@ -369,13 +446,22 @@ async fn ps_no_loaded_models_returns_empty() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b", "llama", false),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/ps")).send().await.expect("GET /api/ps");
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -389,13 +475,22 @@ async fn ps_loaded_model_has_expires_at_and_size_vram() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
-            native_model("llama3.2:3b", "llama", true),
-        ])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                true,
+            )])),
+        )
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/ps")).send().await.expect("GET /api/ps");
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -404,6 +499,9 @@ async fn ps_loaded_model_has_expires_at_and_size_vram() {
 
     let m = &models[0];
     assert!(m["name"].is_string(), "missing name; {m}");
+    // Per docs/lmstudio_vs_ollama.md §"Running models", /api/ps entries
+    // expose both `name` (display) and `model` (canonical identifier).
+    assert!(m["model"].is_string(), "missing model; {m}");
     assert!(m["expires_at"].is_string(), "missing expires_at; {m}");
     assert!(m["size_vram"].is_number(), "missing size_vram; {m}");
 }
@@ -422,12 +520,21 @@ async fn ps_only_loaded_models_in_response() {
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/api/ps")).send().await.expect("GET /api/ps");
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
     let models = body["models"].as_array().expect("models array");
-    assert_eq!(models.len(), 2, "expected exactly 2 loaded models; got {body}");
+    assert_eq!(
+        models.len(),
+        2,
+        "expected exactly 2 loaded models; got {body}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +545,12 @@ async fn ps_only_loaded_models_in_response() {
 async fn version_returns_version_string() {
     let p = spawn_proxy().await;
 
-    let resp = p.client.get(p.url("/api/version")).send().await.expect("GET /api/version");
+    let resp = p
+        .client
+        .get(p.url("/api/version"))
+        .send()
+        .await
+        .expect("GET /api/version");
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
@@ -454,9 +566,17 @@ async fn version_returns_version_string() {
 async fn version_matches_expected_constant() {
     let p = spawn_proxy().await;
 
-    let resp = p.client.get(p.url("/api/version")).send().await.expect("GET /api/version");
+    let resp = p
+        .client
+        .get(p.url("/api/version"))
+        .send()
+        .await
+        .expect("GET /api/version");
     let body: Value = resp.json().await.expect("json body");
     let version = body["version"].as_str().expect("version field");
     // OLLAMA_SERVER_VERSION in constants.rs is "0.13.0".
-    assert_eq!(version, "0.13.0", "version mismatch; expected '0.13.0', got '{version}'");
+    assert_eq!(
+        version, "0.13.0",
+        "version mismatch; expected '0.13.0', got '{version}'"
+    );
 }
