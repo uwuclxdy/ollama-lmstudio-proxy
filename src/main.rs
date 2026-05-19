@@ -1,21 +1,9 @@
 use clap::Parser;
 
-mod config;
-mod constants;
-mod error;
-mod handlers;
-mod http;
-mod logging;
-mod model;
-mod server;
-mod storage;
-mod streaming;
-mod update;
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+use ollama_lmstudio_proxy::{config, logging, server, update};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::parse();
 
     if cfg.update {
@@ -39,7 +27,7 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
     server.run().await
 }
 
-fn setup_logging(log_level: &str) -> Result<(), Box<dyn error::Error>> {
+fn setup_logging(log_level: &str) -> Result<(), Box<dyn std::error::Error>> {
     let level = log_level
         .to_lowercase()
         .parse::<log::LevelFilter>()

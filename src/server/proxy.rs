@@ -23,6 +23,13 @@ pub struct ProxyServer {
 
 impl ProxyServer {
     pub fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_with_state_dir(config, get_state_directory())
+    }
+
+    pub fn new_with_state_dir(
+        config: Config,
+        state_dir: PathBuf,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
             .pool_max_idle_per_host(32)
@@ -42,7 +49,6 @@ impl ProxyServer {
             cache,
         )));
 
-        let state_dir = get_state_directory();
         let virtual_models_path = state_dir.join("virtual_models.json");
         let blob_dir = state_dir.join("blobs");
 
