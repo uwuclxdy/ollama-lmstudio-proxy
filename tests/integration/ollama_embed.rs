@@ -5,8 +5,8 @@
 //   POST /api/embeddings  — Ollama legacy, single `prompt`, returns singular `embedding`
 
 use serde_json::{Value, json};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -154,11 +154,20 @@ async fn embed_response_shape() {
     // Required Ollama fields
     assert!(body.get("model").is_some(), "missing model");
     assert!(body.get("embeddings").is_some(), "missing embeddings");
-    assert!(body.get("total_duration").is_some(), "missing total_duration");
+    assert!(
+        body.get("total_duration").is_some(),
+        "missing total_duration"
+    );
     assert!(body.get("load_duration").is_some(), "missing load_duration");
-    assert!(body.get("prompt_eval_count").is_some(), "missing prompt_eval_count");
+    assert!(
+        body.get("prompt_eval_count").is_some(),
+        "missing prompt_eval_count"
+    );
     // Legacy singular key must NOT appear on /api/embed
-    assert!(body.get("embedding").is_none(), "singular embedding must not appear on /api/embed");
+    assert!(
+        body.get("embedding").is_none(),
+        "singular embedding must not appear on /api/embed"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -191,9 +200,14 @@ async fn legacy_embeddings_prompt_field() {
     let body: Value = resp.json().await.expect("json body");
 
     // Legacy response shape: singular `embedding`, no `embeddings`
-    let embedding = body["embedding"].as_array().expect("singular embedding array");
+    let embedding = body["embedding"]
+        .as_array()
+        .expect("singular embedding array");
     assert_eq!(embedding.len(), 4, "all 4 floats preserved");
-    assert!(body.get("embeddings").is_none(), "batch key must not appear on legacy endpoint");
+    assert!(
+        body.get("embeddings").is_none(),
+        "batch key must not appear on legacy endpoint"
+    );
     assert_eq!(body["model"], "all-minilm");
 }
 
@@ -221,12 +235,10 @@ async fn embed_model_resolution_from_catalog() {
 
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(lm_response_single(
-                "lmstudio-community/all-minilm-l6-v2",
-                vec![0.5, 0.5],
-            )),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_response_single(
+            "lmstudio-community/all-minilm-l6-v2",
+            vec![0.5, 0.5],
+        )))
         .mount(&p.mock)
         .await;
 
@@ -255,8 +267,7 @@ async fn embed_truncate_option_forwarded() {
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_response_single("nomic-embed", vec![0.1])),
+            ResponseTemplate::new(200).set_body_json(lm_response_single("nomic-embed", vec![0.1])),
         )
         .mount(&p.mock)
         .await;
@@ -295,11 +306,11 @@ async fn embed_empty_input_returns_error() {
         .await
         .expect("POST /api/embed empty input");
 
-    // Empty string is still syntactically valid input; proxy may accept or reject.
-    // What must NOT happen is a 5xx panic — a 4xx or 2xx (forwarded) is both acceptable.
+    // Per `fix(embed): reject empty input string before forwarding`, the proxy
+    // must short-circuit empty strings with a 4xx rather than forward them.
     assert!(
-        resp.status().as_u16() < 500,
-        "empty input must not cause server panic: {}",
+        resp.status().is_client_error(),
+        "empty input must be rejected with 4xx; got {}",
         resp.status()
     );
 }
@@ -482,7 +493,11 @@ async fn embed_dimension_preserved() {
 
     let body: Value = resp.json().await.expect("json body");
     let returned_vec = body["embeddings"][0].as_array().expect("vector");
-    assert_eq!(returned_vec.len(), dim, "all {dim} dimensions must survive the round-trip");
+    assert_eq!(
+        returned_vec.len(),
+        dim,
+        "all {dim} dimensions must survive the round-trip"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -504,10 +519,9 @@ async fn embed_batch_order_preserved() {
 
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lm_response_multi(
-            "all-minilm",
-            vecs.clone(),
-        )))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_response_multi("all-minilm", vecs.clone())),
+        )
         .mount(&p.mock)
         .await;
 
@@ -647,7 +661,10 @@ async fn embed_dimensions_param_accepted() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("json body");
     let vec_len = body["embeddings"][0].as_array().expect("vector").len();
-    assert_eq!(vec_len, 256, "returned vector must match requested dimensions");
+    assert_eq!(
+        vec_len, 256,
+        "returned vector must match requested dimensions"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -757,8 +774,7 @@ async fn embed_response_contains_prompt_eval_duration() {
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_response_single("all-minilm", vec![0.1])),
+            ResponseTemplate::new(200).set_body_json(lm_response_single("all-minilm", vec![0.1])),
         )
         .mount(&p.mock)
         .await;
