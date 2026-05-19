@@ -7,7 +7,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::parse();
 
     if cfg.update {
-        return update::check_and_update().await;
+        return match update::check_and_update().await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!();
+                eprintln!("update failed: {}", e);
+                eprintln!(
+                    "visit https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases to download manually"
+                );
+                Err(e)
+            }
+        };
     }
 
     config::validate_config(&cfg)?;

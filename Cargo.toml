@@ -30,6 +30,7 @@ md5 = "0.8.0"
 url = "2.5.8"
 humantime = "2.3.0"
 self-replace = "1.5.0"
+update-informer = { version = "1.3.0", default-features = false, features = ["github"] }
 
 [dev-dependencies]
 wiremock = "0.6.5"
