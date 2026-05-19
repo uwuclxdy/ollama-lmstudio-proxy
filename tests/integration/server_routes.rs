@@ -2,8 +2,8 @@
 // server-routes integration-test agent.
 
 use serde_json::{Value, json};
-use wiremock::{Mock, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
 
@@ -17,7 +17,9 @@ async fn root_returns_ollama_banner() {
     let resp = p.client.get(p.url("/")).send().await.expect("GET /");
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.expect("body");
-    assert!(body.to_ascii_lowercase().contains("ollama"), "got: {body}");
+    // Real Ollama returns exactly this string; pinning it ensures clients
+    // doing equality checks (rather than substring matches) keep working.
+    assert_eq!(body, "Ollama is running", "got: {body}");
 }
 
 #[tokio::test]
@@ -45,7 +47,12 @@ async fn health_check_reaches_lmstudio_backend() {
         .mount(&p.mock)
         .await;
 
-    let resp = p.client.get(p.url("/health")).send().await.expect("GET /health");
+    let resp = p
+        .client
+        .get(p.url("/health"))
+        .send()
+        .await
+        .expect("GET /health");
     assert_eq!(resp.status(), 200);
 }
 
@@ -116,7 +123,12 @@ async fn mount_embeddings_stub(p: &crate::common::TestProxy) {
 async fn route_tags_is_present() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert_ne!(resp.status(), 404, "/api/tags must be a recognised route");
 }
 
@@ -166,7 +178,11 @@ async fn route_generate_is_present() {
         .send()
         .await
         .expect("POST /api/generate");
-    assert_ne!(resp.status(), 404, "/api/generate must be a recognised route");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/api/generate must be a recognised route"
+    );
 }
 
 #[tokio::test]
@@ -196,14 +212,23 @@ async fn route_embeddings_legacy_is_present() {
         .send()
         .await
         .expect("POST /api/embeddings");
-    assert_ne!(resp.status(), 404, "/api/embeddings must be a recognised route");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/api/embeddings must be a recognised route"
+    );
 }
 
 #[tokio::test]
 async fn route_ps_is_present() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
-    let resp = p.client.get(p.url("/api/ps")).send().await.expect("GET /api/ps");
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
     assert_ne!(resp.status(), 404, "/api/ps must be a recognised route");
 }
 
@@ -219,7 +244,10 @@ async fn route_pull_is_present() {
         .await;
     Mock::given(method("GET"))
         .and(path("/api/v1/models/download/status"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "complete", "progress": 1.0})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"status": "complete", "progress": 1.0})),
+        )
         .mount(&p.mock)
         .await;
     let resp = p
@@ -300,11 +328,23 @@ async fn route_create_is_present() {
 #[tokio::test]
 async fn route_version_is_present() {
     let p = spawn_proxy().await;
-    let resp = p.client.get(p.url("/api/version")).send().await.expect("GET /api/version");
-    assert_ne!(resp.status(), 404, "/api/version must be a recognised route");
+    let resp = p
+        .client
+        .get(p.url("/api/version"))
+        .send()
+        .await
+        .expect("GET /api/version");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/api/version must be a recognised route"
+    );
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
-    assert!(body.get("version").is_some(), "version response must have 'version' key: {body}");
+    assert!(
+        body.get("version").is_some(),
+        "version response must have 'version' key: {body}"
+    );
 }
 
 #[tokio::test]
@@ -333,7 +373,12 @@ async fn route_blobs_head_is_present() {
 #[tokio::test]
 async fn chat_get_returns_405_or_404() {
     let p = spawn_proxy().await;
-    let resp = p.client.get(p.url("/api/chat")).send().await.expect("GET /api/chat");
+    let resp = p
+        .client
+        .get(p.url("/api/chat"))
+        .send()
+        .await
+        .expect("GET /api/chat");
     let status = resp.status().as_u16();
     assert!(
         status == 404 || status == 405,
@@ -361,7 +406,12 @@ async fn tags_post_returns_405_or_404() {
 #[tokio::test]
 async fn generate_get_returns_405_or_404() {
     let p = spawn_proxy().await;
-    let resp = p.client.get(p.url("/api/generate")).send().await.expect("GET /api/generate");
+    let resp = p
+        .client
+        .get(p.url("/api/generate"))
+        .send()
+        .await
+        .expect("GET /api/generate");
     let status = resp.status().as_u16();
     assert!(
         status == 404 || status == 405,
@@ -431,7 +481,10 @@ async fn malformed_json_body_returns_400() {
         .expect("POST /api/chat bad json");
     assert_eq!(resp.status(), 400, "malformed JSON must return 400");
     let body: Value = resp.json().await.expect("error body must be JSON");
-    assert!(body.get("error").is_some(), "400 response must have 'error' field: {body}");
+    assert!(
+        body.get("error").is_some(),
+        "400 response must have 'error' field: {body}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +524,10 @@ async fn generate_missing_prompt_returns_error() {
         .await
         .expect("POST /api/generate no prompt");
     let status = resp.status().as_u16();
-    assert!(status != 404, "missing prompt must not produce a 404: {status}");
+    assert!(
+        status != 404,
+        "missing prompt must not produce a 404: {status}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +593,10 @@ async fn tags_response_has_cors_header() {
     // If the header is present, it must allow any origin
     if let Some(acao) = resp.headers().get("access-control-allow-origin") {
         let val = acao.to_str().unwrap_or("");
-        assert!(val == "*" || !val.is_empty(), "ACAO header must be set: {val}");
+        assert!(
+            val == "*" || !val.is_empty(),
+            "ACAO header must be set: {val}"
+        );
     }
 }
 
@@ -548,11 +607,19 @@ async fn tags_response_has_cors_header() {
 #[tokio::test]
 async fn version_endpoint_returns_version_string() {
     let p = spawn_proxy().await;
-    let resp = p.client.get(p.url("/api/version")).send().await.expect("GET /api/version");
+    let resp = p
+        .client
+        .get(p.url("/api/version"))
+        .send()
+        .await
+        .expect("GET /api/version");
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
     let version = body.get("version").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(!version.is_empty(), "version must be a non-empty string: {body}");
+    assert!(
+        !version.is_empty(),
+        "version must be a non-empty string: {body}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -563,7 +630,12 @@ async fn version_endpoint_returns_version_string() {
 async fn tags_response_has_models_array() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
-    let resp = p.client.get(p.url("/api/tags")).send().await.expect("GET /api/tags");
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
     assert!(
@@ -595,7 +667,10 @@ async fn method_not_allowed_returns_json_error() {
     );
     if status == 405 {
         let body: Value = resp.json().await.expect("error body must be JSON");
-        assert!(body.get("error").is_some(), "405 must have 'error' field: {body}");
+        assert!(
+            body.get("error").is_some(),
+            "405 must have 'error' field: {body}"
+        );
     }
 }
 
@@ -607,7 +682,12 @@ async fn method_not_allowed_returns_json_error() {
 async fn ps_response_has_models_array() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
-    let resp = p.client.get(p.url("/api/ps")).send().await.expect("GET /api/ps");
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
     assert!(
