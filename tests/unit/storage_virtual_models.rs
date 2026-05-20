@@ -133,7 +133,7 @@ fn load_empty_file_returns_empty_store() {
     assert!(rt.block_on(store.list()).is_empty());
 }
 
-// --- create_alias, get, list, delete ---
+// --- create_alias, upsert_alias, get, list, delete ---
 
 #[tokio::test]
 async fn create_alias_and_get() {
@@ -234,6 +234,94 @@ async fn list_returns_all_entries() {
 
     let all = store.list().await;
     assert_eq!(all.len(), 2);
+}
+
+// --- upsert_alias ---
+
+#[tokio::test]
+async fn upsert_alias_creates_when_absent() {
+    let dir = TempDir::new().unwrap();
+    let store = make_store(&dir);
+
+    store
+        .upsert_alias(
+            "newalias",
+            "src".to_string(),
+            "tgt".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+
+    let entry = store.get("newalias").await.unwrap();
+    assert_eq!(entry.target_model_id, "tgt");
+}
+
+#[tokio::test]
+async fn upsert_alias_overwrites_existing() {
+    let dir = TempDir::new().unwrap();
+    let store = make_store(&dir);
+
+    store
+        .upsert_alias(
+            "alias",
+            "src-old".to_string(),
+            "tgt-old".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+
+    store
+        .upsert_alias(
+            "alias",
+            "src-new".to_string(),
+            "tgt-new".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+
+    let entry = store.get("alias").await.unwrap();
+    assert_eq!(entry.source_model, "src-new");
+    assert_eq!(entry.target_model_id, "tgt-new");
+}
+
+#[tokio::test]
+async fn upsert_alias_preserves_created_at_on_overwrite() {
+    let dir = TempDir::new().unwrap();
+    let store = make_store(&dir);
+
+    store
+        .upsert_alias(
+            "alias",
+            "src".to_string(),
+            "tgt".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+    let original_created_at = store.get("alias").await.unwrap().created_at;
+
+    store
+        .upsert_alias(
+            "alias",
+            "src2".to_string(),
+            "tgt2".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+    let updated = store.get("alias").await.unwrap();
+
+    assert_eq!(
+        updated.created_at, original_created_at,
+        "created_at must be preserved across overwrites"
+    );
+    assert!(
+        updated.updated_at >= original_created_at,
+        "updated_at must advance"
+    );
 }
 
 // --- persistence round-trip ---

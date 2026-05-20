@@ -149,14 +149,13 @@ pub async fn handle_ollama_create(
     let start_time = Instant::now();
     log_handler_io("create", Some(&body), None);
     let new_model_name = extract_required_model_name(&body)?;
-    let source_model_name = body
-        .get("from")
-        .and_then(|value| value.as_str())
-        .unwrap_or(new_model_name);
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
 
     log_request("POST", "/api/create", Some(new_model_name));
 
+    // LM Studio has no API for creating real models; the proxy implements
+    // virtual aliases only. Files and quantization require real model creation
+    // which is not possible upstream.
     if let Some(files) = body.get("files") {
         let has_content = match files {
             Value::Object(map) => !map.is_empty(),
@@ -166,16 +165,25 @@ pub async fn handle_ollama_create(
         };
         if has_content {
             return Err(ProxyError::bad_request(
-                "creating models from custom blobs is not supported via LM Studio proxy",
+                "lm studio does not support model creation from files; proxy aliases only",
             ));
         }
     }
 
     if body.get("quantize").is_some() {
         return Err(ProxyError::bad_request(
-            "quantization is not available via LM Studio proxy",
+            "lm studio does not support quantization; proxy aliases only",
         ));
     }
+
+    // `from` is required unless a system prompt or template is the only
+    // customization (both still need a base model to alias). Silently
+    // defaulting to `model` produces a self-referential alias that resolves
+    // to itself rather than a real LM Studio model — that is a footgun.
+    let source_model_name = body
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ProxyError::bad_request("'from' is required"))?;
 
     let (resolved_id, source_virtual_entry) = resolve_model_target(
         &context,
@@ -188,9 +196,9 @@ pub async fn handle_ollama_create(
     let base_metadata = source_virtual_entry.map(|entry| entry.metadata);
     let metadata = VirtualModelStore::build_metadata_from_request(&body, base_metadata);
 
-    let entry = context
+    context
         .virtual_models
-        .create_alias(
+        .upsert_alias(
             new_model_name,
             source_model_name.to_string(),
             resolved_id,
@@ -202,21 +210,16 @@ pub async fn handle_ollama_create(
 
     if stream {
         let statuses = vec![
-            json!({"status": "reading model metadata", "model": new_model_name}),
-            json!({
-                "status": "creating alias",
-                "model": new_model_name,
-                "source": source_model_name,
-                "target_model_id": entry.target_model_id
-            }),
-            json!({"status": "writing manifest", "model": new_model_name}),
-            json!({"status": "success", "model": new_model_name, "virtual": true}),
+            json!({"status": "reading model metadata"}),
+            json!({"status": "creating alias"}),
+            json!({"status": "writing manifest"}),
+            json!({"status": "success"}),
         ];
         log_handler_io("create", None, None);
         return stream_status_messages(statuses, "failed to create model alias stream");
     }
 
-    let response = entry.to_response();
+    let response = json!({"status": "success"});
     log_handler_io("create", None, Some(&response));
     Ok(json_response(&response))
 }

@@ -215,12 +215,24 @@ async fn create_from_existing_model_registers_virtual() {
     );
 
     let body: Value = resp.json().await.expect("json body");
-    // Non-stream response from create — either success field or status.
-    let has_success = body.get("status").and_then(|v| v.as_str()) == Some("success")
-        || body.get("virtual").and_then(|v| v.as_bool()) == Some(true);
+    // Non-stream response: doc schema is {status: string} only.
+    assert_eq!(
+        body["status"].as_str(),
+        Some("success"),
+        "expected status:success in create response; got {body}"
+    );
+    // Proxy-internal fields must not appear on the wire.
     assert!(
-        has_success,
-        "expected success in create response; got {body}"
+        body.get("virtual").is_none(),
+        "wire response must not include 'virtual'; got {body}"
+    );
+    assert!(
+        body.get("model").is_none(),
+        "wire response must not include 'model'; got {body}"
+    );
+    assert!(
+        body.get("source_model").is_none(),
+        "wire response must not include 'source_model'; got {body}"
     );
 }
 
@@ -489,11 +501,136 @@ async fn create_with_valid_blob_file_ref_succeeds() {
         .await
         .expect("POST /api/create with files");
 
-    // The proxy attempts to create from the blob ref. Accept 200 or a handled error.
-    // The key assertion is: it does not 5xx.
-    assert!(
-        !resp.status().is_server_error(),
-        "unexpected 5xx from create with files; got {}",
+    // Files-based creation is rejected: LM Studio has no real model creation API.
+    // The proxy aliases only — files must return 400.
+    assert_eq!(
+        resp.status(),
+        400,
+        "create with files must return 400; got {}",
         resp.status()
     );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/create — from omitted → 400
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_without_from_returns_400() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![])))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({"model": "no-from:v1", "stream": false}))
+        .send()
+        .await
+        .expect("POST /api/create without from");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "'from' omitted must return 400; got {}",
+        resp.status()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/create — overwrite existing alias (GAP 3)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_overwrites_existing_alias() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
+            native_model("base-model:7b"),
+            native_model("other-model:7b"),
+        ])))
+        .mount(&p.mock)
+        .await;
+
+    // First create.
+    let r1 = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({"model": "overwrite-me:v1", "from": "base-model:7b", "stream": false}))
+        .send()
+        .await
+        .expect("first create");
+    assert_eq!(r1.status(), 200, "first create must succeed");
+
+    // Second create with same name — must overwrite, not 400.
+    let r2 = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({"model": "overwrite-me:v1", "from": "other-model:7b", "stream": false}))
+        .send()
+        .await
+        .expect("second create (overwrite)");
+    assert_eq!(
+        r2.status(),
+        200,
+        "re-creating existing alias must return 200 not 400; got {}",
+        r2.status()
+    );
+
+    let body: Value = r2.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/create — streaming chunks must not carry proxy-internal fields
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_stream_chunks_have_no_internal_fields() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({"model": "clean-chunks:v1", "from": "llama3.2:3b", "stream": true}))
+        .send()
+        .await
+        .expect("POST /api/create stream");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let chunk: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("invalid JSON chunk: {e}; line='{line}'"));
+        assert!(
+            chunk.get("model").is_none(),
+            "stream chunk must not include 'model'; got {chunk}"
+        );
+        assert!(
+            chunk.get("virtual").is_none(),
+            "stream chunk must not include 'virtual'; got {chunk}"
+        );
+        assert!(
+            chunk.get("source").is_none(),
+            "stream chunk must not include 'source'; got {chunk}"
+        );
+        assert!(
+            chunk.get("target_model_id").is_none(),
+            "stream chunk must not include 'target_model_id'; got {chunk}"
+        );
+    }
 }

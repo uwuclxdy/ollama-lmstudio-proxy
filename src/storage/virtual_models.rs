@@ -164,6 +164,32 @@ impl VirtualModelStore {
         Ok(entry)
     }
 
+    /// Create or overwrite an alias. Used by `/api/create` which replaces an
+    /// existing name per the Ollama API spec.
+    pub async fn upsert_alias(
+        &self,
+        alias: &str,
+        source_model: String,
+        target_model_id: String,
+        metadata: VirtualModelMetadata,
+    ) -> Result<VirtualModelEntry, ProxyError> {
+        let alias_key = Self::canonical(alias).into_owned();
+        let mut guard = self.entries.write().await;
+        let now = Utc::now();
+        let created_at = guard.get(&alias_key).map(|e| e.created_at).unwrap_or(now);
+        let entry = VirtualModelEntry {
+            name: alias.to_string(),
+            source_model,
+            target_model_id,
+            created_at,
+            updated_at: now,
+            metadata,
+        };
+        guard.insert(alias_key, entry.clone());
+        self.persist_locked(&guard).await?;
+        Ok(entry)
+    }
+
     pub async fn delete(&self, alias: &str) -> Result<VirtualModelEntry, ProxyError> {
         let alias_key = Self::canonical(alias).into_owned();
         let mut guard = self.entries.write().await;
