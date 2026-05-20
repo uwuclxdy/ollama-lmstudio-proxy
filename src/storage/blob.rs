@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use futures_util::{Stream, StreamExt};
@@ -54,7 +53,7 @@ impl BlobStore {
         S: Stream<Item = Result<bytes::Bytes, axum::Error>> + Unpin,
     {
         let final_path = self.validated_blob_path(digest)?;
-        let hex = digest.split_once(':').map(|(_, h)| h).unwrap();
+        let expected_hex = digest.split_once(':').map(|(_, h)| h).unwrap();
 
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
@@ -90,16 +89,12 @@ impl BlobStore {
             ProxyError::internal_server_error(&format!("failed to flush blob data: {}", e))
         })?;
 
-        let digest_bytes = hasher.finalize();
-        let mut actual_hex = String::with_capacity(digest_bytes.len() * 2);
-        for byte in digest_bytes.iter() {
-            write!(&mut actual_hex, "{byte:02x}").unwrap();
-        }
-        if actual_hex != hex {
+        let actual_hex = hex::encode(hasher.finalize());
+        if actual_hex != expected_hex {
             let _ = fs::remove_file(&tmp_path).await;
             return Err(ProxyError::bad_request(&format!(
                 "digest mismatch. Expected {}, computed {}",
-                hex, actual_hex
+                expected_hex, actual_hex
             )));
         }
 
