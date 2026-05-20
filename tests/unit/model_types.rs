@@ -299,15 +299,16 @@ fn from_native_context_length_prefers_loaded_instance_config() {
 }
 
 #[test]
-fn from_native_context_length_falls_back_to_max_when_not_loaded() {
+fn from_native_context_length_is_zero_when_not_loaded() {
     let mut n = native("foo");
     n.max_context_length = 4096;
     let info = ModelInfo::from_native_data(&n);
-    assert_eq!(info.context_length, 4096);
+    assert_eq!(info.context_length, 0);
+    assert_eq!(info.max_context_length, 4096);
 }
 
 #[test]
-fn from_native_context_length_falls_back_when_instance_has_no_config() {
+fn from_native_context_length_is_zero_when_instance_has_no_config() {
     let mut n = native("foo");
     n.max_context_length = 4096;
     n.loaded_instances.push(NativeLoadedInstance {
@@ -315,7 +316,8 @@ fn from_native_context_length_falls_back_when_instance_has_no_config() {
         config: None,
     });
     let info = ModelInfo::from_native_data(&n);
-    assert_eq!(info.context_length, 4096);
+    assert_eq!(info.context_length, 0);
+    assert_eq!(info.max_context_length, 4096);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -539,10 +541,7 @@ fn show_response_model_info_has_general_keys_and_arch_context_length() {
     assert_eq!(mi["general.architecture"], json!("llama"));
     assert_eq!(mi["general.file_type"], json!(2));
     assert_eq!(mi["general.quantization_version"], json!(2));
-    assert!(
-        mi.get("llama.context_length").is_some(),
-        "missing <arch>.context_length: {mi}"
-    );
+    assert_eq!(mi["llama.context_length"], json!(4096));
 }
 
 #[test]

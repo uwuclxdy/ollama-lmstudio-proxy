@@ -676,6 +676,7 @@ async fn ps_loaded_model_has_expires_at_and_zero_size_vram_without_gpu_signal() 
     assert!(m["model"].is_string(), "missing model; {m}");
     assert!(m["expires_at"].is_string(), "missing expires_at; {m}");
     assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
+    assert_eq!(m["context_length"], json!(4096), "unexpected context; {m}");
 }
 
 #[tokio::test]
@@ -713,6 +714,39 @@ async fn ps_loaded_model_with_kv_cache_gpu_flag_still_reports_zero_size_vram() {
     let m = &models[0];
     assert_eq!(m["size"], json!(4_500_000_000u64));
     assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
+    assert_eq!(m["context_length"], json!(4096), "unexpected context; {m}");
+}
+
+#[tokio::test]
+async fn show_unloaded_model_reports_zero_active_context_and_max_context_separately() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({ "model": "llama3.2:3b", "verbose": true }))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let model_info = &body["model_info"];
+    assert_eq!(model_info["llama.context_length"], json!(8192));
+    assert_eq!(model_info["lmstudio.context_length"], json!(0));
+    assert_eq!(model_info["lmstudio.max_context_length"], json!(8192));
 }
 
 #[tokio::test]
