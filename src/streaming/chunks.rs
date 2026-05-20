@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, time::Duration};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
-use crate::constants::ERROR_CANCELLED;
 use crate::lmstudio::response::{TimingInfo, convert_tool_calls_to_ollama};
 
 #[derive(Default)]
@@ -283,6 +282,8 @@ pub fn create_cancellation_chunk(
     tokens_generated_estimate: u64,
     is_chat_endpoint: bool,
 ) -> Value {
+    // Ollama's spec only documents `done_reason: stop | length`; "cancelled" is not a value
+    // real clients expect. Leave content empty and omit `done_reason` rather than fabricating one.
     let timing = TimingInfo::from_stream_chunks(
         duration,
         tokens_generated_estimate,
@@ -293,23 +294,6 @@ pub fn create_cancellation_chunk(
         create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
-        let content_field_value = if tokens_generated_estimate > 0 {
-            format!(
-                "[Request cancelled after {} tokens generated (estimated)]",
-                tokens_generated_estimate
-            )
-        } else {
-            ERROR_CANCELLED.to_string()
-        };
-
-        if is_chat_endpoint {
-            if let Some(msg) = chunk_obj.get_mut("message").and_then(|m| m.as_object_mut()) {
-                msg.insert("content".to_string(), json!(content_field_value));
-            }
-        } else {
-            chunk_obj.insert("response".to_string(), json!(content_field_value));
-        }
-
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
         chunk_obj.insert(
@@ -322,7 +306,6 @@ pub fn create_cancellation_chunk(
         );
         chunk_obj.insert("eval_count".to_string(), json!(timing.eval_count));
         chunk_obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
-        chunk_obj.insert("done_reason".to_string(), json!("cancelled"));
     }
     chunk
 }

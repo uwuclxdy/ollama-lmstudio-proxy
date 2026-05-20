@@ -3,7 +3,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::constants::ERROR_CANCELLED;
 
 fn choice_with_delta(content: Option<&str>, reasoning: Option<&str>) -> serde_json::Value {
     let mut delta = json!({});
@@ -336,54 +335,58 @@ fn assert_six_timings(chunk: &Value) {
 }
 
 #[test]
-fn cancellation_chunk_chat_shape_with_tokens() {
+fn cancellation_chunk_chat_has_empty_content() {
     let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(
-        c.get("done_reason").and_then(|v| v.as_str()),
-        Some("cancelled")
+    assert!(
+        c.get("done_reason").is_none(),
+        "done_reason must be omitted on cancellation; ollama spec uses stop/length only"
     );
     let content = c
         .get("message")
         .and_then(|m| m.get("content"))
         .and_then(|v| v.as_str())
         .unwrap();
-    assert!(
-        content.contains("7"),
-        "content must include the token estimate; got {:?}",
+    assert_eq!(
+        content, "",
+        "cancellation chunk must leave content empty per ollama spec; got {:?}",
         content
     );
-    assert!(content.to_lowercase().contains("cancel"));
     assert_six_timings(&c);
 }
 
 #[test]
-fn cancellation_chunk_generate_shape_with_tokens() {
+fn cancellation_chunk_generate_has_empty_response() {
     let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(
-        c.get("done_reason").and_then(|v| v.as_str()),
-        Some("cancelled")
+    assert!(
+        c.get("done_reason").is_none(),
+        "done_reason must be omitted on cancellation; ollama spec uses stop/length only"
     );
     let response = c.get("response").and_then(|v| v.as_str()).unwrap();
-    assert!(response.contains("3"));
-    assert!(response.to_lowercase().contains("cancel"));
+    assert_eq!(
+        response, "",
+        "cancellation chunk must leave response empty per ollama spec; got {:?}",
+        response
+    );
     assert_six_timings(&c);
 }
 
 #[test]
-fn cancellation_chunk_zero_tokens_uses_generic_message() {
+fn cancellation_chunk_zero_tokens_still_empty_content() {
     let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, true);
     let chat_content = chat
         .get("message")
         .and_then(|m| m.get("content"))
         .and_then(|v| v.as_str())
         .unwrap();
-    assert_eq!(chat_content, ERROR_CANCELLED);
+    assert_eq!(chat_content, "");
+    assert!(chat.get("done_reason").is_none());
 
     let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, false);
     let generate_response = generate.get("response").and_then(|v| v.as_str()).unwrap();
-    assert_eq!(generate_response, ERROR_CANCELLED);
+    assert_eq!(generate_response, "");
+    assert!(generate.get("done_reason").is_none());
 }
 
 // ════════════════════════════════════════════════════════════════════════════
