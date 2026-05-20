@@ -56,10 +56,7 @@ pub async fn handle_ollama_generate(
                     .and_then(|p| p.as_str())
                     .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_PROMPT))?;
 
-                let stream = body
-                    .get("stream")
-                    .and_then(|s| s.as_bool())
-                    .unwrap_or(false);
+                let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
 
                 let current_images = body.get("images");
                 let raw = body.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);

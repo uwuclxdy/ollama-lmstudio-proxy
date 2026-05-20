@@ -56,10 +56,7 @@ pub async fn handle_ollama_chat(
                     .and_then(|m| m.as_array())
                     .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_MESSAGES))?;
 
-                let stream = body
-                    .get("stream")
-                    .and_then(|s| s.as_bool())
-                    .unwrap_or(false);
+                let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
 
                 let ollama_tools = body.get("tools");
                 let ollama_images = body.get("images");

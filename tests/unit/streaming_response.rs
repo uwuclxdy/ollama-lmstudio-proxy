@@ -3,10 +3,6 @@ use tokio::sync::mpsc;
 
 use super::*;
 
-// ════════════════════════════════════════════════════════════════════════════
-// is_streaming_request
-// ════════════════════════════════════════════════════════════════════════════
-
 #[test]
 fn stream_true_is_streaming() {
     assert!(is_streaming_request(&json!({"stream": true})));
@@ -19,6 +15,7 @@ fn stream_false_is_not_streaming() {
 
 #[test]
 fn stream_field_absent_defaults_to_false() {
+    // passthrough path must not assume streaming when field is absent
     assert!(!is_streaming_request(&json!({"model": "llama3"})));
 }
 
@@ -42,10 +39,6 @@ fn stream_number_one_is_not_streaming() {
 fn empty_object_is_not_streaming() {
     assert!(!is_streaming_request(&json!({})));
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// create_streaming_response — response construction
-// ════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
 async fn ndjson_streaming_response_returns_ok() {
@@ -141,10 +134,6 @@ async fn streaming_response_status_200() {
     let response = create_streaming_response(rx, StreamContentType::Ndjson).unwrap();
     assert_eq!(response.status().as_u16(), 200);
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// create_ndjson_stream_response
-// ════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
 async fn ndjson_stream_response_convenience_returns_ok() {
