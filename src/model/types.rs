@@ -387,6 +387,7 @@ impl ModelInfo {
                     .into(),
             );
             obj.insert("size_vram".to_string(), obj["size"].clone());
+            obj.insert("context_length".to_string(), json!(self.context_length));
         }
 
         base

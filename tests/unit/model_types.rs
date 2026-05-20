@@ -387,10 +387,12 @@ fn ps_model_includes_tags_fields_plus_expires_and_vram() {
         "details",
         "expires_at",
         "size_vram",
+        "context_length",
     ] {
         assert!(v.get(key).is_some(), "missing key {key}");
     }
     assert_eq!(v["size_vram"], v["size"]);
+    assert_eq!(v["context_length"], json!(info.context_length));
 }
 
 #[test]
