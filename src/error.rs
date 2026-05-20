@@ -88,7 +88,6 @@ impl IntoResponse for ProxyError {
             StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = Json(json!({
             "error": self.message,
-            "status": status.as_u16(),
         }));
         (status, body).into_response()
     }

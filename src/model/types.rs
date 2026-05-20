@@ -429,19 +429,15 @@ impl ModelInfo {
         Value::Object(map)
     }
 
-    pub fn to_show_response(&self) -> Value {
+    pub fn to_show_response_verbose(&self, verbose: bool) -> Value {
         let capabilities = self.determine_capabilities();
         let base = self.base_ollama_representation();
 
         let mut response = json!({
-            "modelfile": format!("# Modelfile for {}\nFROM {} # (Real data from LM Studio)\n\nPARAMETER temperature {}\nPARAMETER top_p {}\nPARAMETER top_k {}\n\nTEMPLATE \"\"\"{{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}\"\"\"",
-                self.ollama_name, self.ollama_name, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K
-            ),
             "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}",
                 DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": base["details"],
-            "model_info": self.build_model_info(),
             "capabilities": capabilities,
             "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
             "size": base["size"].as_u64().unwrap_or(0),
@@ -449,6 +445,9 @@ impl ModelInfo {
         });
 
         if let Some(obj) = response.as_object_mut() {
+            if verbose {
+                obj.insert("model_info".to_string(), self.build_model_info());
+            }
             if let Some(name) = &self.display_name {
                 obj.insert("display_name".to_string(), json!(name));
             }

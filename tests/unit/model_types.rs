@@ -197,7 +197,7 @@ fn show_response_surfaces_display_name_and_description() {
     native.display_name = Some("Pretty Model".into());
     native.description = Some("a description".into());
     let info = ModelInfo::from_native_data(&native);
-    let show = info.to_show_response();
+    let show = info.to_show_response_verbose(false);
     assert_eq!(
         show.get("display_name").and_then(|v| v.as_str()),
         Some("Pretty Model")
@@ -212,7 +212,7 @@ fn show_response_surfaces_display_name_and_description() {
 fn show_response_omits_display_fields_when_absent() {
     let native = make_native_with_caps("publisher/model", "llm", false, false);
     let info = ModelInfo::from_native_data(&native);
-    let show = info.to_show_response();
+    let show = info.to_show_response_verbose(false);
     assert!(show.get("display_name").is_none());
     assert!(show.get("description").is_none());
 }
@@ -406,19 +406,17 @@ fn ps_model_expires_at_is_rfc3339_in_future() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ModelInfo::to_show_response — additional coverage
+// ModelInfo::to_show_response_verbose — additional coverage
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn show_response_has_all_top_level_keys() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    let v = info.to_show_response_verbose(false);
     for key in [
-        "modelfile",
         "parameters",
         "template",
         "details",
-        "model_info",
         "capabilities",
         "digest",
         "size",
@@ -426,12 +424,22 @@ fn show_response_has_all_top_level_keys() {
     ] {
         assert!(v.get(key).is_some(), "missing key {key} in show response");
     }
+    // modelfile is not in the schema — must be absent
+    assert!(
+        v.get("modelfile").is_none(),
+        "modelfile must not appear in non-verbose show response"
+    );
+    // model_info is verbose-only
+    assert!(
+        v.get("model_info").is_none(),
+        "model_info must not appear in non-verbose show response"
+    );
 }
 
 #[test]
 fn show_response_parameters_is_multiline_string() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    let v = info.to_show_response_verbose(false);
     let params = v["parameters"].as_str().expect("parameters must be string");
     assert!(
         params.contains('\n'),
@@ -442,20 +450,26 @@ fn show_response_parameters_is_multiline_string() {
 }
 
 #[test]
-fn show_response_modelfile_contains_from_with_ollama_name() {
+fn show_response_modelfile_absent() {
+    // modelfile is not listed in ShowResponse schema — must never appear
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
-    let mf = v["modelfile"].as_str().unwrap();
+    let v_default = info.to_show_response_verbose(false);
+    let v_verbose = info.to_show_response_verbose(true);
     assert!(
-        mf.contains(&format!("FROM {}", info.ollama_name)),
-        "modelfile must declare FROM <ollama_name>, got: {mf}"
+        v_default.get("modelfile").is_none(),
+        "modelfile must not appear in default show"
+    );
+    assert!(
+        v_verbose.get("modelfile").is_none(),
+        "modelfile must not appear in verbose show"
     );
 }
 
 #[test]
 fn show_response_model_info_has_general_keys_and_arch_context_length() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    // model_info is verbose-only
+    let v = info.to_show_response_verbose(true);
     let mi = &v["model_info"];
     assert_eq!(mi["general.architecture"], json!("llama"));
     assert_eq!(mi["general.file_type"], json!(2));
@@ -471,7 +485,8 @@ fn show_response_model_info_has_parameter_count_when_params_known() {
     let mut n = native("foo");
     n.params_string = Some("7B".to_string());
     let info = ModelInfo::from_native_data(&n);
-    let v = info.to_show_response();
+    // model_info is verbose-only
+    let v = info.to_show_response_verbose(true);
     let mi = &v["model_info"];
     assert_eq!(mi["general.parameter_count"], json!(7_000_000_000_u64));
 }
@@ -479,7 +494,8 @@ fn show_response_model_info_has_parameter_count_when_params_known() {
 #[test]
 fn show_response_model_info_omits_parameter_count_when_unknown() {
     let info = ModelInfo::from_native_data(&native("publisher/wholly-unknown-shape"));
-    let v = info.to_show_response();
+    // model_info is verbose-only
+    let v = info.to_show_response_verbose(true);
     assert!(v["model_info"].get("general.parameter_count").is_none());
 }
 
@@ -496,7 +512,7 @@ fn show_response_capabilities_reflects_flags() {
         }),
     });
     let info = ModelInfo::from_native_data(&n);
-    let v = info.to_show_response();
+    let v = info.to_show_response_verbose(false);
     let caps: Vec<&str> = v["capabilities"]
         .as_array()
         .unwrap()
@@ -508,6 +524,55 @@ fn show_response_capabilities_reflects_flags() {
     assert!(caps.contains(&"thinking"), "{caps:?}");
     assert!(caps.contains(&"completion"));
     assert!(caps.contains(&"chat"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// verbose vs non-verbose show response
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_response_verbose_includes_model_info() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response_verbose(true);
+    assert!(
+        v.get("model_info").is_some(),
+        "verbose must include model_info"
+    );
+    assert!(v.get("modelfile").is_none(), "modelfile must never appear");
+}
+
+#[test]
+fn show_response_non_verbose_omits_model_info() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response_verbose(false);
+    assert!(
+        v.get("model_info").is_none(),
+        "non-verbose must omit model_info"
+    );
+    assert!(v.get("modelfile").is_none(), "modelfile must never appear");
+}
+
+#[test]
+fn show_response_license_absent_for_base_model() {
+    // LM Studio exposes no license data — license must be omitted, not null
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response_verbose(false);
+    assert!(
+        v.get("license").is_none(),
+        "license must be absent when no license data available"
+    );
+}
+
+#[test]
+fn show_response_license_from_virtual_alias() {
+    // virtual alias metadata.license is plumbed through in the handler;
+    // confirm VirtualModelMetadata stores the license value correctly.
+    use crate::storage::virtual_models::VirtualModelMetadata;
+    let meta = VirtualModelMetadata {
+        license: Some(json!("Apache 2.0")),
+        ..Default::default()
+    };
+    assert_eq!(meta.license, Some(json!("Apache 2.0")));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -608,7 +673,7 @@ fn calculate_size_fp16_doubles_base() {
 // ════════════════════════════════════════════════════════════════════════════
 
 fn caps_of(info: &ModelInfo) -> Vec<String> {
-    info.to_show_response()["capabilities"]
+    info.to_show_response_verbose(false)["capabilities"]
         .as_array()
         .unwrap()
         .iter()

@@ -245,11 +245,19 @@ async fn show_present_model_returns_full_shape() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
-    assert!(body["modelfile"].is_string(), "missing modelfile; {body}");
+    // modelfile is not in the ShowResponse schema — must be absent
+    assert!(
+        body.get("modelfile").is_none(),
+        "modelfile must not appear; {body}"
+    );
     assert!(body["parameters"].is_string(), "missing parameters; {body}");
     assert!(body["template"].is_string(), "missing template; {body}");
     assert!(body["details"].is_object(), "missing details; {body}");
-    assert!(body["model_info"].is_object(), "missing model_info; {body}");
+    // model_info is verbose-only — absent in non-verbose response
+    assert!(
+        body.get("model_info").is_none(),
+        "model_info must be absent in non-verbose; {body}"
+    );
     assert!(
         body["capabilities"].is_array(),
         "missing capabilities; {body}"
@@ -275,7 +283,7 @@ async fn show_model_info_contains_parameter_count() {
     let resp = p
         .client
         .post(p.url("/api/show"))
-        .json(&json!({"model": "llama3:8b"}))
+        .json(&json!({"model": "llama3:8b", "verbose": true}))
         .send()
         .await
         .expect("POST /api/show");
@@ -318,7 +326,7 @@ async fn show_model_info_contains_architecture() {
     let resp = p
         .client
         .post(p.url("/api/show"))
-        .json(&json!({"model": "mistral:7b"}))
+        .json(&json!({"model": "mistral:7b", "verbose": true}))
         .send()
         .await
         .expect("POST /api/show");

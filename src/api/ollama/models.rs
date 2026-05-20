@@ -54,17 +54,21 @@ pub async fn handle_ollama_show(
         .get_all_models(context.client, cancellation_token)
         .await?;
 
+    let verbose = body
+        .get("verbose")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let base_model = models.iter().find(|m| m.id == resolved_id);
 
-    let mut response = if let Some(model) = base_model {
-        model.to_show_response()
-    } else {
-        json!({
-            "error": format!("Model '{}' not found in LM Studio", resolved_id),
-            "requested": ollama_model_name,
-            "resolved_to": resolved_id
-        })
+    let Some(model) = base_model else {
+        return Err(ProxyError::not_found(&format!(
+            "model '{}' not found",
+            ollama_model_name
+        )));
     };
+
+    let mut response = model.to_show_response_verbose(verbose);
 
     if let Some(entry) = virtual_entry
         && let Some(obj) = response.as_object_mut()
@@ -79,6 +83,9 @@ pub async fn handle_ollama_show(
         }
         if let Some(template) = &entry.metadata.template {
             obj.insert("template".to_string(), json!(template));
+        }
+        if let Some(license) = &entry.metadata.license {
+            obj.insert("license".to_string(), license.clone());
         }
     }
 
