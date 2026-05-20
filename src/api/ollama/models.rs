@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
@@ -139,7 +140,7 @@ pub async fn handle_ollama_tags(
                 "model": entry.name,
                 "modified_at": entry.updated_at.to_rfc3339(),
                 "size": 0,
-                "digest": format!("{:x}", md5::compute(entry.name.as_bytes())),
+                "digest": hex::encode(Sha256::digest(entry.name.as_bytes())),
                 "details": {
                     "parent_model": entry.source_model,
                     "format": "virtual",

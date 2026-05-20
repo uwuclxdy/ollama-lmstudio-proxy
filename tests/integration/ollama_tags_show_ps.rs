@@ -96,7 +96,12 @@ async fn tags_multiple_models_ollama_shape() {
         assert!(m["model"].is_string(), "missing model in {m}");
         assert!(m["modified_at"].is_string(), "missing modified_at in {m}");
         assert!(m["size"].is_number(), "missing size in {m}");
-        assert!(m["digest"].is_string(), "missing digest in {m}");
+        let digest = m["digest"].as_str().expect("digest must be a string");
+        assert_eq!(digest.len(), 64, "digest must be 64-char hex in {m}");
+        assert!(
+            digest.bytes().all(|b| b.is_ascii_hexdigit()),
+            "digest must be lowercase hex, got {digest:?}"
+        );
 
         let d = &m["details"];
         assert!(d["family"].is_string(), "missing details.family in {m}");
