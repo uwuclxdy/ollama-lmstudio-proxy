@@ -355,12 +355,16 @@ impl ModelInfo {
             // LM Studio exposes no blob hash; derive a deterministic SHA-256
             // from the model key (stable unique identifier in LM Studio's API).
             "digest": hex::encode(Sha256::digest(self.id.as_bytes())),
+            "context_length": self.context_length,
+            "max_context_length": self.max_context_length,
             "details": {
                 "format": self.compatibility_type,
                 "family": self.arch,
                 "families": [self.arch],
                 "parameter_size": params.size_string,
-                "quantization_level": self.quantization
+                "quantization_level": self.quantization,
+                "context_length": self.context_length,
+                "max_context_length": self.max_context_length
             }
         })
     }
@@ -390,7 +394,6 @@ impl ModelInfo {
             );
             // LM Studio exposes KV-cache GPU offload only, not model-weight VRAM usage.
             obj.insert("size_vram".to_string(), json!(0));
-            obj.insert("context_length".to_string(), json!(self.context_length));
         }
 
         base

@@ -100,6 +100,16 @@ async fn tags_multiple_models_ollama_shape() {
         assert!(m["model"].is_string(), "missing model in {m}");
         assert!(m["modified_at"].is_string(), "missing modified_at in {m}");
         assert!(m["size"].is_number(), "missing size in {m}");
+        assert_eq!(
+            m["context_length"],
+            json!(8192),
+            "unexpected context in {m}"
+        );
+        assert_eq!(
+            m["max_context_length"],
+            json!(8192),
+            "unexpected max context in {m}"
+        );
         let digest = m["digest"].as_str().expect("digest must be a string");
         assert_eq!(digest.len(), 64, "digest must be 64-char hex in {m}");
         assert!(

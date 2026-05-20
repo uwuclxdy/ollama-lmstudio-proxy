@@ -328,7 +328,16 @@ fn from_native_context_length_falls_back_to_max_when_instance_has_no_config() {
 fn tags_model_has_all_spec_keys() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_ollama_tags_model();
-    for key in ["name", "model", "modified_at", "size", "digest", "details"] {
+    for key in [
+        "name",
+        "model",
+        "modified_at",
+        "size",
+        "digest",
+        "context_length",
+        "max_context_length",
+        "details",
+    ] {
         assert!(v.get(key).is_some(), "missing key {key} in {v}");
     }
     let details = &v["details"];
@@ -338,6 +347,8 @@ fn tags_model_has_all_spec_keys() {
         "families",
         "parameter_size",
         "quantization_level",
+        "context_length",
+        "max_context_length",
     ] {
         assert!(details.get(key).is_some(), "missing details.{key}");
     }
@@ -345,6 +356,10 @@ fn tags_model_has_all_spec_keys() {
         details.get("parent_model").is_none(),
         "tags details must not include parent_model"
     );
+    assert_eq!(v["context_length"], json!(4096));
+    assert_eq!(v["max_context_length"], json!(4096));
+    assert_eq!(details["context_length"], json!(4096));
+    assert_eq!(details["max_context_length"], json!(4096));
     assert!(
         v["size"].is_u64(),
         "size must serialize as integer, got {}",
