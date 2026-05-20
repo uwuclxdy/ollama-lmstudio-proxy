@@ -510,13 +510,42 @@ async fn pull_model_name_forwarded_to_lmstudio() {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/pull — insecure flag is accepted (warning logged, not rejected)
+// POST /api/pull — insecure flag is rejected (LM Studio can't honor it)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn pull_insecure_flag_is_accepted_with_success() {
-    // `insecure: true` has no LM Studio equivalent. The proxy logs a warning
-    // and proceeds normally — it must not reject the request.
+async fn pull_insecure_flag_returns_400() {
+    // `insecure: true` requests TLS-bypass that LM Studio's
+    // /api/v1/models/download does not expose. Silently no-op'ing while
+    // returning 200 would mislead callers about a security-sensitive flag,
+    // so the proxy must reject it.
+    let p = spawn_proxy().await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/pull"))
+        .json(&json!({"model": "llama3.2:3b", "stream": false, "insecure": true}))
+        .send()
+        .await
+        .expect("POST /api/pull insecure");
+    assert_eq!(
+        resp.status(),
+        400,
+        "insecure=true must be rejected; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().expect("error string");
+    assert!(
+        error.to_lowercase().contains("insecure"),
+        "error message should mention insecure; got {error}"
+    );
+}
+
+#[tokio::test]
+async fn pull_insecure_false_is_accepted() {
+    // The default (insecure unset or false) must still work normally.
     let p = spawn_proxy().await;
 
     Mock::given(method("POST"))
@@ -536,23 +565,11 @@ async fn pull_insecure_flag_is_accepted_with_success() {
     let resp = p
         .client
         .post(p.url("/api/pull"))
-        .json(&json!({"model": "llama3.2:3b", "stream": false, "insecure": true}))
+        .json(&json!({"model": "llama3.2:3b", "stream": false, "insecure": false}))
         .send()
         .await
-        .expect("POST /api/pull insecure");
-    assert_eq!(
-        resp.status(),
-        200,
-        "insecure flag must not cause rejection; got {}",
-        resp.status()
-    );
-
-    let body: Value = resp.json().await.expect("json body");
-    assert_eq!(
-        body["status"].as_str(),
-        Some("success"),
-        "pull with insecure flag should still return success; got {body}"
-    );
+        .expect("POST /api/pull insecure=false");
+    assert_eq!(resp.status(), 200);
 }
 
 // ---------------------------------------------------------------------------
