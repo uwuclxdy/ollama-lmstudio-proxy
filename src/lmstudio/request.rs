@@ -202,7 +202,10 @@ pub(crate) fn collect_unsupported_keys(options: &Value) -> Vec<&'static str> {
 pub(crate) fn log_unsupported_options(options: &Value) {
     let keys = collect_unsupported_keys(options);
     if !keys.is_empty() {
-        log::debug!("unsupported options ignored: {}", keys.join(", "));
+        log::warn!(
+            "Ollama options ignored (LM Studio does not support them): {}",
+            keys.join(", ")
+        );
     }
 }
 
