@@ -57,7 +57,6 @@ OLLAMA_ACTIVE=(
     api/tags.md
     api/usage.md
     capabilities/embeddings.md
-    capabilities/streaming.md
     capabilities/structured-outputs.md
     capabilities/thinking.md
     capabilities/tool-calling.md
@@ -91,7 +90,6 @@ LMS_ACTIVE=(
     1_developer/2_rest/list.md
     1_developer/2_rest/unload.md
     1_developer/3_openai-compat/chat-completions.md
-    1_developer/3_openai-compat/embeddings.md
     1_developer/3_openai-compat/models.md
     1_developer/3_openai-compat/structured-output.md
 )
