@@ -298,8 +298,7 @@ impl ResponseTransformer {
             "embeddings": embeddings,
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
-            "prompt_eval_count": timing.prompt_eval_count,
-            "prompt_eval_duration": timing.prompt_eval_duration
+            "prompt_eval_count": timing.prompt_eval_count
         })
     }
 

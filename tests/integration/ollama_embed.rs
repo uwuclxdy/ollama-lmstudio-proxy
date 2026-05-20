@@ -771,11 +771,11 @@ async fn embed_extra_options_forwarded() {
 }
 
 // ---------------------------------------------------------------------------
-// 21. /api/embed response contains prompt_eval_duration
+// 21. /api/embed response does not contain prompt_eval_duration
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn embed_response_contains_prompt_eval_duration() {
+async fn embed_response_excludes_prompt_eval_duration() {
     let p = spawn_proxy().await;
     mount_models(&p, "all-minilm").await;
 
@@ -797,8 +797,8 @@ async fn embed_response_contains_prompt_eval_duration() {
 
     let body: Value = resp.json().await.expect("json body");
     assert!(
-        body.get("prompt_eval_duration").is_some(),
-        "response must include prompt_eval_duration"
+        body.get("prompt_eval_duration").is_none(),
+        "response must not include prompt_eval_duration (not in EmbedResponse schema)"
     );
 }
 
