@@ -1135,3 +1135,166 @@ async fn system_message_in_messages_forwarded_without_duplication() {
     assert_eq!(resp.status(), 200);
     p.mock.verify().await;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 26. Populated stats — timings derived from stats, not wall-clock
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// When LM Studio returns a fully populated `stats` block, the proxy must
+// report those timings unchanged rather than wall-clock measurements.
+
+#[tokio::test]
+async fn populated_stats_drives_timings_not_wall_clock() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // Pick values wiremock cannot produce: 5 seconds total wall-clock is
+    // impossible in a localhost round-trip.
+    let mut lm_body = lm_chat_response("Hello there!", "stop");
+    lm_body.as_object_mut().unwrap().insert(
+        "stats".to_string(),
+        json!({
+            "time_to_first_token": 2.0,
+            "generation_time": 3.0,
+            "tokens_per_second": 50.0,
+            "model_load_time_seconds": 1.5
+        }),
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat populated stats");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+
+    assert_eq!(
+        body["total_duration"].as_u64(),
+        Some(5_000_000_000),
+        "total_duration must equal ttft + generation_time in ns"
+    );
+    assert_eq!(
+        body["prompt_eval_duration"].as_u64(),
+        Some(2_000_000_000),
+        "prompt_eval_duration must equal time_to_first_token in ns"
+    );
+    assert_eq!(
+        body["eval_duration"].as_u64(),
+        Some(3_000_000_000),
+        "eval_duration must equal generation_time in ns"
+    );
+    assert_eq!(
+        body["load_duration"].as_u64(),
+        Some(1_500_000_000),
+        "load_duration must come from model_load_time_seconds"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 27. No stats block — wall-clock fallback
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn no_stats_block_uses_wall_clock_fallback() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // Default lm_chat_response carries no `stats` block at all.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hi back.", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat no stats");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+
+    let total = body["total_duration"].as_u64().expect("total_duration u64");
+    assert!(
+        total > 100_000,
+        "total_duration must be wall-clock ns when stats are absent (got {total})"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 28. Empty stats — wall-clock fallback (parallels the generate-side test)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn empty_stats_block_falls_back_to_wall_clock_timings() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    let mut lm_body = lm_chat_response("Hi.", "stop");
+    lm_body
+        .as_object_mut()
+        .unwrap()
+        .insert("stats".to_string(), json!({}));
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat empty stats");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+
+    let total = body["total_duration"].as_u64().expect("total_duration u64");
+    assert!(
+        total > 100_000,
+        "total_duration must be wall-clock ns when stats are empty (got {total})"
+    );
+    let prompt_eval = body["prompt_eval_duration"]
+        .as_u64()
+        .expect("prompt_eval_duration u64");
+    assert!(
+        prompt_eval > 100_000,
+        "prompt_eval_duration must be wall-clock derived (got {prompt_eval})"
+    );
+    let eval = body["eval_duration"].as_u64().expect("eval_duration u64");
+    assert!(
+        eval > 100_000,
+        "eval_duration must be wall-clock derived (got {eval})"
+    );
+}

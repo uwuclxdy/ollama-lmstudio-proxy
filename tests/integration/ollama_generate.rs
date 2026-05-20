@@ -1143,3 +1143,66 @@ async fn context_array_in_request_accepted() {
     // Ollama omits the context field in the response (deprecated)
     // — we only assert done:true and no crash.
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 27. Empty stats block — fall back to wall-clock, never report all-1 ns
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// LM Studio's OpenAI-compat /v1/completions path returns `stats: {}` on every
+// non-stream response. With no usable timing values, the proxy must fall back
+// to wall-clock measurement rather than emitting 1-ns floors.
+
+#[tokio::test]
+async fn empty_stats_block_falls_back_to_wall_clock_timings() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    let mut lm_body = lm_completion_response("Reply.", "stop");
+    lm_body
+        .as_object_mut()
+        .unwrap()
+        .insert("stats".to_string(), json!({}));
+
+    Mock::given(method("POST"))
+        .and(path("/v1/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Hello?",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate empty stats");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+
+    // The buggy stats-branch path reports `total_duration: 1` and the
+    // per-field .max(1) floors stamp 1 ns onto every duration. Real wall-clock
+    // wiremock round-trips through axum + reqwest run in the millisecond range;
+    // 100 µs is well below that floor and far above any spurious sub-µs zeroing.
+    let total = body["total_duration"].as_u64().expect("total_duration u64");
+    assert!(
+        total > 100_000,
+        "total_duration must be wall-clock ns when stats are empty (got {total})"
+    );
+    let prompt_eval = body["prompt_eval_duration"]
+        .as_u64()
+        .expect("prompt_eval_duration u64");
+    assert!(
+        prompt_eval > 100_000,
+        "prompt_eval_duration must be wall-clock derived (got {prompt_eval})"
+    );
+    let eval = body["eval_duration"].as_u64().expect("eval_duration u64");
+    assert!(
+        eval > 100_000,
+        "eval_duration must be wall-clock derived (got {eval})"
+    );
+}

@@ -24,6 +24,15 @@ impl TimingInfo {
         estimated_input_tokens: u64,
         estimated_output_tokens: u64,
     ) -> Self {
+        let actual_prompt_tokens = lm_response
+            .get("usage")
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_u64());
+        let actual_completion_tokens = lm_response
+            .get("usage")
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_u64());
+
         if let Some(stats) = lm_response.get("stats") {
             // LM Studio publishes two stats shapes:
             //   /api/v0/*       — { generation_time, time_to_first_token, tokens_per_second }
@@ -44,60 +53,65 @@ impl TimingInfo {
                 .and_then(|t| t.as_f64())
                 .unwrap_or(0.0);
 
-            let actual_prompt_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|t| t.as_u64())
+            let stats_prompt_tokens = actual_prompt_tokens
                 .or_else(|| stats.get("input_tokens").and_then(|t| t.as_u64()))
                 .unwrap_or(estimated_input_tokens);
 
-            let actual_completion_tokens = lm_response
-                .get("usage")
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|t| t.as_u64())
+            let stats_completion_tokens = actual_completion_tokens
                 .or_else(|| stats.get("total_output_tokens").and_then(|t| t.as_u64()))
                 .unwrap_or(estimated_output_tokens);
 
             let generation_time = match stats.get("generation_time").and_then(|t| t.as_f64()) {
                 Some(g) => g,
-                None if tokens_per_second > 0.0 && actual_completion_tokens > 0 => {
-                    actual_completion_tokens as f64 / tokens_per_second
+                None if tokens_per_second > 0.0 && stats_completion_tokens > 0 => {
+                    stats_completion_tokens as f64 / tokens_per_second
                 }
                 _ => 0.0,
             };
 
-            let load_duration_ns = stats
+            // The OpenAI-compat /v1/chat/completions path always sends `stats: {}`.
+            // With nothing usable in the block, returning all-1 floors would lie
+            // about the real elapsed time — fall back to wall-clock and preserve
+            // the load duration signal if `model_load_time_seconds` was reported.
+            let model_load_ns = stats
                 .get("model_load_time_seconds")
                 .and_then(|t| t.as_f64())
-                .map(|s| (s * 1_000_000_000.0) as u64)
-                .unwrap_or(DEFAULT_LOAD_DURATION_NS);
+                .map(|s| (s * 1_000_000_000.0) as u64);
 
             let ttft_ns = (time_to_first_token * 1_000_000_000.0) as u64;
             let generation_time_ns = (generation_time * 1_000_000_000.0) as u64;
             let total_duration_ns = ttft_ns + generation_time_ns;
 
-            return Self {
-                total_duration: total_duration_ns.max(1),
-                load_duration: load_duration_ns,
-                prompt_eval_count: actual_prompt_tokens.max(1),
-                prompt_eval_duration: ttft_ns.max(1),
-                eval_count: actual_completion_tokens.max(1),
-                eval_duration: generation_time_ns.max(1),
-            };
+            if total_duration_ns > 0 {
+                return Self {
+                    total_duration: total_duration_ns,
+                    load_duration: model_load_ns.unwrap_or(DEFAULT_LOAD_DURATION_NS),
+                    prompt_eval_count: stats_prompt_tokens.max(1),
+                    prompt_eval_duration: ttft_ns.max(1),
+                    eval_count: stats_completion_tokens.max(1),
+                    eval_duration: generation_time_ns.max(1),
+                };
+            }
+
+            let mut fallback = Self::from_legacy_estimation(
+                start_time,
+                estimated_input_tokens,
+                estimated_output_tokens,
+                actual_prompt_tokens,
+                actual_completion_tokens,
+            );
+            if let Some(load_ns) = model_load_ns {
+                fallback.load_duration = load_ns;
+            }
+            return fallback;
         }
 
         Self::from_legacy_estimation(
             start_time,
             estimated_input_tokens,
             estimated_output_tokens,
-            lm_response
-                .get("usage")
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|t| t.as_u64()),
-            lm_response
-                .get("usage")
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|t| t.as_u64()),
+            actual_prompt_tokens,
+            actual_completion_tokens,
         )
     }
 
