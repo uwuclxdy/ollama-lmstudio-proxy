@@ -337,10 +337,10 @@ async fn show_present_model_returns_full_shape() {
     assert!(body["parameters"].is_string(), "missing parameters; {body}");
     assert!(body["template"].is_string(), "missing template; {body}");
     assert!(body["details"].is_object(), "missing details; {body}");
-    // model_info is verbose-only — absent in non-verbose response
+    // model_info is always present so Ollama clients can read context_length
     assert!(
-        body.get("model_info").is_none(),
-        "model_info must be absent in non-verbose; {body}"
+        body["model_info"].is_object(),
+        "model_info must always appear; {body}"
     );
     assert!(
         body["capabilities"].is_array(),

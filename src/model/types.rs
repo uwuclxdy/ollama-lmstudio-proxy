@@ -435,7 +435,7 @@ impl ModelInfo {
         Value::Object(map)
     }
 
-    pub fn to_show_response_verbose(&self, verbose: bool) -> Value {
+    pub fn to_show_response(&self) -> Value {
         let capabilities = self.determine_capabilities();
         let mut details = self.base_ollama_representation()["details"].clone();
         if let Some(obj) = details.as_object_mut() {
@@ -452,13 +452,11 @@ impl ModelInfo {
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": details,
             "capabilities": capabilities,
-            "modified_at": chrono::Utc::now().to_rfc3339()
+            "modified_at": chrono::Utc::now().to_rfc3339(),
+            "model_info": self.build_model_info()
         });
 
         if let Some(obj) = response.as_object_mut() {
-            if verbose {
-                obj.insert("model_info".to_string(), self.build_model_info());
-            }
             if let Some(name) = &self.display_name {
                 obj.insert("display_name".to_string(), json!(name));
             }

@@ -51,11 +51,6 @@ pub async fn handle_ollama_show(
         .get_all_models(context.client, cancellation_token)
         .await?;
 
-    let verbose = body
-        .get("verbose")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
     let base_model = models.iter().find(|m| m.id == resolved_id);
 
     let Some(model) = base_model else {
@@ -65,7 +60,7 @@ pub async fn handle_ollama_show(
         )));
     };
 
-    let mut response = model.to_show_response_verbose(verbose);
+    let mut response = model.to_show_response();
 
     if let Some(entry) = virtual_entry
         && let Some(obj) = response.as_object_mut()
