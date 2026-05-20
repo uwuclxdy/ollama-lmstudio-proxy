@@ -71,7 +71,7 @@ ollama-lmstudio-proxy \
 |-----------------------------------------|-------------------------|----------------------------------------------------------|
 | `--listen`                              | `0.0.0.0:11434`         | Server bind address                                      |
 | `--lmstudio-url`                        | `http://localhost:1234` | LM Studio URL                                            |
-| `--log-level`                           | `info`                  | `off`, `error`, `warn`, `info`, `debug`, `trace`         |
+| `--log-level`                           | `info`                  | `off`, `error`, `warn`, `info`, `debug`, `trace`; also reads `RUST_LOG` |
 | `--load-timeout-seconds`                | `15`                    | Model loading wait timeout in seconds (after trigger)    |
 | `--model-resolution-cache-ttl-seconds`  | `300`                   | Cache TTL for model resolution                           |
 | `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |

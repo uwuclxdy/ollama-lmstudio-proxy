@@ -18,8 +18,9 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "RUST_LOG",
         default_value = "info",
-        help = "log level (off, error, warn, info, debug, trace)"
+        help = "log level (off, error, warn, info, debug, trace); also reads RUST_LOG"
     )]
     pub log_level: String,
 
