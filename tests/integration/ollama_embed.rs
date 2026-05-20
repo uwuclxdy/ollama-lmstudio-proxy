@@ -876,3 +876,41 @@ async fn both_endpoints_route_to_v1_embeddings() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 24. prompt_eval_count reflects LM Studio usage.prompt_tokens
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_prompt_eval_count_from_usage() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "object": "embedding", "index": 0, "embedding": [0.1, 0.2] }],
+            "model": "all-minilm",
+            "usage": { "prompt_tokens": 42, "total_tokens": 42 }
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": "token count test" }))
+        .send()
+        .await
+        .expect("POST /api/embed usage");
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["prompt_eval_count"]
+            .as_u64()
+            .expect("prompt_eval_count"),
+        42,
+        "prompt_eval_count must equal usage.prompt_tokens from LM Studio response"
+    );
+}
