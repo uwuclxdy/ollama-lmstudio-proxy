@@ -51,7 +51,6 @@ OLLAMA_ACTIVE=(
     api/embed.md
     api/errors.md
     api/generate.md
-    api/introduction.md
     api/ps.md
     api/pull.md
     api/streaming.md
@@ -67,6 +66,7 @@ OLLAMA_ACTIVE=(
 
 # Ollama: irrelevant to a translation proxy. Never fetched.
 OLLAMA_DENY=(
+    api/introduction.md
     cloud.md
     docker.md
     gpu.md
