@@ -150,7 +150,9 @@ fn generate_response_no_thinking_field_when_absent() {
 // =========================================================================
 
 #[test]
-fn generate_response_does_not_emit_empty_context_array() {
+fn generate_response_omits_context_absent_from_schema() {
+    // `context` is not part of the Ollama OpenAPI GenerateResponse schema.
+    // LM Studio does not return token IDs, so the field must not appear.
     let lm = json!({
         "choices": [{
             "text": "hello",
@@ -164,11 +166,7 @@ fn generate_response_does_not_emit_empty_context_array() {
         "prompt text",
         Instant::now(),
     );
-    assert!(
-        result.get("context").is_none(),
-        "context must be omitted (proxy has no token IDs to fabricate); got {}",
-        result
-    );
+    assert!(result.get("context").is_none(), "got {}", result);
 }
 
 #[test]

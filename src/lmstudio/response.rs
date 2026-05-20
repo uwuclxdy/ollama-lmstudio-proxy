@@ -281,10 +281,8 @@ impl ResponseTransformer {
         );
 
         let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
-        // `context` (token-ID encoding of conversation) is deprecated in Ollama and
-        // cannot be synthesized from LM Studio responses, so omit it rather than
-        // emitting a misleading empty array that breaks legacy context-chaining
-        // clients.
+        // `context` is absent from the Ollama OpenAPI schema for GenerateResponse.
+        // LM Studio does not expose token IDs anyway, so the field is omitted.
         let mut response_obj = json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
