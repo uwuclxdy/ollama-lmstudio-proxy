@@ -130,18 +130,25 @@ pub async fn handle_ollama_tags(
 
     for entry in &virtual_entries {
         if models.iter().all(|m| m.id != entry.target_model_id) {
+            // Orphan alias — its target was removed from LM Studio so we have
+            // no real metadata. Emit the same shape as a real entry with zeros
+            // for size/context so clients don't fall back to their own defaults.
             ollama_models.push(json!({
                 "name": entry.name,
                 "model": entry.name,
                 "modified_at": entry.updated_at.to_rfc3339(),
                 "size": 0,
                 "digest": hex::encode(Sha256::digest(entry.name.as_bytes())),
+                "context_length": 0,
+                "max_context_length": 0,
                 "details": {
                     "format": "virtual",
                     "family": "unknown",
                     "families": ["unknown"],
                     "parameter_size": "unknown",
-                    "quantization_level": "unknown"
+                    "quantization_level": "unknown",
+                    "context_length": 0,
+                    "max_context_length": 0
                 }
             }));
         }
