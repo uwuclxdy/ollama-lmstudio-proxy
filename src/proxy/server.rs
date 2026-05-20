@@ -67,7 +67,9 @@ impl ProxyServer {
         let addr: SocketAddr = self.config.listen.parse()?;
         let server = Arc::new(self);
 
-        let app = create_router(server.clone()).layer(cors_layer());
+        let app = create_router(server.clone())
+            .layer(axum::middleware::from_fn(access_log))
+            .layer(cors_layer());
 
         if LogConfig::get().debug_enabled {
             log::info!("starting proxy server on {} (debug mode)", addr);
@@ -119,6 +121,26 @@ async fn wait_for_shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+}
+
+async fn access_log(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let status = response.status().as_u16();
+    let elapsed = crate::logging::format_duration(start.elapsed());
+    if status >= 500 {
+        log::error!("{} {} -> {} | {}", method, path, status, elapsed);
+    } else if status >= 400 {
+        log::warn!("{} {} -> {} | {}", method, path, status, elapsed);
+    } else {
+        log::info!("{} {} -> {} | {}", method, path, status, elapsed);
+    }
+    response
 }
 
 pub fn cors_layer() -> CorsLayer {
