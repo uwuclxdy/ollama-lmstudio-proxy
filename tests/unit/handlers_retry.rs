@@ -2,7 +2,7 @@
 // all require a live RequestContext (network) and async runtime with tokio::select!.
 // The only pure-classification logic lives in crate::error::is_model_loading_error,
 // which is imported here for exhaustive coverage.
-use crate::error::is_model_loading_error;
+use crate::lmstudio::is_model_loading_error;
 
 // --- is_model_loading_error: known loading indicator phrases ---
 

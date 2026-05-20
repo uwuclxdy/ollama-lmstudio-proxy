@@ -1,11 +1,12 @@
+pub mod api;
 pub mod config;
 pub mod constants;
 pub mod error;
-pub mod handlers;
 pub mod http;
+pub mod lmstudio;
 pub mod logging;
 pub mod model;
-pub mod server;
+pub mod proxy;
 pub mod storage;
 pub mod streaming;
 pub mod update;

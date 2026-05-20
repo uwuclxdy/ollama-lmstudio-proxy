@@ -24,7 +24,7 @@ macro_rules! with_ctx {
         let bs_dir = fresh_blob_dir();
         let vms = fresh_vm_store(&vm_dir);
         let bs = fresh_blob_store(&bs_dir);
-        let $ctx = crate::handlers::RequestContext {
+        let $ctx = crate::api::RequestContext {
             client: &client,
             lmstudio_url: $url,
             virtual_models: vms,

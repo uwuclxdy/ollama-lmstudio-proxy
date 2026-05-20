@@ -8,7 +8,8 @@
 // ProxyError.  We bring them in via crate paths because they live one level up
 // from this module.
 
-use crate::error::{ProxyError, is_model_loading_error};
+use crate::error::ProxyError;
+use crate::lmstudio::is_model_loading_error;
 
 // ── ProxyError constructors ──────────────────────────────────────────────────
 

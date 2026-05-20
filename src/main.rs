@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use ollama_lmstudio_proxy::{config, logging, server, update};
+use ollama_lmstudio_proxy::{config, logging, proxy, update};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enable_chunk_recovery: cfg.enable_chunk_recovery,
     });
 
-    let server = server::ProxyServer::new(cfg)?;
+    let server = proxy::ProxyServer::new(cfg)?;
     server.run().await
 }
 

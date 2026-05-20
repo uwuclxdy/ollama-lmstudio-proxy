@@ -9,8 +9,8 @@ use crate::error::ProxyError;
 use crate::http::CancellableRequest;
 use crate::logging::log_timed;
 use crate::model::matcher::{ModelMatchView, find_best_match};
+use crate::model::naming::clean_model_name;
 use crate::model::types::{ModelInfo, NativeModelsResponse};
-use crate::model::utils::clean_model_name;
 
 pub struct ModelResolver {
     lmstudio_url: String,

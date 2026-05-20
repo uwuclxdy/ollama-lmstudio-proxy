@@ -7,7 +7,6 @@
 
 #![allow(dead_code)]
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Once;
 
@@ -17,9 +16,9 @@ use wiremock::MockServer;
 
 use ollama_lmstudio_proxy::config::{Config, RuntimeConfig, init_runtime_config};
 use ollama_lmstudio_proxy::logging::LogConfig;
-use ollama_lmstudio_proxy::server::ProxyServer;
-use ollama_lmstudio_proxy::server::proxy::cors_layer;
-use ollama_lmstudio_proxy::server::routes::create_router;
+use ollama_lmstudio_proxy::proxy::ProxyServer;
+use ollama_lmstudio_proxy::proxy::routes::create_router;
+use ollama_lmstudio_proxy::proxy::server::cors_layer;
 
 static INIT_RUNTIME: Once = Once::new();
 
@@ -92,5 +91,3 @@ pub async fn spawn_proxy() -> TestProxy {
         _server_task: handle,
     }
 }
-
-pub fn _unused_path_marker(_p: PathBuf) {}

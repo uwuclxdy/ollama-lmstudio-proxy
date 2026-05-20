@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::constants::ERROR_CANCELLED;
-use crate::handlers::transform::{TimingInfo, convert_tool_calls_to_ollama};
+use crate::lmstudio::response::{TimingInfo, convert_tool_calls_to_ollama};
 
 #[derive(Default)]
 pub struct ChunkProcessingState {
