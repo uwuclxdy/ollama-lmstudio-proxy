@@ -8,7 +8,7 @@ pub const LM_STUDIO_NATIVE_DOWNLOAD_STATUS: &str = "/api/v1/models/download/stat
 pub const LM_STUDIO_NATIVE_UNLOAD: &str = "/api/v1/models/unload";
 
 /// Latest upstream Ollama server version for compatibility endpoints
-pub const OLLAMA_SERVER_VERSION: &str = "0.13.0";
+pub const OLLAMA_SERVER_VERSION: &str = "0.30.0";
 
 /// Timing and performance constants
 pub const TOKEN_TO_CHAR_RATIO: f64 = 0.25;
