@@ -8,7 +8,6 @@ use axum::{Json, Router};
 use bytes::Bytes;
 use http::HeaderMap;
 use serde_json::Value;
-use tokio_util::sync::CancellationToken;
 
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
 use crate::api::{RequestContext, lmstudio, ollama};
@@ -135,13 +134,13 @@ async fn version_handler(State(_): State<AppState>) -> Result<Response, ProxyErr
 
 async fn health_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
     let context = create_context(&s);
-    let value = ollama::handle_health_check(context, CancellationToken::new()).await?;
+    let value = ollama::handle_health_check(context, s.shutdown.child_token()).await?;
     Ok(json_response(&value))
 }
 
 async fn tags_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
     let context = create_context(&s);
-    ollama::handle_ollama_tags(context, s.model_resolver.clone(), CancellationToken::new()).await
+    ollama::handle_ollama_tags(context, s.model_resolver.clone(), s.shutdown.child_token()).await
 }
 
 async fn chat_handler(
@@ -153,7 +152,7 @@ async fn chat_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
     .await
@@ -168,7 +167,7 @@ async fn generate_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
     .await
@@ -199,7 +198,7 @@ async fn embedding_handler_inner(
         s.model_resolver.clone(),
         body,
         mode,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
     .await
@@ -214,7 +213,7 @@ async fn pull_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
     )
     .await
 }
@@ -228,7 +227,7 @@ async fn create_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
     )
     .await
 }
@@ -242,7 +241,7 @@ async fn copy_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
     )
     .await
 }
@@ -270,14 +269,14 @@ async fn show_handler(
         context,
         s.model_resolver.clone(),
         body,
-        CancellationToken::new(),
+        s.shutdown.child_token(),
     )
     .await
 }
 
 async fn ps_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
     let context = create_context(&s);
-    ollama::handle_ollama_ps(context, s.model_resolver.clone(), CancellationToken::new()).await
+    ollama::handle_ollama_ps(context, s.model_resolver.clone(), s.shutdown.child_token()).await
 }
 
 async fn blob_head_handler(
@@ -362,7 +361,7 @@ async fn forward_passthrough(
             headers,
             query,
         },
-        CancellationToken::new(),
+        s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
     .await

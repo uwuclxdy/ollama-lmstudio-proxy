@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moka::future::Cache;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::Config;
@@ -18,6 +19,7 @@ pub struct ProxyServer {
     pub model_resolver: Arc<ModelResolver>,
     pub virtual_models: Arc<VirtualModelStore>,
     pub blob_store: Arc<BlobStore>,
+    pub shutdown: CancellationToken,
 }
 
 impl ProxyServer {
@@ -57,6 +59,7 @@ impl ProxyServer {
             model_resolver,
             virtual_models,
             blob_store,
+            shutdown: CancellationToken::new(),
         })
     }
 
@@ -74,9 +77,47 @@ impl ProxyServer {
         log::info!("LM Studio backend: {}", server.config.lmstudio_url);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
 
+        let shutdown = server.shutdown.clone();
+        tokio::spawn(async move {
+            wait_for_shutdown_signal().await;
+            log::info!("shutdown signal received, draining in-flight requests");
+            shutdown.cancel();
+        });
+
+        axum::serve(listener, app)
+            .with_graceful_shutdown(server.shutdown.clone().cancelled_owned())
+            .await?;
+
+        log::info!("server stopped");
         Ok(())
+    }
+}
+
+async fn wait_for_shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            log::error!("failed to install ctrl-c handler: {}", e);
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => log::error!("failed to install SIGTERM handler: {}", e),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }
 
