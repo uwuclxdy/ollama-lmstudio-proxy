@@ -171,12 +171,12 @@ pub async fn handle_streaming_response(
                                     sse_buffer.drain(..cursor);
                                 }
                             } else {
-                                send_error_and_close(&tx, &model_clone_for_task, "invalid UTF-8 in stream", is_chat_endpoint).await;
+                                send_error_and_close(&tx, "invalid UTF-8 in stream").await;
                                 break 'stream_loop Err("invalid UTF-8".to_string());
                             }
                         }
                         Ok(Some(Err(e))) => {
-                            send_error_and_close(&tx, &model_clone_for_task, &format!("streaming error: {}", e), is_chat_endpoint).await;
+                            send_error_and_close(&tx, &format!("streaming error: {}", e)).await;
                             break 'stream_loop Err(format!("network error: {}", e));
                         }
                         Ok(None) => {
@@ -215,7 +215,7 @@ pub async fn handle_streaming_response(
                             break 'stream_loop Ok(());
                         }
                         Err(_) => {
-                            send_error_and_close(&tx, &model_clone_for_task, ERROR_TIMEOUT, is_chat_endpoint).await;
+                            send_error_and_close(&tx, ERROR_TIMEOUT).await;
                             break 'stream_loop Err(ERROR_TIMEOUT.to_string());
                         }
                     }

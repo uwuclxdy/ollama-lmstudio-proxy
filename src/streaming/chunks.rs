@@ -140,11 +140,9 @@ pub async fn send_chunk_and_close_channel(
 
 pub async fn send_error_and_close(
     tx: &mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
-    model_ollama_name: &str,
     error_message: &str,
-    is_chat_endpoint: bool,
 ) {
-    let error_chunk = create_error_chunk(model_ollama_name, error_message, is_chat_endpoint);
+    let error_chunk = create_error_chunk(error_message);
     send_chunk_and_close_channel(tx, error_chunk).await;
 }
 
@@ -191,22 +189,9 @@ pub fn create_ollama_streaming_chunk(
     }
 }
 
-pub fn create_error_chunk(
-    model_ollama_name: &str,
-    error_message: &str,
-    is_chat_endpoint: bool,
-) -> Value {
-    let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
-    if let Some(chunk_obj) = chunk.as_object_mut() {
-        chunk_obj.insert("error".to_string(), json!(error_message));
-        if is_chat_endpoint
-            && let Some(msg) = chunk_obj.get_mut("message").and_then(|m| m.as_object_mut())
-        {
-            msg.insert("content".to_string(), json!(""));
-        }
-    }
-    chunk
+pub fn create_error_chunk(error_message: &str) -> Value {
+    // Doc: mid-stream errors are a bare {"error":"…"} line, not a full chunk.
+    json!({ "error": error_message })
 }
 
 pub fn create_cancellation_chunk(

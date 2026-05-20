@@ -282,22 +282,23 @@ fn generate_streaming_chunk_thinking_top_level_only_when_non_empty() {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn error_chunk_chat_is_terminal_with_error_and_empty_content() {
-    let c = create_error_chunk("m", "boom", true);
-    assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
+fn error_chunk_chat_is_bare_error_object() {
+    let c = create_error_chunk("boom");
     assert_eq!(c.get("error").and_then(|v| v.as_str()), Some("boom"));
-    let msg = c.get("message").unwrap();
-    assert_eq!(msg.get("content").and_then(|v| v.as_str()), Some(""));
-    assert_eq!(msg.get("role").and_then(|v| v.as_str()), Some("assistant"));
+    // bare {"error":"…"} — no extra fields
+    assert!(c.get("done").is_none());
+    assert!(c.get("message").is_none());
+    assert!(c.get("model").is_none());
 }
 
 #[test]
-fn error_chunk_generate_is_terminal_with_error() {
-    let c = create_error_chunk("m", "boom", false);
-    assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
+fn error_chunk_generate_is_bare_error_object() {
+    let c = create_error_chunk("boom");
     assert_eq!(c.get("error").and_then(|v| v.as_str()), Some("boom"));
-    assert!(c.get("message").is_none());
-    assert_eq!(c.get("response").and_then(|v| v.as_str()), Some(""));
+    // bare {"error":"…"} — no extra fields
+    assert!(c.get("done").is_none());
+    assert!(c.get("response").is_none());
+    assert!(c.get("model").is_none());
 }
 
 // ════════════════════════════════════════════════════════════════════════════
