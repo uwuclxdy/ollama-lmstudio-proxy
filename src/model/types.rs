@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::constants::{
     DEFAULT_KEEP_ALIVE_MINUTES, DEFAULT_REPEAT_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
@@ -351,7 +352,9 @@ impl ModelInfo {
             "name": self.ollama_name,
             "model": self.ollama_name,
             "size": estimated_size,
-            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
+            // LM Studio exposes no blob hash; derive a deterministic SHA-256
+            // from the model key (stable unique identifier in LM Studio's API).
+            "digest": hex::encode(Sha256::digest(self.id.as_bytes())),
             "details": {
                 "parent_model": "",
                 "format": self.compatibility_type,
@@ -386,7 +389,8 @@ impl ModelInfo {
                     .to_rfc3339()
                     .into(),
             );
-            obj.insert("size_vram".to_string(), obj["size"].clone());
+            // LM Studio exposes KV-cache GPU offload only, not model-weight VRAM usage.
+            obj.insert("size_vram".to_string(), json!(0));
             obj.insert("context_length".to_string(), json!(self.context_length));
         }
 

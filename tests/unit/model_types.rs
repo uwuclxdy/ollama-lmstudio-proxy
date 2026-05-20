@@ -348,11 +348,59 @@ fn tags_model_has_all_spec_keys() {
 }
 
 #[test]
-fn tags_model_digest_is_md5_of_ollama_name() {
+fn tags_model_digest_is_sha256_shaped() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_ollama_tags_model();
-    let expected = format!("{:x}", md5::compute(info.ollama_name.as_bytes()));
-    assert_eq!(v["digest"].as_str().unwrap(), expected);
+    let digest = v["digest"].as_str().expect("digest must be a string");
+    assert_eq!(
+        digest.len(),
+        64,
+        "digest must be 64-char SHA-256 hex, got {digest:?}"
+    );
+    assert!(
+        digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+        "digest must be lowercase hex, got {digest:?}"
+    );
+}
+
+#[test]
+fn ps_model_digest_is_sha256_shaped() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_ollama_ps_model();
+    let digest = v["digest"].as_str().expect("digest must be a string");
+    assert_eq!(
+        digest.len(),
+        64,
+        "ps digest must be 64-char SHA-256 hex, got {digest:?}"
+    );
+    assert!(
+        digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+        "ps digest must be lowercase hex, got {digest:?}"
+    );
+}
+
+#[test]
+fn digest_is_deterministic_for_same_model() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v1 = info.to_ollama_tags_model();
+    let v2 = info.to_ollama_tags_model();
+    assert_eq!(
+        v1["digest"], v2["digest"],
+        "digest must be deterministic across calls"
+    );
+}
+
+#[test]
+fn digest_differs_for_distinct_models() {
+    let a = ModelInfo::from_native_data(&native("publisher/model-a"));
+    let b = ModelInfo::from_native_data(&native("publisher/model-b"));
+    let da = a.to_ollama_tags_model()["digest"].clone();
+    let db = b.to_ollama_tags_model()["digest"].clone();
+    assert_ne!(da, db, "distinct models must produce distinct digests");
 }
 
 #[test]
@@ -391,7 +439,7 @@ fn ps_model_includes_tags_fields_plus_expires_and_vram() {
     ] {
         assert!(v.get(key).is_some(), "missing key {key}");
     }
-    assert_eq!(v["size_vram"], v["size"]);
+    assert_eq!(v["size_vram"], json!(0));
     assert_eq!(v["context_length"], json!(info.context_length));
 }
 

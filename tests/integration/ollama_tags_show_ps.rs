@@ -16,8 +16,12 @@ use crate::common::spawn_proxy;
 
 /// Minimal NativeModelData that the proxy's NativeModelsResponse can parse.
 fn native_model(key: &str, architecture: &str, loaded: bool) -> Value {
+    native_model_with_config(key, architecture, loaded, json!({"context_length": 4096}))
+}
+
+fn native_model_with_config(key: &str, architecture: &str, loaded: bool, config: Value) -> Value {
     let loaded_instances = if loaded {
-        json!([{"id": format!("{}-inst", key), "config": {"context_length": 4096}}])
+        json!([{"id": format!("{}-inst", key), "config": config}])
     } else {
         json!([])
     };
@@ -574,7 +578,7 @@ async fn ps_no_loaded_models_returns_empty() {
 }
 
 #[tokio::test]
-async fn ps_loaded_model_has_expires_at_and_size_vram() {
+async fn ps_loaded_model_has_expires_at_and_zero_size_vram_without_gpu_signal() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -607,7 +611,44 @@ async fn ps_loaded_model_has_expires_at_and_size_vram() {
     // expose both `name` (display) and `model` (canonical identifier).
     assert!(m["model"].is_string(), "missing model; {m}");
     assert!(m["expires_at"].is_string(), "missing expires_at; {m}");
-    assert!(m["size_vram"].is_number(), "missing size_vram; {m}");
+    assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
+}
+
+#[tokio::test]
+async fn ps_loaded_model_with_kv_cache_gpu_flag_still_reports_zero_size_vram() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
+            native_model_with_config(
+                "llama3.2:3b",
+                "llama",
+                true,
+                json!({
+                    "context_length": 4096,
+                    "offload_kv_cache_to_gpu": true
+                }),
+            ),
+        ])))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let models = body["models"].as_array().expect("models array");
+    assert_eq!(models.len(), 1, "expected 1 loaded model; got {body}");
+
+    let m = &models[0];
+    assert_eq!(m["size"], json!(4_500_000_000u64));
+    assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
 }
 
 #[tokio::test]
