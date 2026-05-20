@@ -190,18 +190,21 @@ async fn non_streaming_generate_returns_ollama_shape() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. stream absent defaults to non-streaming
+// 2. stream absent defaults to streaming
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn stream_absent_defaults_to_non_streaming() {
+async fn stream_absent_defaults_to_streaming() {
     let p = spawn_proxy().await;
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
+    let sse = sse_completion_body(&["OK"], "stop");
     Mock::given(method("POST"))
         .and(path("/v1/completions"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(sse.into_bytes(), "text/event-stream"),
         )
         .mount(&p.mock)
         .await;
@@ -218,9 +221,15 @@ async fn stream_absent_defaults_to_non_streaming() {
         .expect("POST /api/generate no stream");
 
     assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.expect("JSON");
-    assert_eq!(body["done"], true);
-    assert!(body.get("response").is_some());
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    assert!(
+        !chunks.is_empty(),
+        "absent stream must produce NDJSON chunks"
+    );
+    let final_chunk = chunks.last().unwrap();
+    assert_eq!(final_chunk["done"], true);
+    assert!(final_chunk.get("response").is_some());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

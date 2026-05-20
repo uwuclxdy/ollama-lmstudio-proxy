@@ -168,17 +168,22 @@ async fn non_streaming_chat_returns_ollama_shape() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. stream field absent defaults to non-streaming
+// 2. stream field absent defaults to streaming
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn stream_absent_defaults_to_non_streaming() {
+async fn stream_absent_defaults_to_streaming() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
+    let sse = sse_chat_body(&["Sure!"], "stop");
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Sure!", "stop")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(sse.into_bytes(), "text/event-stream"),
+        )
         .mount(&p.mock)
         .await;
 
@@ -194,9 +199,14 @@ async fn stream_absent_defaults_to_non_streaming() {
         .expect("POST /api/chat no stream field");
 
     assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.expect("JSON body");
-    assert_eq!(body["done"], true);
-    assert!(body.get("message").is_some());
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    assert!(
+        !chunks.is_empty(),
+        "absent stream must produce NDJSON chunks"
+    );
+    let final_chunk = chunks.last().unwrap();
+    assert_eq!(final_chunk["done"], true);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
