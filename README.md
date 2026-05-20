@@ -98,7 +98,7 @@ translate to LM Studio native API equivalents.
 | `GET /health`                   | Validates LM Studio reachability                                   |
 | `POST /api/create`              | Creates proxy-managed virtual aliases (no custom blobs)            |
 | `POST /api/pull`                | Translates to `/api/v1/models/download`; streams download progress |
-| `POST /api/push`                | No-op; validates that the target model exists                      |
+| `POST /api/push`                | Returns 501 — LM Studio has no model registry                      |
 | `DELETE /api/delete`            | Removes proxy-managed aliases only                                 |
 | `POST /api/copy`                | Duplicates aliases or references LM Studio models                  |
 | `HEAD/POST /api/blobs/:digest`  | Stores and validates blobs for alias manifests                     |

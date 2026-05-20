@@ -280,53 +280,6 @@ pub async fn handle_ollama_delete(
     Ok(json_response(&response))
 }
 
-pub async fn handle_ollama_push(
-    context: RequestContext<'_>,
-    model_resolver: Arc<ModelResolver>,
-    body: Value,
-    cancellation_token: CancellationToken,
-) -> Result<axum::response::Response, ProxyError> {
-    let start_time = Instant::now();
-    log_handler_io("push", Some(&body), None);
-    let model_name = extract_required_model_name(&body)?;
-    let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
-
-    log_request("POST", "/api/push", Some(model_name));
-
-    let (resolved_model_id, _) =
-        resolve_model_target(&context, &model_resolver, model_name, cancellation_token).await?;
-
-    log_timed(LOG_PREFIX_SUCCESS, "Ollama push (noop)", start_time);
-
-    if stream {
-        let statuses = vec![
-            json!({"status": "retrieving manifest", "model": model_name}),
-            json!({
-                "status": "starting upload",
-                "model": model_name,
-                "target_model_id": resolved_model_id
-            }),
-            json!({"status": "pushing manifest", "model": model_name}),
-            json!({
-                "status": "success",
-                "model": model_name,
-                "detail": "push is a no-op when targeting LM Studio"
-            }),
-        ];
-        log_handler_io("push", None, None);
-        return stream_status_messages(statuses, "failed to stream push status");
-    }
-
-    let response = json!({
-        "status": "success",
-        "model": model_name,
-        "detail": "push is a no-op when targeting LM Studio",
-        "target_model_id": resolved_model_id
-    });
-    log_handler_io("push", None, Some(&response));
-    Ok(json_response(&response))
-}
-
 #[cfg(test)]
 #[path = "../../../tests/unit/handlers_ollama_lifecycle.rs"]
 mod tests;

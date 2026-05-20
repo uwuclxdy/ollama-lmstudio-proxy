@@ -15,6 +15,5 @@ pub use generate::handle_ollama_generate;
 pub use health::{handle_health_check, handle_ollama_root, handle_ollama_version};
 pub use lifecycle::{
     handle_ollama_copy, handle_ollama_create, handle_ollama_delete, handle_ollama_pull,
-    handle_ollama_push,
 };
 pub use models::{handle_ollama_ps, handle_ollama_show, handle_ollama_tags};

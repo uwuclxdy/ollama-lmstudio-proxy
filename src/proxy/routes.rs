@@ -255,18 +255,10 @@ async fn delete_handler(
     ollama::handle_ollama_delete(context, body).await
 }
 
-async fn push_handler(
-    State(s): State<AppState>,
-    JsonBody(body): JsonBody<Value>,
-) -> Result<Response, ProxyError> {
-    let context = create_context(&s);
-    ollama::handle_ollama_push(
-        context,
-        s.model_resolver.clone(),
-        body,
-        CancellationToken::new(),
-    )
-    .await
+async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "push is not supported: LM Studio has no model registry",
+    ))
 }
 
 async fn show_handler(
