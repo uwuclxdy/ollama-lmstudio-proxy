@@ -4,6 +4,7 @@
 // The proxy calls GET /api/v1/models on the LM Studio backend for all of
 // these — the wiremock mock must be registered on that path.
 
+use ollama_lmstudio_proxy::constants::OLLAMA_SERVER_VERSION;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
@@ -869,9 +870,8 @@ async fn version_matches_expected_constant() {
         .expect("GET /api/version");
     let body: Value = resp.json().await.expect("json body");
     let version = body["version"].as_str().expect("version field");
-    // OLLAMA_SERVER_VERSION in constants.rs is "0.13.0".
     assert_eq!(
-        version, "0.13.0",
-        "version mismatch; expected '0.13.0', got '{version}'"
+        version, OLLAMA_SERVER_VERSION,
+        "version mismatch; expected '{OLLAMA_SERVER_VERSION}', got '{version}'"
     );
 }
