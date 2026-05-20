@@ -60,7 +60,13 @@ pub async fn handle_ollama_show(
         )));
     };
 
-    let mut response = model.to_show_response();
+    let verbose = body
+        .get("verbose")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let alias_metadata = virtual_entry.as_ref().map(|entry| &entry.metadata);
+    let mut response = model.to_show_response(alias_metadata, verbose);
 
     if let Some(entry) = virtual_entry
         && let Some(obj) = response.as_object_mut()
@@ -72,9 +78,6 @@ pub async fn handle_ollama_show(
 
         if let Some(system) = &entry.metadata.system_prompt {
             obj.insert("system".to_string(), json!(system));
-        }
-        if let Some(template) = &entry.metadata.template {
-            obj.insert("template".to_string(), json!(template));
         }
         if let Some(license) = &entry.metadata.license {
             obj.insert("license".to_string(), license.clone());

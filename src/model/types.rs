@@ -2,11 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::constants::{
-    DEFAULT_KEEP_ALIVE_MINUTES, DEFAULT_REPEAT_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
-    DEFAULT_TOP_P,
-};
+use crate::constants::DEFAULT_KEEP_ALIVE_MINUTES;
 use crate::storage::VirtualModelEntry;
+use crate::storage::virtual_models::VirtualModelMetadata;
 
 #[derive(Debug, Clone)]
 pub struct ModelParameters {
@@ -399,7 +397,17 @@ impl ModelInfo {
         base
     }
 
-    fn build_model_info(&self) -> Value {
+    /// Build the `model_info` block for `/api/show`.
+    ///
+    /// Concise (`verbose: false`) emits the GGUF-style keys real Ollama clients
+    /// rely on: `general.*` and the architecture-scoped `<arch>.context_length`.
+    /// LM Studio doesn't expose the rest of the GGUF metadata, so we stop there.
+    ///
+    /// Verbose (`verbose: true`) is the proxy's "tell me everything you know"
+    /// mode. Real Ollama emits GGUF tokenizer arrays here; we can't (no GGUF
+    /// access), so instead we add every `lmstudio.*` field we can derive from
+    /// the native model record.
+    fn build_model_info(&self, verbose: bool) -> Value {
         let mut map = serde_json::Map::new();
         map.insert("general.architecture".into(), json!(self.arch));
         map.insert("general.file_type".into(), json!(2));
@@ -413,47 +421,77 @@ impl ModelInfo {
         map.insert("general.quantization_version".into(), json!(2));
         map.insert(
             format!("{}.context_length", self.arch),
-            json!(self.context_length),
-        );
-        map.insert("lmstudio.publisher".into(), json!(self.publisher));
-        map.insert("lmstudio.model_type".into(), json!(self.model_type));
-        map.insert("lmstudio.state".into(), json!(self.state));
-        map.insert("lmstudio.context_length".into(), json!(self.context_length));
-        map.insert(
-            "lmstudio.max_context_length".into(),
             json!(self.max_context_length),
         );
-        map.insert(
-            "lmstudio.compatibility_type".into(),
-            json!(self.compatibility_type),
-        );
-        map.insert(
-            "lmstudio.supports_vision".into(),
-            json!(self.supports_vision),
-        );
-        map.insert("lmstudio.supports_tools".into(), json!(self.supports_tools));
+
+        if verbose {
+            map.insert("lmstudio.publisher".into(), json!(self.publisher));
+            map.insert("lmstudio.model_type".into(), json!(self.model_type));
+            map.insert("lmstudio.state".into(), json!(self.state));
+            map.insert("lmstudio.context_length".into(), json!(self.context_length));
+            map.insert(
+                "lmstudio.max_context_length".into(),
+                json!(self.max_context_length),
+            );
+            map.insert(
+                "lmstudio.compatibility_type".into(),
+                json!(self.compatibility_type),
+            );
+            map.insert("lmstudio.quantization".into(), json!(self.quantization));
+            map.insert(
+                "lmstudio.supports_vision".into(),
+                json!(self.supports_vision),
+            );
+            map.insert("lmstudio.supports_tools".into(), json!(self.supports_tools));
+            map.insert(
+                "lmstudio.supports_reasoning".into(),
+                json!(self.supports_reasoning),
+            );
+            map.insert("lmstudio.is_loaded".into(), json!(self.is_loaded));
+            if let Some(ref ps) = self.params_string {
+                map.insert("lmstudio.params_string".into(), json!(ps));
+            }
+            if let Some(ref dn) = self.display_name {
+                map.insert("lmstudio.display_name".into(), json!(dn));
+            }
+            if let Some(ref desc) = self.description {
+                map.insert("lmstudio.description".into(), json!(desc));
+            }
+            if let Some(bytes) = self.size_bytes {
+                map.insert("lmstudio.size_bytes".into(), json!(bytes));
+            }
+        }
+
         Value::Object(map)
     }
 
-    pub fn to_show_response(&self) -> Value {
+    /// Build the `/api/show` response, honouring virtual-alias metadata and
+    /// the request's `verbose` flag.
+    ///
+    /// `parameters` and `template` are only surfaced when the caller passed a
+    /// virtual alias that supplies them — LM Studio exposes no Modelfile, so
+    /// the proxy refuses to fabricate values that would mislead clients into
+    /// thinking these are the model's real generation defaults.
+    pub fn to_show_response(
+        &self,
+        alias_metadata: Option<&VirtualModelMetadata>,
+        verbose: bool,
+    ) -> Value {
         let capabilities = self.determine_capabilities();
         let mut details = self.base_ollama_representation()["details"].clone();
         if let Some(obj) = details.as_object_mut() {
             obj.insert("parent_model".to_string(), json!(""));
+            // /api/show is the stable model description; runtime-loaded context
+            // belongs to /api/ps. Always report the model's max here so two
+            // calls don't return different numbers depending on load state.
+            obj.insert("context_length".to_string(), json!(self.max_context_length));
         }
 
         let mut response = json!({
-            "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}\nnum_ctx {}",
-                DEFAULT_TEMPERATURE,
-                DEFAULT_TOP_P,
-                DEFAULT_TOP_K,
-                DEFAULT_REPEAT_PENALTY,
-                self.context_length),
-            "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": details,
             "capabilities": capabilities,
             "modified_at": chrono::Utc::now().to_rfc3339(),
-            "model_info": self.build_model_info()
+            "model_info": self.build_model_info(verbose),
         });
 
         if let Some(obj) = response.as_object_mut() {
@@ -462,6 +500,19 @@ impl ModelInfo {
             }
             if let Some(desc) = &self.description {
                 obj.insert("description".to_string(), json!(desc));
+            }
+
+            if let Some(meta) = alias_metadata {
+                if let Some(params) = meta.parameters.as_ref() {
+                    let value = match params {
+                        Value::String(s) => json!(s),
+                        other => json!(other),
+                    };
+                    obj.insert("parameters".to_string(), value);
+                }
+                if let Some(template) = &meta.template {
+                    obj.insert("template".to_string(), json!(template));
+                }
             }
         }
 

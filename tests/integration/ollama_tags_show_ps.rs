@@ -334,8 +334,16 @@ async fn show_present_model_returns_full_shape() {
         body.get("modelfile").is_none(),
         "modelfile must not appear; {body}"
     );
-    assert!(body["parameters"].is_string(), "missing parameters; {body}");
-    assert!(body["template"].is_string(), "missing template; {body}");
+    // parameters and template are only emitted when a virtual alias supplies
+    // them; LM Studio has no Modelfile so a native-backed show must omit them.
+    assert!(
+        body.get("parameters").is_none(),
+        "native show must omit parameters; {body}"
+    );
+    assert!(
+        body.get("template").is_none(),
+        "native show must omit template; {body}"
+    );
     assert!(body["details"].is_object(), "missing details; {body}");
     // model_info is always present so Ollama clients can read context_length
     assert!(
@@ -374,15 +382,17 @@ async fn show_loaded_model_uses_configured_context() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
-    let params = body["parameters"].as_str().expect("parameters string");
-    assert!(
-        params.contains("num_ctx 4096"),
-        "unexpected parameters: {params}"
-    );
+    // /api/show describes the stable model — architecture-scoped context length
+    // mirrors max_context_length regardless of any loaded runtime instance.
     let model_info = &body["model_info"];
-    assert_eq!(model_info["llama.context_length"], json!(4096));
+    assert_eq!(model_info["llama.context_length"], json!(8192));
+    // lmstudio.* fields appear under verbose:true and surface runtime details:
+    // the currently-loaded instance reports 4096, while the model max is 8192.
     assert_eq!(model_info["lmstudio.context_length"], json!(4096));
     assert_eq!(model_info["lmstudio.max_context_length"], json!(8192));
+    // details.context_length is the stable model value.
+    assert_eq!(body["details"]["context_length"], json!(8192));
+    assert_eq!(body["details"]["max_context_length"], json!(8192));
 }
 
 #[tokio::test]
@@ -791,15 +801,14 @@ async fn show_unloaded_model_falls_back_to_max_context() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
-    let params = body["parameters"].as_str().expect("parameters string");
-    assert!(
-        params.contains("num_ctx 8192"),
-        "unexpected parameters: {params}"
-    );
+    // No runtime instance is loaded; both the architecture-scoped context length
+    // and LM Studio's runtime mirror the model's max.
     let model_info = &body["model_info"];
     assert_eq!(model_info["llama.context_length"], json!(8192));
     assert_eq!(model_info["lmstudio.context_length"], json!(8192));
     assert_eq!(model_info["lmstudio.max_context_length"], json!(8192));
+    assert_eq!(body["details"]["context_length"], json!(8192));
+    assert_eq!(body["details"]["max_context_length"], json!(8192));
 }
 
 #[tokio::test]
@@ -855,6 +864,121 @@ async fn version_returns_version_string() {
     assert!(
         version.contains('.'),
         "expected semver version string; got '{version}'"
+    );
+}
+
+// T5 — verbose: true must be a strict superset of verbose: false.
+#[tokio::test]
+async fn show_verbose_true_is_strict_superset_of_verbose_false() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let concise: Value = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b"}))
+        .send()
+        .await
+        .expect("POST /api/show verbose=false")
+        .json()
+        .await
+        .expect("json body");
+
+    let verbose: Value = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b", "verbose": true}))
+        .send()
+        .await
+        .expect("POST /api/show verbose=true")
+        .json()
+        .await
+        .expect("json body");
+
+    let concise_obj = concise.as_object().expect("concise must be object");
+    let verbose_obj = verbose.as_object().expect("verbose must be object");
+
+    for (key, value) in concise_obj {
+        // modified_at is a wall-clock timestamp regenerated per request; skip.
+        if key == "modified_at" {
+            continue;
+        }
+        // model_info: verbose must be a superset of concise.
+        if key == "model_info" {
+            let concise_mi = value.as_object().expect("concise model_info");
+            let verbose_mi = verbose_obj
+                .get("model_info")
+                .and_then(|v| v.as_object())
+                .expect("verbose model_info");
+            for (mk, mv) in concise_mi {
+                assert_eq!(
+                    verbose_mi.get(mk),
+                    Some(mv),
+                    "model_info.{mk}: verbose value must equal concise value"
+                );
+            }
+            assert!(
+                verbose_mi.len() >= concise_mi.len(),
+                "verbose model_info must be >= concise; concise={concise_mi:?} verbose={verbose_mi:?}"
+            );
+            continue;
+        }
+        let other = verbose_obj.get(key);
+        assert_eq!(
+            other,
+            Some(value),
+            "verbose response missing or differs on top-level key '{key}'"
+        );
+    }
+}
+
+// T5 — without a virtual alias, /api/show must NOT emit fabricated parameters
+// or template strings.
+#[tokio::test]
+async fn show_response_omits_fabricated_parameters_and_template() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let body: Value = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b"}))
+        .send()
+        .await
+        .expect("POST /api/show")
+        .json()
+        .await
+        .expect("json body");
+
+    assert!(
+        body.get("parameters").is_none(),
+        "non-alias /api/show must omit `parameters`; got {body}"
+    );
+    assert!(
+        body.get("template").is_none(),
+        "non-alias /api/show must omit `template`; got {body}"
     );
 }
 

@@ -197,7 +197,7 @@ fn show_response_surfaces_display_name_and_description() {
     native.display_name = Some("Pretty Model".into());
     native.description = Some("a description".into());
     let info = ModelInfo::from_native_data(&native);
-    let show = info.to_show_response();
+    let show = info.to_show_response(None, false);
     assert_eq!(
         show.get("display_name").and_then(|v| v.as_str()),
         Some("Pretty Model")
@@ -212,7 +212,7 @@ fn show_response_surfaces_display_name_and_description() {
 fn show_response_omits_display_fields_when_absent() {
     let native = make_native_with_caps("publisher/model", "llm", false, false);
     let info = ModelInfo::from_native_data(&native);
-    let show = info.to_show_response();
+    let show = info.to_show_response(None, false);
     assert!(show.get("display_name").is_none());
     assert!(show.get("description").is_none());
 }
@@ -487,14 +487,8 @@ fn ps_model_expires_at_is_rfc3339_in_future() {
 #[test]
 fn show_response_has_all_top_level_keys() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
-    for key in [
-        "parameters",
-        "template",
-        "details",
-        "capabilities",
-        "modified_at",
-    ] {
+    let v = info.to_show_response(None, false);
+    for key in ["details", "capabilities", "modified_at"] {
         assert!(v.get(key).is_some(), "missing key {key} in show response");
     }
     // not in ShowResponse schema — must be absent
@@ -516,27 +510,23 @@ fn show_response_has_all_top_level_keys() {
         v.get("model_info").is_some(),
         "model_info must always appear in show response"
     );
-}
-
-#[test]
-fn show_response_parameters_is_multiline_string() {
-    let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
-    let params = v["parameters"].as_str().expect("parameters must be string");
+    // parameters and template are only sourced from virtual aliases; native
+    // models have no Modelfile so the proxy must not invent these strings.
     assert!(
-        params.contains('\n'),
-        "parameters must be multi-line, got {params:?}"
+        v.get("parameters").is_none(),
+        "native show response must omit parameters; got {v}"
     );
-    assert!(params.contains("temperature"));
-    assert!(params.contains("top_p"));
-    assert!(params.contains("num_ctx 4096"));
+    assert!(
+        v.get("template").is_none(),
+        "native show response must omit template; got {v}"
+    );
 }
 
 #[test]
 fn show_response_modelfile_absent() {
     // modelfile is not listed in ShowResponse schema — must never appear
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     assert!(
         v.get("modelfile").is_none(),
         "modelfile must not appear in show response"
@@ -546,7 +536,7 @@ fn show_response_modelfile_absent() {
 #[test]
 fn show_response_model_info_has_general_keys_and_arch_context_length() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     let mi = &v["model_info"];
     assert_eq!(mi["general.architecture"], json!("llama"));
     assert_eq!(mi["general.file_type"], json!(2));
@@ -559,7 +549,7 @@ fn show_response_model_info_has_parameter_count_when_params_known() {
     let mut n = native("foo");
     n.params_string = Some("7B".to_string());
     let info = ModelInfo::from_native_data(&n);
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     let mi = &v["model_info"];
     assert_eq!(mi["general.parameter_count"], json!(7_000_000_000_u64));
 }
@@ -567,7 +557,7 @@ fn show_response_model_info_has_parameter_count_when_params_known() {
 #[test]
 fn show_response_model_info_omits_parameter_count_when_unknown() {
     let info = ModelInfo::from_native_data(&native("publisher/wholly-unknown-shape"));
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     assert!(v["model_info"].get("general.parameter_count").is_none());
 }
 
@@ -584,7 +574,7 @@ fn show_response_capabilities_reflects_flags() {
         }),
     });
     let info = ModelInfo::from_native_data(&n);
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     let caps: Vec<&str> = v["capabilities"]
         .as_array()
         .unwrap()
@@ -602,7 +592,7 @@ fn show_response_capabilities_reflects_flags() {
 fn show_response_license_absent_for_base_model() {
     // LM Studio exposes no license data — license must be omitted, not null
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_show_response();
+    let v = info.to_show_response(None, false);
     assert!(
         v.get("license").is_none(),
         "license must be absent when no license data available"
@@ -719,7 +709,7 @@ fn calculate_size_fp16_doubles_base() {
 // ════════════════════════════════════════════════════════════════════════════
 
 fn caps_of(info: &ModelInfo) -> Vec<String> {
-    info.to_show_response()["capabilities"]
+    info.to_show_response(None, false)["capabilities"]
         .as_array()
         .unwrap()
         .iter()
@@ -831,4 +821,76 @@ fn merge_with_virtuals_skips_unknown_targets() {
     let out = ModelInfo::merge_with_virtuals(&base, &virtuals, |m| json!({ "n": m.ollama_name }));
     assert_eq!(out.len(), 1);
     assert_eq!(out[0]["n"], "a/one:latest");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// T5 — /api/show no longer fabricates parameters/template; verbose contract;
+//       details.context_length is stable across load states.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_response_omits_parameters_and_template_for_native_model() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response(None, false);
+    assert!(
+        v.get("parameters").is_none(),
+        "native model has no Modelfile PARAMETER lines — must be omitted; got {v}"
+    );
+    assert!(
+        v.get("template").is_none(),
+        "native model has no Modelfile TEMPLATE — must be omitted; got {v}"
+    );
+}
+
+#[test]
+fn show_response_emits_alias_parameters_and_template_when_provided() {
+    use crate::storage::virtual_models::VirtualModelMetadata;
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let meta = VirtualModelMetadata {
+        parameters: Some(json!("temperature 0.42")),
+        template: Some("<TEMPLATE>".to_string()),
+        ..Default::default()
+    };
+    let v = info.to_show_response(Some(&meta), false);
+    assert_eq!(
+        v.get("parameters").and_then(|p| p.as_str()),
+        Some("temperature 0.42"),
+        "alias parameters must surface verbatim; got {v}"
+    );
+    assert_eq!(
+        v.get("template").and_then(|t| t.as_str()),
+        Some("<TEMPLATE>"),
+        "alias template must surface verbatim; got {v}"
+    );
+}
+
+#[test]
+fn show_response_details_context_length_is_stable_across_load_states() {
+    // Same max_context_length, different loaded state — details.context_length
+    // must equal max_context_length regardless.
+    let mut unloaded = native("publisher/model");
+    unloaded.max_context_length = 262_144;
+    let info_unloaded = ModelInfo::from_native_data(&unloaded);
+    let v_unloaded = info_unloaded.to_show_response(None, false);
+
+    let mut loaded = native("publisher/model");
+    loaded.max_context_length = 262_144;
+    loaded.loaded_instances.push(loaded_instance(Some(50_000)));
+    let info_loaded = ModelInfo::from_native_data(&loaded);
+    let v_loaded = info_loaded.to_show_response(None, false);
+
+    assert_eq!(
+        v_unloaded["details"]["context_length"],
+        json!(262_144_u64),
+        "unloaded details.context_length must equal max_context_length"
+    );
+    assert_eq!(
+        v_loaded["details"]["context_length"],
+        json!(262_144_u64),
+        "loaded details.context_length must still equal max_context_length"
+    );
+    assert_eq!(
+        v_unloaded["details"]["context_length"], v_loaded["details"]["context_length"],
+        "details.context_length must not flip with load state"
+    );
 }

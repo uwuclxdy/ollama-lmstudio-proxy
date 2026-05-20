@@ -27,10 +27,6 @@ pub const HEADER_ACCESS_CONTROL_ALLOW_METHODS: &str = "GET, POST, PUT, DELETE, O
 pub const HEADER_ACCESS_CONTROL_ALLOW_HEADERS: &str = "Content-Type, Authorization";
 
 /// Default parameter values
-pub const DEFAULT_TEMPERATURE: f64 = 0.7;
-pub const DEFAULT_TOP_P: f64 = 0.9;
-pub const DEFAULT_TOP_K: u32 = 40;
-pub const DEFAULT_REPEAT_PENALTY: f64 = 1.1;
 pub const DEFAULT_KEEP_ALIVE_MINUTES: i64 = 5;
 
 /// Error messages
