@@ -299,16 +299,16 @@ fn from_native_context_length_prefers_loaded_instance_config() {
 }
 
 #[test]
-fn from_native_context_length_is_zero_when_not_loaded() {
+fn from_native_context_length_falls_back_to_max_when_not_loaded() {
     let mut n = native("foo");
     n.max_context_length = 4096;
     let info = ModelInfo::from_native_data(&n);
-    assert_eq!(info.context_length, 0);
+    assert_eq!(info.context_length, 4096);
     assert_eq!(info.max_context_length, 4096);
 }
 
 #[test]
-fn from_native_context_length_is_zero_when_instance_has_no_config() {
+fn from_native_context_length_falls_back_to_max_when_instance_has_no_config() {
     let mut n = native("foo");
     n.max_context_length = 4096;
     n.loaded_instances.push(NativeLoadedInstance {
@@ -316,7 +316,7 @@ fn from_native_context_length_is_zero_when_instance_has_no_config() {
         config: None,
     });
     let info = ModelInfo::from_native_data(&n);
-    assert_eq!(info.context_length, 0);
+    assert_eq!(info.context_length, 4096);
     assert_eq!(info.max_context_length, 4096);
 }
 

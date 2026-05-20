@@ -133,7 +133,7 @@ impl ModelInfo {
             .first()
             .and_then(|inst| inst.config.as_ref())
             .and_then(|cfg| cfg.context_length)
-            .unwrap_or(0);
+            .unwrap_or(native_data.max_context_length);
 
         let ollama_name = if native_data.key.contains(':') {
             native_data.key.clone()
@@ -410,7 +410,7 @@ impl ModelInfo {
         map.insert("general.quantization_version".into(), json!(2));
         map.insert(
             format!("{}.context_length", self.arch),
-            json!(self.max_context_length),
+            json!(self.context_length),
         );
         map.insert("lmstudio.publisher".into(), json!(self.publisher));
         map.insert("lmstudio.model_type".into(), json!(self.model_type));

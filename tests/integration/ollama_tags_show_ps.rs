@@ -338,6 +338,38 @@ async fn show_present_model_returns_full_shape() {
 }
 
 #[tokio::test]
+async fn show_loaded_model_uses_configured_context() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                true,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({ "model": "llama3.2:3b", "verbose": true }))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let model_info = &body["model_info"];
+    assert_eq!(model_info["llama.context_length"], json!(4096));
+    assert_eq!(model_info["lmstudio.context_length"], json!(4096));
+    assert_eq!(model_info["lmstudio.max_context_length"], json!(8192));
+}
+
+#[tokio::test]
 async fn show_model_info_contains_parameter_count() {
     let p = spawn_proxy().await;
 
@@ -718,7 +750,7 @@ async fn ps_loaded_model_with_kv_cache_gpu_flag_still_reports_zero_size_vram() {
 }
 
 #[tokio::test]
-async fn show_unloaded_model_reports_zero_active_context_and_max_context_separately() {
+async fn show_unloaded_model_falls_back_to_max_context() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -745,7 +777,7 @@ async fn show_unloaded_model_reports_zero_active_context_and_max_context_separat
     let body: Value = resp.json().await.expect("json body");
     let model_info = &body["model_info"];
     assert_eq!(model_info["llama.context_length"], json!(8192));
-    assert_eq!(model_info["lmstudio.context_length"], json!(0));
+    assert_eq!(model_info["lmstudio.context_length"], json!(8192));
     assert_eq!(model_info["lmstudio.max_context_length"], json!(8192));
 }
 
