@@ -914,3 +914,54 @@ async fn embed_prompt_eval_count_from_usage() {
         "prompt_eval_count must equal usage.prompt_tokens from LM Studio response"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 25. truncate + dimensions forwarded to /v1/embeddings body
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_truncate_and_dimensions_reach_lm_studio_body() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "nomic-embed").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_response_single("nomic-embed", vec![0.1])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "nomic-embed",
+            "input": "embeddings-only fields",
+            "truncate": true,
+            "dimensions": 64
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed truncate + dimensions");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/v1/embeddings")
+        .expect("LM Studio embeddings request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    assert_eq!(
+        body.get("truncate"),
+        Some(&json!(true)),
+        "truncate must reach LM Studio embeddings body: {body}"
+    );
+    assert_eq!(
+        body.get("dimensions"),
+        Some(&json!(64)),
+        "dimensions must reach LM Studio embeddings body: {body}"
+    );
+}

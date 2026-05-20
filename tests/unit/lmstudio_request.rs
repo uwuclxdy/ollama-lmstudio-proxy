@@ -217,17 +217,111 @@ fn forwards_stop_array() {
 }
 
 #[test]
-fn forwards_truncate_when_present() {
-    let options = json!({ "truncate": false });
+fn min_p_is_not_forwarded_and_is_warn_logged() {
+    // LM Studio's chat-completions doc lists supported params; min_p is not
+    // among them, so the proxy must drop it and surface a warn-log key.
+    let options = json!({ "min_p": 0.1 });
+    let unsupported = collect_unsupported_keys(&options);
+    assert!(
+        unsupported.contains(&"min_p"),
+        "min_p must be in unsupported list: {:?}",
+        unsupported
+    );
+
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("truncate"), Some(&json!(false)));
+    assert!(
+        params.get("min_p").is_none(),
+        "min_p must not appear in mapped params: {:?}",
+        params
+    );
 }
 
 #[test]
-fn forwards_dimensions_when_present() {
-    let options = json!({ "dimensions": 768 });
-    let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(params.get("dimensions"), Some(&json!(768)));
+fn truncate_dropped_on_chat_build_kept_on_embeddings_build() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let opts = json!({ "truncate": true });
+    let chat_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Chat {
+            messages: &messages,
+            stream: false,
+        },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert!(
+        chat_req.get("truncate").is_none(),
+        "truncate must not appear in chat build: {chat_req}"
+    );
+
+    let comp_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Completion {
+            prompt: std::borrow::Cow::Borrowed("hi"),
+            stream: false,
+        },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert!(
+        comp_req.get("truncate").is_none(),
+        "truncate must not appear in completion build: {comp_req}"
+    );
+
+    let input = json!("hi");
+    let embed_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Embeddings { input: &input },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        embed_req.get("truncate"),
+        Some(&json!(true)),
+        "truncate must appear in embeddings build: {embed_req}"
+    );
+}
+
+#[test]
+fn dimensions_dropped_on_chat_build_kept_on_embeddings_build() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let opts = json!({ "dimensions": 64 });
+    let chat_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Chat {
+            messages: &messages,
+            stream: false,
+        },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert!(
+        chat_req.get("dimensions").is_none(),
+        "dimensions must not appear in chat build: {chat_req}"
+    );
+
+    let input = json!("hi");
+    let embed_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Embeddings { input: &input },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        embed_req.get("dimensions"),
+        Some(&json!(64)),
+        "dimensions must appear in embeddings build: {embed_req}"
+    );
 }
 
 #[test]
@@ -406,6 +500,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock": false,
         "vocab_only": false,
         "penalize_newline": true,
+        "min_p": 0.05,
     });
     let unsupported = collect_unsupported_keys(&options);
     for key in [
@@ -425,6 +520,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock",
         "vocab_only",
         "penalize_newline",
+        "min_p",
     ] {
         assert!(
             unsupported.contains(&key),
@@ -452,6 +548,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock",
         "vocab_only",
         "penalize_newline",
+        "min_p",
     ] {
         assert!(
             params.get(key).is_none(),

@@ -84,6 +84,7 @@ pub fn build_lm_studio_request(
         }
         LMStudioRequestType::Embeddings { input } => {
             body.insert("input".to_string(), input.clone());
+            forward_embeddings_only_params(ollama_options, &mut body);
         }
     }
 
@@ -99,28 +100,50 @@ pub fn build_lm_studio_request(
 }
 
 fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
-    if let Some(options) = ollama_options {
-        const DIRECT_MAPPINGS: &[&str] = &[
-            "temperature",
-            "top_p",
-            "top_k",
-            "seed",
-            "stop",
-            "truncate",
-            "dimensions",
-            "presence_penalty",
-            "frequency_penalty",
-            "min_p",
-        ];
+    // Listed in LM Studio's chat-completions doc
+    // (api_docs/lmstudio/1_developer/3_openai-compat/chat-completions.md).
+    // `min_p` is intentionally absent — it has no LM Studio equivalent and is
+    // warn-logged via UNSUPPORTED_OPTION_KEYS.
+    const DIRECT_MAPPINGS: &[&str] = &[
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "stop",
+        "presence_penalty",
+        "frequency_penalty",
+    ];
 
-        for param in DIRECT_MAPPINGS {
-            if let Some(value) = options.get(param) {
-                params.insert(param.to_string(), value.clone());
-            }
+    let Some(options) = ollama_options else {
+        return;
+    };
+
+    for param in DIRECT_MAPPINGS {
+        if let Some(value) = options.get(param) {
+            params.insert((*param).to_string(), value.clone());
         }
+    }
 
-        if let Some(logit_bias) = options.get("logit_bias") {
-            params.insert("logit_bias".to_string(), logit_bias.clone());
+    if let Some(logit_bias) = options.get("logit_bias") {
+        params.insert("logit_bias".to_string(), logit_bias.clone());
+    }
+}
+
+// Ollama spec (api_docs/ollama/api/embed.md) defines `truncate` and
+// `dimensions` only for /api/embed. They have no meaning on chat-completions
+// and must not pollute the upstream body there.
+fn forward_embeddings_only_params(
+    ollama_options: Option<&Value>,
+    body: &mut serde_json::Map<String, Value>,
+) {
+    const EMBEDDINGS_ONLY: &[&str] = &["truncate", "dimensions"];
+
+    let Some(options) = ollama_options else {
+        return;
+    };
+    for key in EMBEDDINGS_ONLY {
+        if let Some(value) = options.get(key) {
+            body.insert((*key).to_string(), value.clone());
         }
     }
 }
@@ -185,6 +208,8 @@ const UNSUPPORTED_OPTION_KEYS: &[&str] = &[
     "use_mmap",
     "use_mlock",
     "vocab_only",
+    // LM Studio's chat-completions accepts top_p/top_k but not min_p.
+    "min_p",
 ];
 
 pub(crate) fn collect_unsupported_keys(options: &Value) -> Vec<&'static str> {

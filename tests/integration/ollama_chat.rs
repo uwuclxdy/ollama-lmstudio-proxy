@@ -1357,3 +1357,52 @@ async fn chat_options_system_does_not_leak_as_top_level_field() {
         "first message must be {{role:system, content:Sx}}: {body}"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LM Studio's chat-completions accepts a fixed key set
+// (api_docs/lmstudio/.../chat-completions.md). The Ollama spec
+// (api_docs/ollama/api/embed.md) lists `truncate` and `dimensions` as
+// embedding-only fields, and Ollama's `ModelOptions.min_p` has no LM Studio
+// equivalent. None of these may leak into the chat request body.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn chat_drops_min_p_truncate_and_dimensions_options() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("ok", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false,
+            "options": { "min_p": 0.1, "truncate": true, "dimensions": 64 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with min_p/truncate/dimensions");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/v1/chat/completions")
+        .expect("LM Studio chat completions request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    for key in ["min_p", "truncate", "dimensions"] {
+        assert!(
+            body.get(key).is_none(),
+            "{key} must not appear in LM Studio chat body: {body}"
+        );
+    }
+}
