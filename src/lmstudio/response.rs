@@ -247,19 +247,7 @@ impl ResponseTransformer {
             "eval_duration": timing.eval_duration
         });
 
-        // Ollama expects array<Logprob>; OpenAI wraps the same items in {content: [...]}.
-        // Extract .content so the shapes align.
-        if let Some(logprobs) = lm_response
-            .get("choices")
-            .and_then(|c| c.as_array()?.first())
-            .and_then(|choice| choice.get("logprobs"))
-            .filter(|lp| !lp.is_null())
-            .and_then(|lp| lp.get("content"))
-            .filter(|content| !content.is_null())
-            && let Some(obj) = response.as_object_mut()
-        {
-            obj.insert("logprobs".to_string(), logprobs.clone());
-        }
+        insert_logprobs(lm_response, &mut response);
 
         response
     }
@@ -302,6 +290,8 @@ impl ResponseTransformer {
         {
             obj.insert("thinking".to_string(), json!(t));
         }
+
+        insert_logprobs(lm_response, &mut response_obj);
 
         response_obj
     }
@@ -361,6 +351,24 @@ impl ResponseTransformer {
                     .collect()
             })
             .unwrap_or_default()
+    }
+}
+
+/// Insert `logprobs` into an Ollama response object when the upstream choice carries them.
+///
+/// Ollama expects `array<Logprob>`; OpenAI wraps the same items in `{content: [...]}`.
+/// Extracts `.content` from `choices[0].logprobs` so the shapes align.
+fn insert_logprobs(lm_response: &Value, response: &mut Value) {
+    if let Some(logprobs) = lm_response
+        .get("choices")
+        .and_then(|c| c.as_array()?.first())
+        .and_then(|choice| choice.get("logprobs"))
+        .filter(|lp| !lp.is_null())
+        .and_then(|lp| lp.get("content"))
+        .filter(|content| !content.is_null())
+        && let Some(obj) = response.as_object_mut()
+    {
+        obj.insert("logprobs".to_string(), logprobs.clone());
     }
 }
 

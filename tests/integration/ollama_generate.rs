@@ -1036,7 +1036,78 @@ async fn logprobs_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 25. context array (legacy) present in request — proxy accepts without error
+// 25. logprobs data returned in generate response when upstream provides it
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn lm_completion_response_with_logprobs(text: &str, finish_reason: &str) -> Value {
+    json!({
+        "id": "cmpl-test",
+        "object": "text_completion",
+        "created": 1_700_000_000u64,
+        "model": "llama3.2-3b-instruct",
+        "choices": [{
+            "index": 0,
+            "text": text,
+            "finish_reason": finish_reason,
+            "logprobs": {
+                "content": [
+                    {"token": "Hello", "logprob": -0.1, "top_logprobs": []},
+                    {"token": "!", "logprob": -0.2, "top_logprobs": []}
+                ]
+            }
+        }],
+        "usage": {
+            "prompt_tokens": 6,
+            "completion_tokens": 2,
+            "total_tokens": 8
+        }
+    })
+}
+
+#[tokio::test]
+async fn logprobs_data_present_in_generate_response() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_completion_response_with_logprobs("Hello!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Say hello",
+            "stream": false,
+            "logprobs": true,
+            "top_logprobs": 5
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate logprobs data");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON");
+    let logprobs = body
+        .get("logprobs")
+        .and_then(|v| v.as_array())
+        .expect("logprobs must be a flat array in generate response");
+    assert_eq!(logprobs.len(), 2);
+    assert_eq!(
+        logprobs[0].get("token").and_then(|t| t.as_str()),
+        Some("Hello")
+    );
+    p.mock.verify().await;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 26. context array (legacy) present in request — proxy accepts without error
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
