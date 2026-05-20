@@ -253,6 +253,9 @@ pub struct FinalChunkParams<'a> {
 }
 
 pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
+    // GAP C: LM Studio's SSE chunks carry no `usage` and `stream_options.include_usage`
+    // is not in its supported parameter list, so real per-token timings are unavailable
+    // on the streaming path. Wall-clock heuristics are the only option until upstream adds it.
     let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
 
     let mut chunk =

@@ -217,7 +217,23 @@ impl ResponseTransformer {
             );
         }
 
-        json!({
+        // GAP B: images — vision is input-only in LM Studio; assistants never generate
+        // image tokens. Forward any upstream image data if present, otherwise omit the
+        // field entirely (schema says optional, not nullable).
+        let upstream_images = lm_response
+            .get("choices")
+            .and_then(|c| c.as_array()?.first())
+            .and_then(|choice| choice.get("message")?.get("images"))
+            .and_then(|imgs| imgs.as_array())
+            .filter(|imgs| !imgs.is_empty());
+
+        if let Some(imgs) = upstream_images
+            && let Some(msg_obj) = ollama_message.as_object_mut()
+        {
+            msg_obj.insert("images".to_string(), json!(imgs));
+        }
+
+        let mut response = json!({
             "model": model_ollama_name,
             "created_at": chrono::Utc::now().to_rfc3339(),
             "message": ollama_message,
@@ -229,7 +245,23 @@ impl ResponseTransformer {
             "prompt_eval_duration": timing.prompt_eval_duration,
             "eval_count": timing.eval_count,
             "eval_duration": timing.eval_duration
-        })
+        });
+
+        // GAP A: logprobs — Ollama expects array<Logprob>; OpenAI wraps the same items in
+        // {content: [...]}. Extract .content so the shapes align.
+        if let Some(logprobs) = lm_response
+            .get("choices")
+            .and_then(|c| c.as_array()?.first())
+            .and_then(|choice| choice.get("logprobs"))
+            .filter(|lp| !lp.is_null())
+            .and_then(|lp| lp.get("content"))
+            .filter(|content| !content.is_null())
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("logprobs".to_string(), logprobs.clone());
+        }
+
+        response
     }
 
     pub fn convert_to_ollama_generate(

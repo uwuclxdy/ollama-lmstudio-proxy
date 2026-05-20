@@ -854,3 +854,166 @@ fn timing_stream_chunks_uses_chunk_count_estimate_as_fallback() {
         "chunk-count estimate must be used as fallback"
     );
 }
+
+// =========================================================================
+// GAP A: logprobs forwarding
+// =========================================================================
+
+#[test]
+fn chat_response_logprobs_forwarded_when_upstream_provides_them() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop",
+            "logprobs": {
+                "content": [
+                    {"token": "hi", "logprob": -0.5, "top_logprobs": []}
+                ]
+            }
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    // Ollama schema: logprobs is array<Logprob>. OpenAI wraps items in {content: [...]}.
+    // The proxy must extract .content so callers see a flat array.
+    let logprobs = result
+        .get("logprobs")
+        .and_then(|v| v.as_array())
+        .expect("logprobs must be a flat array (Ollama schema)");
+    assert_eq!(logprobs.len(), 1);
+    assert_eq!(
+        logprobs[0].get("token").and_then(|t| t.as_str()),
+        Some("hi")
+    );
+}
+
+#[test]
+fn chat_response_logprobs_absent_when_upstream_omits_them() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert!(
+        result.get("logprobs").is_none(),
+        "logprobs must be absent when upstream does not return them"
+    );
+}
+
+#[test]
+fn chat_response_logprobs_absent_when_upstream_returns_null() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop",
+            "logprobs": null
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert!(
+        result.get("logprobs").is_none(),
+        "null upstream logprobs must not produce a logprobs field"
+    );
+}
+
+// =========================================================================
+// GAP B: message.images forwarding
+// =========================================================================
+
+#[test]
+fn chat_response_message_images_absent_when_upstream_omits_them() {
+    // LM Studio is vision-input-only; assistants never generate images.
+    // The field must be absent rather than null when upstream does not return it.
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "here is info"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    let msg = result.get("message").expect("message must be present");
+    assert!(
+        msg.get("images").is_none(),
+        "images field must be absent when upstream does not return it"
+    );
+}
+
+#[test]
+fn chat_response_message_images_forwarded_when_upstream_provides_them() {
+    // Though LM Studio does not currently generate image tokens, the proxy must
+    // forward any upstream image data if an upstream ever does return it.
+    let lm = json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "see attached",
+                "images": ["aGVsbG8=", "d29ybGQ="]
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    let msg = result.get("message").expect("message must be present");
+    let images = msg
+        .get("images")
+        .and_then(|v| v.as_array())
+        .expect("images must be an array when upstream returns them");
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].as_str(), Some("aGVsbG8="));
+    assert_eq!(images[1].as_str(), Some("d29ybGQ="));
+}
+
+#[test]
+fn chat_response_message_images_absent_when_upstream_returns_empty_array() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi", "images": []},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    let msg = result.get("message").expect("message must be present");
+    assert!(
+        msg.get("images").is_none(),
+        "empty images array must not produce images field (absent not null)"
+    );
+}
+
+// =========================================================================
+// GAP C: streaming final-chunk timing — heuristic is wall-clock based
+// =========================================================================
+
+#[test]
+fn timing_stream_chunks_is_wall_clock_heuristic_not_real_stats() {
+    // LM Studio's OpenAI-compat streaming does not expose per-token timing data
+    // in SSE chunks. This test documents that from_stream_chunks produces non-zero
+    // heuristic timings based on wall-clock duration and chunk count.
+    // When LM Studio adds streaming usage support, this test should be updated
+    // to assert against real per-token stats from upstream.
+    let duration = Duration::from_millis(200);
+    let timing = TimingInfo::from_stream_chunks(duration, 20, None);
+    assert_eq!(
+        timing.total_duration,
+        duration.as_nanos() as u64,
+        "total_duration must reflect wall-clock duration"
+    );
+    assert!(
+        timing.prompt_eval_duration >= 1,
+        "heuristic prompt_eval_duration must be ≥ 1"
+    );
+    assert!(
+        timing.eval_duration >= 1,
+        "heuristic eval_duration must be ≥ 1"
+    );
+    assert_eq!(
+        timing.eval_count, 20,
+        "chunk count used as token estimate when no real usage available"
+    );
+}
