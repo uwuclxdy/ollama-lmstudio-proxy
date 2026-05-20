@@ -305,12 +305,18 @@ fn repeat_penalty_dropped_when_both_penalties_set() {
 }
 
 #[test]
-fn format_string_json_becomes_json_object() {
+fn format_string_json_becomes_json_schema_permissive() {
     let options = json!({ "format": "json" });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
     assert_eq!(
         params.get("response_format"),
-        Some(&json!({ "type": "json_object" }))
+        Some(&json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "json",
+                "schema": { "type": "object" }
+            }
+        }))
     );
 }
 
@@ -340,7 +346,7 @@ fn format_object_becomes_json_schema() {
     let js = rf
         .get("json_schema")
         .expect("json_schema sub-object must be set");
-    assert_eq!(js.get("strict"), Some(&json!(true)));
+    assert_eq!(js.get("strict"), Some(&json!("true")));
     assert_eq!(js.get("schema"), Some(&schema));
 }
 
@@ -362,7 +368,13 @@ fn structured_format_arg_overrides_options_format() {
     let params = map_ollama_to_lmstudio_params(Some(&options), Some(&structured));
     assert_eq!(
         params.get("response_format"),
-        Some(&json!({ "type": "json_object" })),
+        Some(&json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "json",
+                "schema": { "type": "object" }
+            }
+        })),
         "structured_format must take precedence; got {:?}",
         params.get("response_format")
     );

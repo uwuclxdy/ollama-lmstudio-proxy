@@ -208,15 +208,19 @@ pub(crate) fn log_unsupported_options(options: &Value) {
 
 fn convert_structured_format(format_value: &Value) -> Option<Value> {
     match format_value {
-        Value::String(mode) if mode.eq_ignore_ascii_case("json") => {
-            Some(json!({ "type": "json_object" }))
-        }
+        Value::String(mode) if mode.eq_ignore_ascii_case("json") => Some(json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "json",
+                "schema": { "type": "object" }
+            }
+        })),
         Value::String(mode) if mode.eq_ignore_ascii_case("text") => Some(json!({ "type": "text" })),
         Value::Object(_) => Some(json!({
             "type": "json_schema",
             "json_schema": {
                 "name": "ollama_format",
-                "strict": true,
+                "strict": "true",
                 "schema": format_value.clone()
             }
         })),

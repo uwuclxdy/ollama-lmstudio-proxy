@@ -559,16 +559,19 @@ async fn format_json_string_shorthand_forwarded() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
-    // Wire-level pin: Ollama's `"format": "json"` shorthand is translated to
-    // OpenAI's `response_format: {"type": "json_object"}` in the LM Studio
-    // request. Note that lmstudio_ollama_openai.md flags that LM Studio
-    // itself rejects `json_object`; documenting current proxy behaviour
-    // here ensures any future translation change (e.g. to `json_schema`)
-    // updates this test deliberately.
+    // Wire-level pin: Ollama's `"format": "json"` shorthand translates to a
+    // permissive json_schema envelope because LM Studio only advertises
+    // json_schema as a supported response_format type.
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .and(body_partial_json(json!({
-            "response_format": {"type": "json_object"}
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "json",
+                    "schema": { "type": "object" }
+                }
+            }
         })))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("{\"ok\":true}", "stop")),
