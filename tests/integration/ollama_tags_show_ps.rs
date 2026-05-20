@@ -363,6 +363,11 @@ async fn show_loaded_model_uses_configured_context() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
+    let params = body["parameters"].as_str().expect("parameters string");
+    assert!(
+        params.contains("num_ctx 4096"),
+        "unexpected parameters: {params}"
+    );
     let model_info = &body["model_info"];
     assert_eq!(model_info["llama.context_length"], json!(4096));
     assert_eq!(model_info["lmstudio.context_length"], json!(4096));
@@ -775,6 +780,11 @@ async fn show_unloaded_model_falls_back_to_max_context() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
+    let params = body["parameters"].as_str().expect("parameters string");
+    assert!(
+        params.contains("num_ctx 8192"),
+        "unexpected parameters: {params}"
+    );
     let model_info = &body["model_info"];
     assert_eq!(model_info["llama.context_length"], json!(8192));
     assert_eq!(model_info["lmstudio.context_length"], json!(8192));

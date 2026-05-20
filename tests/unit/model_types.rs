@@ -514,6 +514,7 @@ fn show_response_parameters_is_multiline_string() {
     );
     assert!(params.contains("temperature"));
     assert!(params.contains("top_p"));
+    assert!(params.contains("num_ctx 4096"));
 }
 
 #[test]

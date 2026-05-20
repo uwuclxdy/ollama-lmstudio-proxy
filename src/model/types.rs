@@ -440,8 +440,12 @@ impl ModelInfo {
         }
 
         let mut response = json!({
-            "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}",
-                DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
+            "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}\nnum_ctx {}",
+                DEFAULT_TEMPERATURE,
+                DEFAULT_TOP_P,
+                DEFAULT_TOP_K,
+                DEFAULT_REPEAT_PENALTY,
+                self.context_length),
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": details,
             "capabilities": capabilities,
