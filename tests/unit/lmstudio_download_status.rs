@@ -62,18 +62,52 @@ fn in_progress_chunk_retains_progress_fields() {
     .unwrap();
     let chunk = s.to_chunk("llama3.2");
     let obj = chunk.as_object().unwrap();
-    // status is forwarded from LM Studio — not "success", not empty.
     assert!(obj.contains_key("status"));
     assert_ne!(obj.get("status"), Some(&json!("success")));
-    // Progress numbers must be forwarded.
     assert_eq!(obj.get("total"), Some(&json!(2_142_590_208u64)));
     assert_eq!(obj.get("completed"), Some(&json!(241_970u64)));
 }
 
-// GAP B: StatusEvent.digest is optional in the Ollama OpenAPI schema (no
-// `required` constraint). LM Studio's download status does not return a
-// content digest, so `to_chunk` deliberately omits the field. This test
-// confirms that conformant omission.
+#[test]
+fn in_progress_chunk_matches_status_event_schema() {
+    let s: LmStudioDownloadStatus = serde_json::from_value(json!({
+        "job_id": "job456",
+        "status": "downloading",
+        "total_size_bytes": 1_000_000u64,
+        "downloaded_bytes": 500_000u64,
+        "bytes_per_second": 1_024_000.0,
+        "estimated_completion": "2026-01-01T00:05:00Z",
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": null,
+        "error": null
+    }))
+    .unwrap();
+    let chunk = s.to_chunk("llama3.2");
+    let obj = chunk.as_object().expect("chunk must be an object");
+
+    for key in [
+        "model",
+        "detail",
+        "job_id",
+        "bytes_per_second",
+        "estimated_completion",
+        "started_at",
+        "completed_at",
+        "error",
+    ] {
+        assert!(
+            !obj.contains_key(key),
+            "in-progress chunk must not emit internal key `{key}`; got {chunk}"
+        );
+    }
+
+    assert!(
+        obj.keys()
+            .all(|key| matches!(key.as_str(), "status" | "digest" | "total" | "completed")),
+        "in-progress chunk must match Ollama StatusEvent schema; got {chunk}"
+    );
+}
+
 #[test]
 fn in_progress_chunk_omits_digest() {
     let s: LmStudioDownloadStatus = serde_json::from_value(json!({
@@ -111,7 +145,16 @@ fn download_status_is_terminal_matches_known_states() {
     assert!(lm_status_value(json!({"status": "already_downloaded"})).is_terminal());
     assert!(lm_status_value(json!({"status": "failed"})).is_terminal());
     assert!(!lm_status_value(json!({"status": "downloading"})).is_terminal());
+    assert!(!lm_status_value(json!({"status": "paused"})).is_terminal());
     assert!(!lm_status_value(json!({"status": "queued"})).is_terminal());
+}
+
+#[test]
+fn paused_status_is_not_a_final_response_error() {
+    assert!(
+        !lm_status_value(json!({ "status": "paused" })).is_terminal(),
+        "paused downloads must remain pollable"
+    );
 }
 
 #[test]
@@ -141,37 +184,29 @@ fn download_status_failed_without_error_field_uses_fallback_message() {
 
 #[test]
 fn download_status_unknown_status_into_final_response_is_err() {
-    let s = lm_status_value(json!({ "status": "paused" }));
+    let s = lm_status_value(json!({ "status": "queued" }));
     let err = s
         .into_final_response("llama3.2")
         .expect_err("unknown status must be Err");
     assert!(
-        err.message.contains("paused") || err.message.to_lowercase().contains("unexpected"),
+        err.message.contains("queued") || err.message.to_lowercase().contains("unexpected"),
         "error should mention the unexpected status, got: {}",
         err.message
     );
 }
 
 #[test]
-fn download_status_failed_chunk_includes_error_and_is_not_success_sentinel() {
+fn download_status_failed_chunk_is_schema_status_only() {
     let s = lm_status_value(json!({
         "status": "failed",
         "error": "checksum mismatch"
     }));
     let chunk = s.to_chunk("llama3.2");
     let obj = chunk.as_object().expect("chunk must be an object");
+    assert_eq!(obj.get("status"), Some(&json!("failed")));
     assert_eq!(
-        obj.get("error"),
-        Some(&json!("checksum mismatch")),
-        "failed chunk must include the upstream error string"
-    );
-    assert_ne!(
-        obj.get("status"),
-        Some(&json!("success")),
-        "failed terminal chunk must NOT be shaped like the bare success sentinel"
-    );
-    assert!(
-        obj.len() > 1,
-        "failed chunk must carry more than just `status`, got: {chunk}"
+        obj.len(),
+        1,
+        "failed status chunk must stay within Ollama StatusEvent fields; got {chunk}"
     );
 }

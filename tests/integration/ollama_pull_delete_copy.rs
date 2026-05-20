@@ -52,6 +52,18 @@ fn lms_download_downloading(job_id: &str, done: u64, total: u64) -> Value {
         "status": "downloading",
         "total_size_bytes": total,
         "downloaded_bytes": done,
+        "bytes_per_second": 1_024_000.0,
+        "estimated_completion": "2026-01-01T00:05:00Z",
+        "started_at": "2026-01-01T00:00:00Z"
+    })
+}
+
+fn lms_download_paused(job_id: &str, done: u64, total: u64) -> Value {
+    json!({
+        "job_id": job_id,
+        "status": "paused",
+        "total_size_bytes": total,
+        "downloaded_bytes": done,
         "started_at": "2026-01-01T00:00:00Z"
     })
 }
@@ -212,11 +224,7 @@ async fn pull_stream_true_terminal_chunk_is_bare_success() {
 }
 
 #[tokio::test]
-async fn pull_stream_true_in_progress_chunk_carries_total_completed() {
-    // While LM Studio reports `downloading`, the proxy emits in-progress NDJSON
-    // chunks. Per `src/handlers/ollama/download.rs` (`StatusResponse::to_chunk`),
-    // these carry `status`, `model`, `detail`, `job_id`, `total`, `completed`.
-    // The terminal chunk drops everything except `{"status":"success"}`.
+async fn pull_stream_true_in_progress_chunk_matches_status_event_schema() {
     let p = spawn_proxy().await;
 
     Mock::given(method("POST"))
@@ -277,11 +285,6 @@ async fn pull_stream_true_in_progress_chunk_carries_total_completed() {
         .expect("expected at least one in-progress chunk before terminal success");
 
     assert_eq!(
-        in_progress["model"].as_str(),
-        Some("llama3.2:3b"),
-        "in-progress chunk must echo the requested model; got {in_progress}"
-    );
-    assert_eq!(
         in_progress["total"].as_u64(),
         Some(4_000_000_000),
         "in-progress chunk must carry `total` from LM Studio; got {in_progress}"
@@ -290,6 +293,144 @@ async fn pull_stream_true_in_progress_chunk_carries_total_completed() {
         in_progress["completed"].as_u64(),
         Some(1_000_000),
         "in-progress chunk must carry `completed` (downloaded_bytes); got {in_progress}"
+    );
+
+    let obj = in_progress
+        .as_object()
+        .expect("in-progress chunk must be object");
+    let internal_keys = [
+        "model",
+        "detail",
+        "job_id",
+        "bytes_per_second",
+        "estimated_completion",
+        "started_at",
+        "completed_at",
+        "error",
+    ];
+    for key in internal_keys {
+        assert!(
+            !obj.contains_key(key),
+            "in-progress chunk must not emit internal key `{key}`; got {in_progress}"
+        );
+    }
+
+    assert!(
+        obj.keys()
+            .all(|key| matches!(key.as_str(), "status" | "digest" | "total" | "completed")),
+        "in-progress chunk must match Ollama StatusEvent schema; got {in_progress}"
+    );
+}
+
+#[tokio::test]
+async fn pull_stream_false_paused_polls_until_completed() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/download"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_download_paused(
+                "job-paused-nonstream",
+                1_000_000,
+                4_000_000_000,
+            )),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/api/v1/models/download/status/.*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lms_download_completed("job-paused-nonstream")),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/pull"))
+        .json(&json!({"model": "llama3.2:3b", "stream": false}))
+        .send()
+        .await
+        .expect("POST /api/pull stream:false paused");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, json!({"status": "success"}));
+}
+
+#[tokio::test]
+async fn pull_stream_true_paused_polls_until_completed() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/download"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_download_paused(
+                "job-paused-stream",
+                1_000_000,
+                4_000_000_000,
+            )),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/api/v1/models/download/status/.*"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_download_completed("job-paused-stream")),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/pull"))
+        .json(&json!({"model": "llama3.2:3b", "stream": true}))
+        .send()
+        .await
+        .expect("POST /api/pull stream:true paused");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    let chunks: Vec<Value> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .unwrap_or_else(|e| panic!("invalid ndjson line '{line}': {e}"))
+        })
+        .collect();
+
+    assert!(
+        chunks
+            .iter()
+            .any(|chunk| chunk["status"].as_str() == Some("paused")),
+        "stream must emit the paused progress chunk before completion; got {chunks:?}"
+    );
+    assert_eq!(
+        chunks.last(),
+        Some(&json!({"status": "success"})),
+        "stream must finish after paused status; got {chunks:?}"
     );
 }
 
