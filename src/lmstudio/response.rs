@@ -191,7 +191,7 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
+        let done_reason = extract_finish_reason(lm_response);
         let mut ollama_message = json!({
             "role": "assistant",
             "content": content
@@ -238,7 +238,6 @@ impl ResponseTransformer {
             "created_at": chrono::Utc::now().to_rfc3339(),
             "message": ollama_message,
             "done": true,
-            "done_reason": done_reason,
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
@@ -246,6 +245,12 @@ impl ResponseTransformer {
             "eval_count": timing.eval_count,
             "eval_duration": timing.eval_duration
         });
+
+        if let Some(reason) = done_reason
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("done_reason".to_string(), json!(reason));
+        }
 
         insert_logprobs(lm_response, &mut response);
 
@@ -268,7 +273,7 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response).unwrap_or("stop");
+        let done_reason = extract_finish_reason(lm_response);
         // `context` is absent from the Ollama OpenAPI schema for GenerateResponse.
         // LM Studio does not expose token IDs anyway, so the field is omitted.
         let mut response_obj = json!({
@@ -276,7 +281,6 @@ impl ResponseTransformer {
             "created_at": chrono::Utc::now().to_rfc3339(),
             "response": content,
             "done": true,
-            "done_reason": done_reason,
             "total_duration": timing.total_duration,
             "load_duration": timing.load_duration,
             "prompt_eval_count": timing.prompt_eval_count,
@@ -285,10 +289,13 @@ impl ResponseTransformer {
             "eval_duration": timing.eval_duration
         });
 
-        if let Some(ref t) = thinking
-            && let Some(obj) = response_obj.as_object_mut()
-        {
-            obj.insert("thinking".to_string(), json!(t));
+        if let Some(obj) = response_obj.as_object_mut() {
+            if let Some(reason) = done_reason {
+                obj.insert("done_reason".to_string(), json!(reason));
+            }
+            if let Some(ref t) = thinking {
+                obj.insert("thinking".to_string(), json!(t));
+            }
         }
 
         insert_logprobs(lm_response, &mut response_obj);

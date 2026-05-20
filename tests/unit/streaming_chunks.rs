@@ -391,7 +391,7 @@ fn cancellation_chunk_zero_tokens_uses_generic_message() {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn final_chunk_chat_default_done_reason_stop_with_timings() {
+fn final_chunk_chat_no_done_reason_omits_field_with_timings() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(120),
@@ -401,7 +401,10 @@ fn final_chunk_chat_default_done_reason_stop_with_timings() {
         tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(c.get("done_reason").and_then(|v| v.as_str()), Some("stop"));
+    assert!(
+        c.get("done_reason").is_none(),
+        "done_reason must be omitted when upstream gave no finish_reason"
+    );
     assert!(c.get("message").is_some());
     assert_six_timings(&c);
     assert!(c.get("context").is_none(), "chat must not emit context");
@@ -434,7 +437,10 @@ fn final_chunk_generate_omits_context_and_emits_timings() {
         tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(c.get("done_reason").and_then(|v| v.as_str()), Some("stop"));
+    assert!(
+        c.get("done_reason").is_none(),
+        "done_reason must be omitted when upstream gave no finish_reason"
+    );
     assert!(c.get("message").is_none());
     assert!(
         c.get("context").is_none(),

@@ -354,10 +354,9 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     );
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
-        chunk_obj.insert(
-            "done_reason".to_string(),
-            json!(params.done_reason.unwrap_or("stop")),
-        );
+        if let Some(reason) = params.done_reason {
+            chunk_obj.insert("done_reason".to_string(), json!(reason));
+        }
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
         chunk_obj.insert("load_duration".to_string(), json!(timing.load_duration));
         chunk_obj.insert(
