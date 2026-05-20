@@ -680,22 +680,15 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
         Some(0.1),
         "first vector first dim"
     );
-    for key in [
-        "total_duration",
-        "load_duration",
-        "prompt_eval_count",
-        "prompt_eval_duration",
-    ] {
+    for key in ["total_duration", "load_duration", "prompt_eval_count"] {
         assert!(result.get(key).is_some(), "{key} must be present per spec");
     }
-    assert!(
-        result.get("eval_count").is_none(),
-        "eval_count must NOT be present on /api/embed (got {result})"
-    );
-    assert!(
-        result.get("eval_duration").is_none(),
-        "eval_duration must NOT be present on /api/embed (got {result})"
-    );
+    for key in ["prompt_eval_duration", "eval_count", "eval_duration"] {
+        assert!(
+            result.get(key).is_none(),
+            "{key} must NOT be present on /api/embed (got {result})"
+        );
+    }
 }
 
 #[test]
