@@ -40,6 +40,20 @@ pub async fn handle_ollama_pull(
         .map(|s| s.to_string());
     let source_override = body.get("source").and_then(|s| s.as_str());
 
+    // LM Studio's /api/v1/models/download has no TLS-bypass parameter,
+    // so `insecure=true` cannot be honoured upstream.
+    if body
+        .get("insecure")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        log::warn!(
+            "pull request for '{}' includes insecure=true; \
+             LM Studio does not expose a TLS-bypass option — the flag is ignored",
+            requested_model
+        );
+    }
+
     log_request("POST", "/api/pull", Some(requested_model));
 
     let client = context.client.clone();

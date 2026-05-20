@@ -86,6 +86,9 @@ impl LmStudioDownloadStatus {
         // Ollama clients match {"status":"success"} by equality to detect the end
         // of a pull stream. Terminal success chunks must therefore contain ONLY
         // the status field; in-progress chunks carry the spec progress numbers.
+        //
+        // `digest` is omitted: it is optional in the StatusEvent schema and LM
+        // Studio returns no content digest for downloads.
         let translated = self.translated_status();
         if translated == "success" {
             return serde_json::json!({ "status": "success" });
