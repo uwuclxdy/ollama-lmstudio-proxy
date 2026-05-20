@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use http::StatusCode;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -297,9 +298,11 @@ pub async fn handle_ollama_delete(
 
     context.virtual_models.delete(model_name).await?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama delete", start_time);
-    let response = json!({"status": "success"});
-    log_handler_io("delete", None, Some(&response));
-    Ok(json_response(&response))
+    log_handler_io("delete", None, None);
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .body(axum::body::Body::empty())
+        .map_err(|_| ProxyError::internal_server_error("failed to build delete response"))
 }
 
 #[cfg(test)]

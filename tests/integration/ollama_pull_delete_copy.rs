@@ -476,11 +476,10 @@ async fn delete_virtual_model_succeeds() {
         .await
         .expect("DELETE /api/delete");
     assert_eq!(del.status(), 200, "delete should return 200");
-    let body: Value = del.json().await.expect("delete body");
-    assert_eq!(
-        body,
-        json!({"status": "success"}),
-        "delete response must be bare {{\"status\":\"success\"}}; got {body}"
+    let bytes = del.bytes().await.expect("delete response bytes");
+    assert!(
+        bytes.is_empty(),
+        "delete 200 body must be empty per spec; got {bytes:?}"
     );
 }
 
@@ -582,6 +581,48 @@ async fn delete_missing_model_field_returns_400() {
         resp.status().is_client_error(),
         "expected 4xx for missing model field; got {}",
         resp.status()
+    );
+}
+
+#[tokio::test]
+async fn delete_success_returns_empty_body() {
+    // Spec: 200 response declares no content block — body must be empty.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let copy = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "empty-body-check:v1"}))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
+
+    let del = p
+        .client
+        .delete(p.url("/api/delete"))
+        .json(&json!({"model": "empty-body-check:v1"}))
+        .send()
+        .await
+        .expect("DELETE /api/delete");
+
+    assert_eq!(del.status(), 200, "delete should return 200");
+    let bytes = del.bytes().await.expect("delete response bytes");
+    assert!(
+        bytes.is_empty(),
+        "delete 200 body must be empty; got {bytes:?}"
     );
 }
 
