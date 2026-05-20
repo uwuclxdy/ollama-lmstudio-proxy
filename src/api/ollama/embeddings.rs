@@ -129,7 +129,7 @@ pub async fn handle_ollama_embeddings(
         keep_alive_seconds,
         start_time,
         op_label: "Ollama embeddings",
-        spawn_unload: false,
+        spawn_unload: true,
     }
     .run(operation)
     .await
