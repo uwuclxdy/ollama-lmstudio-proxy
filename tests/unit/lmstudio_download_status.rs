@@ -70,6 +70,28 @@ fn in_progress_chunk_retains_progress_fields() {
     assert_eq!(obj.get("completed"), Some(&json!(241_970u64)));
 }
 
+// GAP B: StatusEvent.digest is optional in the Ollama OpenAPI schema (no
+// `required` constraint). LM Studio's download status does not return a
+// content digest, so `to_chunk` deliberately omits the field. This test
+// confirms that conformant omission.
+#[test]
+fn in_progress_chunk_omits_digest() {
+    let s: LmStudioDownloadStatus = serde_json::from_value(json!({
+        "job_id": "job456",
+        "status": "downloading",
+        "total_size_bytes": 1_000_000u64,
+        "downloaded_bytes": 500_000u64
+    }))
+    .unwrap();
+    let chunk = s.to_chunk("llama3.2");
+    let obj = chunk.as_object().expect("chunk must be an object");
+    assert!(
+        !obj.contains_key("digest"),
+        "in-progress chunk must not emit `digest` \
+         (LM Studio returns no content digest; omission is doc-conformant); got {chunk}"
+    );
+}
+
 fn lm_status_value(extra: serde_json::Value) -> LmStudioDownloadStatus {
     let mut base = json!({
         "job_id": "job_abc",

@@ -369,6 +369,52 @@ async fn pull_model_name_forwarded_to_lmstudio() {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/pull — insecure flag is accepted (warning logged, not rejected)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pull_insecure_flag_is_accepted_with_success() {
+    // `insecure: true` has no LM Studio equivalent. The proxy logs a warning
+    // and proceeds normally — it must not reject the request.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/download"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_download_completed("job-ins")))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/pull"))
+        .json(&json!({"model": "llama3.2:3b", "stream": false, "insecure": true}))
+        .send()
+        .await
+        .expect("POST /api/pull insecure");
+    assert_eq!(
+        resp.status(),
+        200,
+        "insecure flag must not cause rejection; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["status"].as_str(),
+        Some("success"),
+        "pull with insecure flag should still return success; got {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/pull — missing model field → 400
 // ---------------------------------------------------------------------------
 
