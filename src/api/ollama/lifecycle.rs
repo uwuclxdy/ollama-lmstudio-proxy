@@ -131,7 +131,7 @@ pub async fn handle_ollama_pull(
         .await
         {
             log::error!("Ollama pull stream: {}", e.message);
-            send_status_error_chunk(&tx, &model_for_stream, &e.message);
+            send_status_error_chunk(&tx, &e.message);
         }
     });
 

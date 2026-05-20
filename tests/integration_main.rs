@@ -34,3 +34,6 @@ mod streaming;
 
 #[path = "integration/server_routes.rs"]
 mod server_routes;
+
+#[path = "integration/ollama_errors.rs"]
+mod ollama_errors;

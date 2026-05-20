@@ -35,13 +35,10 @@ pub fn send_status_chunk(
 
 pub fn send_status_error_chunk(
     tx: &mpsc::UnboundedSender<Result<Bytes, std::io::Error>>,
-    model: &str,
     message: &str,
 ) {
-    let chunk = json!({
-        "status": "failed",
-        "model": model,
-        "error": message
-    });
+    // Ollama spec §"Errors that occur while streaming": mid-stream error chunks
+    // must be bare {"error":"..."} with no other fields.
+    let chunk = json!({ "error": message });
     let _ = send_status_chunk(tx, &chunk);
 }
