@@ -2,11 +2,14 @@
 name = "ollama-lmstudio-proxy"
 version = "0.3.3"
 edition = "2024"
+rust-version = "1.85"
 authors = ["uwuclxdy"]
-description = "High-performance proxy server that bridges Ollama API and LM Studio"
+description = "Blazingly fast proxy server that bridges Ollama and LM Studio"
 license = "MIT"
 repository = "https://github.com/uwuclxdy/ollama-lmstudio-proxy"
 keywords = ["ollama", "lmstudio", "proxy", "llm", "ai"]
+categories = ["network-programming", "web-servers", "command-line-utilities"]
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1.52.3", features = ["full"] }
