@@ -51,6 +51,8 @@ fn platform_asset_name() -> Result<&'static str, Box<dyn Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Ok("ollama-lmstudio-proxy-linux-x64"),
         ("windows", "x86_64") => Ok("ollama-lmstudio-proxy-windows-x64.exe"),
+        ("macos", "x86_64") => Ok("ollama-lmstudio-proxy-macos-x64"),
+        ("macos", "aarch64") => Ok("ollama-lmstudio-proxy-macos-arm64"),
         (os, arch) => Err(format!("unsupported platform: {}-{}", os, arch).into()),
     }
 }

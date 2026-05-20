@@ -9,10 +9,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: ollama-lmstudio-proxy-linux-x64
+            binary: ollama-lmstudio-proxy
+          - os: ubuntu-latest
+            target: x86_64-pc-windows-gnu
+            artifact: ollama-lmstudio-proxy-windows-x64.exe
+            binary: ollama-lmstudio-proxy.exe
+            apt-packages: mingw-w64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: ollama-lmstudio-proxy-macos-x64
+            binary: ollama-lmstudio-proxy
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: ollama-lmstudio-proxy-macos-arm64
+            binary: ollama-lmstudio-proxy
 
     steps:
       - uses: actions/checkout@v6
@@ -20,36 +40,50 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu
+          targets: ${{ matrix.target }}
 
-      - name: Install dependencies
+      - name: Install apt packages
+        if: matrix.apt-packages != ''
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64
+          sudo apt-get install -y ${{ matrix.apt-packages }}
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build for Linux
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Build for Windows
-        run: cargo build --release --target x86_64-pc-windows-gnu
-
-      - name: Prepare artifacts
+      - name: Stage artifact
+        shell: bash
         run: |
           mkdir -p release
-          cp target/x86_64-unknown-linux-gnu/release/ollama-lmstudio-proxy release/ollama-lmstudio-proxy-linux-x64
-          cp target/x86_64-pc-windows-gnu/release/ollama-lmstudio-proxy.exe release/ollama-lmstudio-proxy-windows-x64.exe
-          chmod +x release/ollama-lmstudio-proxy-linux-x64
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "release/${{ matrix.artifact }}"
+          if [ "${{ runner.os }}" != "Windows" ] && [[ "${{ matrix.artifact }}" != *.exe ]]; then
+            chmod +x "release/${{ matrix.artifact }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            release/ollama-lmstudio-proxy-linux-x64
-            release/ollama-lmstudio-proxy-windows-x64.exe
+          files: release/*
           draft: false
           prerelease: false
           generate_release_notes: true
