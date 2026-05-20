@@ -138,7 +138,9 @@ fn delta_object_content_recurses_into_nested_content() {
 }
 
 #[test]
-fn delta_tool_calls_converted_to_ollama_shape() {
+fn delta_tool_calls_accumulated_into_state() {
+    // A delta with only tool_calls yields no payload (nothing to stream yet)
+    // but the calls are accumulated into state for emission in the final chunk.
     let choice = json!({
         "delta": {
             "tool_calls": [{
@@ -149,11 +151,21 @@ fn delta_tool_calls_converted_to_ollama_shape() {
         }
     });
     let mut state = ChunkProcessingState::default();
-    let p = process_choice_delta(&choice, &mut state).unwrap();
-    let tc = p.tool_calls_delta.expect("tool_calls_delta must be Some");
+    let payload = process_choice_delta(&choice, &mut state);
+    // No content or thinking — no streaming chunk emitted mid-stream.
+    assert!(
+        payload.is_none(),
+        "tool_calls-only delta must not emit a streaming chunk"
+    );
+
+    // Accumulated tool_calls should be available for the final done chunk.
+    let tc = state
+        .take_tool_calls()
+        .expect("state must hold accumulated tool_calls");
     let arr = tc.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     let entry = &arr[0];
+    // Ollama shape: id/type wrapper stripped, arguments is an object.
     assert!(entry.get("id").is_none(), "openai id must be stripped");
     assert!(entry.get("type").is_none(), "openai type must be stripped");
     let args = entry.get("function").unwrap().get("arguments").unwrap();
@@ -386,6 +398,7 @@ fn final_chunk_chat_default_done_reason_stop_with_timings() {
         chunk_count: 4,
         is_chat: true,
         done_reason: None,
+        tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert_eq!(c.get("done_reason").and_then(|v| v.as_str()), Some("stop"));
@@ -402,6 +415,7 @@ fn final_chunk_chat_propagates_done_reason_length() {
         chunk_count: 1,
         is_chat: true,
         done_reason: Some("length"),
+        tool_calls: None,
     });
     assert_eq!(
         c.get("done_reason").and_then(|v| v.as_str()),
@@ -417,6 +431,7 @@ fn final_chunk_generate_omits_context_and_emits_timings() {
         chunk_count: 6,
         is_chat: false,
         done_reason: None,
+        tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert_eq!(c.get("done_reason").and_then(|v| v.as_str()), Some("stop"));
@@ -436,9 +451,133 @@ fn final_chunk_generate_propagates_done_reason_length() {
         chunk_count: 1,
         is_chat: false,
         done_reason: Some("length"),
+        tool_calls: None,
     });
     assert_eq!(
         c.get("done_reason").and_then(|v| v.as_str()),
         Some("length")
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GAP C — streaming tool_calls accumulation
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn tool_calls_accumulated_across_three_deltas() {
+    // LM Studio streams tool calls in fragments: name in one delta, then arguments
+    // spread over several more. The proxy must accumulate all fragments and emit ONE
+    // chunk containing the complete tool_calls array — not three partial chunks.
+    let delta_name = json!({
+        "delta": {
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_temperature", "arguments": ""}
+            }]
+        }
+    });
+    let delta_args_part1 = json!({
+        "delta": {
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_temperature", "arguments": "{\"ci"}
+            }]
+        }
+    });
+    let delta_args_part2 = json!({
+        "delta": {
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_temperature", "arguments": "ty\":\"NYC\"}"}
+            }]
+        }
+    });
+
+    let mut state = ChunkProcessingState::default();
+
+    // All three deltas return None (no content/thinking to stream).
+    assert!(process_choice_delta(&delta_name, &mut state).is_none());
+    assert!(process_choice_delta(&delta_args_part1, &mut state).is_none());
+    assert!(process_choice_delta(&delta_args_part2, &mut state).is_none());
+
+    // All three fragments are accumulated — three entries (one per delta call).
+    let tc = state
+        .take_tool_calls()
+        .expect("accumulated tool_calls must be present");
+    let arr = tc.as_array().unwrap();
+    assert_eq!(arr.len(), 3, "one entry per accumulated delta");
+
+    // After take_tool_calls, state is empty.
+    assert!(
+        state.take_tool_calls().is_none(),
+        "take must consume the accumulated calls"
+    );
+}
+
+#[test]
+fn tool_calls_in_final_chunk_when_provided() {
+    let tc = json!([{
+        "function": {"name": "get_temp", "arguments": {"city": "NYC"}}
+    }]);
+    let c = create_final_chunk(FinalChunkParams {
+        model_name: "m",
+        duration: Duration::from_millis(50),
+        chunk_count: 3,
+        is_chat: true,
+        done_reason: Some("tool_calls"),
+        tool_calls: Some(tc),
+    });
+    assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
+    let msg = c
+        .get("message")
+        .expect("message must be present in chat chunk");
+    let calls = msg
+        .get("tool_calls")
+        .and_then(|v| v.as_array())
+        .expect("tool_calls must be in the final chunk message");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].get("function").unwrap().get("name").unwrap(),
+        "get_temp"
+    );
+}
+
+#[test]
+fn final_chunk_without_tool_calls_has_no_tool_calls_field() {
+    let c = create_final_chunk(FinalChunkParams {
+        model_name: "m",
+        duration: Duration::from_millis(50),
+        chunk_count: 2,
+        is_chat: true,
+        done_reason: None,
+        tool_calls: None,
+    });
+    let msg = c.get("message").unwrap();
+    assert!(
+        msg.get("tool_calls").is_none(),
+        "tool_calls must be absent when none were accumulated"
+    );
+}
+
+#[test]
+fn content_and_thinking_deltas_still_stream_mid_message() {
+    // Ensure content and thinking chunks still emit immediately (per-delta),
+    // only tool_calls are deferred to the final chunk.
+    let choice_with_content = json!({ "delta": { "content": "some text" } });
+    let choice_with_thinking = json!({ "delta": { "reasoning": "my thought" } });
+    let mut state = ChunkProcessingState::default();
+
+    let p1 = process_choice_delta(&choice_with_content, &mut state);
+    assert!(p1.is_some(), "content delta must produce a payload");
+    assert_eq!(p1.unwrap().content, "some text");
+
+    let p2 = process_choice_delta(&choice_with_thinking, &mut state);
+    assert!(p2.is_some(), "reasoning delta must produce a payload");
+    assert_eq!(p2.unwrap().thinking, "my thought");
+
+    // No tool_calls were accumulated.
+    assert!(state.take_tool_calls().is_none());
 }

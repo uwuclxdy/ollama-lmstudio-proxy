@@ -9,6 +9,14 @@ use crate::lmstudio::response::{TimingInfo, convert_tool_calls_to_ollama};
 #[derive(Default)]
 pub struct ChunkProcessingState {
     last_finish_reason: Option<String>,
+    /// Accumulated tool_calls fragments across SSE deltas.
+    ///
+    /// OpenAI streams tool calls in pieces (name in one delta, arguments spread
+    /// across several more). Ollama clients expect ONE chunk containing the
+    /// complete `tool_calls` array once the assistant message is done. We collect
+    /// every Ollama-converted fragment here and emit the accumulated array in the
+    /// final done chunk instead of forwarding each partial delta immediately.
+    accumulated_tool_calls: Vec<Value>,
 }
 
 impl ChunkProcessingState {
@@ -21,11 +29,30 @@ impl ChunkProcessingState {
             self.last_finish_reason = Some(reason.to_string());
         }
     }
+
+    pub fn accumulate_tool_calls(&mut self, tool_calls: Value) {
+        if let Value::Array(calls) = tool_calls {
+            self.accumulated_tool_calls.extend(calls);
+        }
+    }
+
+    /// Returns the accumulated tool_calls if any were collected, consuming them.
+    pub fn take_tool_calls(&mut self) -> Option<Value> {
+        if self.accumulated_tool_calls.is_empty() {
+            None
+        } else {
+            Some(Value::Array(std::mem::take(
+                &mut self.accumulated_tool_calls,
+            )))
+        }
+    }
 }
 
 pub struct ChoiceDeltaPayload {
     pub content: String,
     pub thinking: String,
+    /// `None` — tool_calls from this delta are accumulated in `ChunkProcessingState`
+    /// and will be emitted in the final done chunk, not forwarded per-delta.
     pub tool_calls_delta: Option<Value>,
 }
 
@@ -44,7 +71,6 @@ pub fn process_choice_delta(
 
     let mut content = String::new();
     let mut thinking = String::new();
-    let mut tool_calls_delta: Option<Value> = None;
 
     if let Some(delta) = choice.get("delta") {
         if let Some(content_value) = delta.get("content") {
@@ -56,7 +82,9 @@ pub fn process_choice_delta(
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
             && !new_tool_calls.is_empty()
         {
-            tool_calls_delta = Some(convert_tool_calls_to_ollama(new_tool_calls));
+            // Accumulate into state rather than emitting per-delta.
+            // The complete array is emitted once in the final done chunk.
+            state.accumulate_tool_calls(convert_tool_calls_to_ollama(new_tool_calls));
         }
     }
 
@@ -71,13 +99,13 @@ pub fn process_choice_delta(
         }
     }
 
-    if content.is_empty() && thinking.is_empty() && tool_calls_delta.is_none() {
+    if content.is_empty() && thinking.is_empty() {
         None
     } else {
         Some(ChoiceDeltaPayload {
             content,
             thinking,
-            tool_calls_delta,
+            tool_calls_delta: None,
         })
     }
 }
@@ -250,16 +278,25 @@ pub struct FinalChunkParams<'a> {
     pub chunk_count: u64,
     pub is_chat: bool,
     pub done_reason: Option<&'a str>,
+    /// Accumulated tool_calls to emit in this final chunk.
+    /// `None` when no tool calls were seen in the stream.
+    pub tool_calls: Option<Value>,
 }
 
 pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
-    // GAP C: LM Studio's SSE chunks carry no `usage` and `stream_options.include_usage`
+    // LM Studio's SSE chunks carry no `usage` and `stream_options.include_usage`
     // is not in its supported parameter list, so real per-token timings are unavailable
     // on the streaming path. Wall-clock heuristics are the only option until upstream adds it.
     let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
 
-    let mut chunk =
-        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None, "");
+    let mut chunk = create_ollama_streaming_chunk(
+        params.model_name,
+        "",
+        params.is_chat,
+        true,
+        params.tool_calls.as_ref(),
+        "",
+    );
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert(

@@ -217,9 +217,9 @@ impl ResponseTransformer {
             );
         }
 
-        // GAP B: images — vision is input-only in LM Studio; assistants never generate
-        // image tokens. Forward any upstream image data if present, otherwise omit the
-        // field entirely (schema says optional, not nullable).
+        // Vision is input-only in LM Studio; assistants never generate image tokens.
+        // Forward any upstream image data if present, otherwise omit the field entirely
+        // (schema says optional, not nullable).
         let upstream_images = lm_response
             .get("choices")
             .and_then(|c| c.as_array()?.first())
@@ -247,8 +247,8 @@ impl ResponseTransformer {
             "eval_duration": timing.eval_duration
         });
 
-        // GAP A: logprobs — Ollama expects array<Logprob>; OpenAI wraps the same items in
-        // {content: [...]}. Extract .content so the shapes align.
+        // Ollama expects array<Logprob>; OpenAI wraps the same items in {content: [...]}.
+        // Extract .content so the shapes align.
         if let Some(logprobs) = lm_response
             .get("choices")
             .and_then(|c| c.as_array()?.first())
@@ -466,9 +466,149 @@ pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
     json!(converted)
 }
 
+/// Convert a single Ollama-shaped message to OpenAI shape for forwarding to LM Studio.
+///
+/// Handles two multi-turn shapes that Ollama and OpenAI represent differently:
+///
+/// - `role:"tool"` — Ollama uses `tool_name`; OpenAI requires `name` and `tool_call_id`.
+///   We walk prior assistant messages to find a matching `tool_calls` entry by name and
+///   copy its `id` when available. If none is found we log a debug message and omit
+///   `tool_call_id` rather than emitting a fabricated id that could confuse the model.
+///
+/// - `role:"assistant"` with `tool_calls` — Ollama uses object `arguments`; OpenAI
+///   requires a JSON string. We also add the `id` and `type` fields required by OpenAI
+///   if they are absent, synthesizing a stable id from the call index.
+fn normalize_message(msg: &Value, prior: &[Value]) -> Value {
+    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+
+    match role {
+        "tool" => {
+            let tool_name = msg.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+            let content = msg
+                .get("content")
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+
+            // Walk prior messages in reverse to find the most recent assistant tool_calls
+            // entry whose function.name matches this tool result.
+            let tool_call_id = prior.iter().rev().find_map(|m| {
+                let r = m.get("role").and_then(|v| v.as_str())?;
+                if !r.eq_ignore_ascii_case("assistant") {
+                    return None;
+                }
+                let calls = m.get("tool_calls").and_then(|v| v.as_array())?;
+                calls.iter().find_map(|tc| {
+                    let name = tc
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())?;
+                    if name != tool_name {
+                        return None;
+                    }
+                    // Prefer an explicit `id` field; fall back to `function.index`.
+                    tc.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            tc.get("function")
+                                .and_then(|f| f.get("index"))
+                                .and_then(|i| i.as_u64())
+                                .map(|i| format!("call_{i}"))
+                        })
+                })
+            });
+
+            if tool_call_id.is_none() {
+                log::debug!(
+                    "normalize_message: no tool_call_id found for tool_name={tool_name}; \
+                     omitting tool_call_id (some LM Studio behaviour may be limited)"
+                );
+            }
+
+            let mut out = serde_json::Map::with_capacity(4);
+            out.insert("role".into(), Value::String("tool".into()));
+            out.insert("name".into(), Value::String(tool_name.into()));
+            out.insert("content".into(), content);
+            if let Some(id) = tool_call_id {
+                out.insert("tool_call_id".into(), Value::String(id));
+            }
+            Value::Object(out)
+        }
+
+        "assistant" => {
+            let tool_calls = msg.get("tool_calls").and_then(|v| v.as_array());
+            if let Some(calls) = tool_calls {
+                // Convert Ollama-shaped tool_calls to OpenAI shape.
+                let converted: Vec<Value> = calls
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, tc)| {
+                        let id = tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("call_{idx}"));
+
+                        let name = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+
+                        let raw_args = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .cloned()
+                            .unwrap_or(Value::Object(serde_json::Map::new()));
+
+                        // OpenAI requires arguments as a JSON string.
+                        let arguments_str = match &raw_args {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                serde_json::to_string(other).unwrap_or_else(|_| "{}".to_string())
+                            }
+                        };
+
+                        json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": arguments_str
+                            }
+                        })
+                    })
+                    .collect();
+
+                let mut out = serde_json::Map::new();
+                out.insert("role".into(), Value::String("assistant".into()));
+                if let Some(c) = msg.get("content") {
+                    out.insert("content".into(), c.clone());
+                }
+                out.insert("tool_calls".into(), Value::Array(converted));
+                // Forward thinking if present (LM Studio accepts it).
+                if let Some(t) = msg.get("thinking") {
+                    out.insert("thinking".into(), t.clone());
+                }
+                Value::Object(out)
+            } else {
+                msg.clone()
+            }
+        }
+
+        _ => msg.clone(),
+    }
+}
+
 pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
+    let normalized: Vec<Value> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, msg)| normalize_message(msg, &messages[..i]))
+        .collect();
+
     if let Some(system_text) = system_prompt {
-        let already_has_system = messages.iter().any(|message| {
+        let already_has_system = normalized.iter().any(|message| {
             message
                 .get("role")
                 .and_then(|role| role.as_str())
@@ -477,18 +617,18 @@ pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) 
         });
 
         if already_has_system {
-            json!(messages)
+            Value::Array(normalized)
         } else {
-            let mut combined = Vec::with_capacity(messages.len() + 1);
+            let mut combined = Vec::with_capacity(normalized.len() + 1);
             combined.push(json!({
                 "role": "system",
                 "content": system_text,
             }));
-            combined.extend(messages.iter().cloned());
+            combined.extend(normalized);
             Value::Array(combined)
         }
     } else {
-        json!(messages)
+        Value::Array(normalized)
     }
 }
 

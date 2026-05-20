@@ -229,7 +229,9 @@ fn pipeline_with_recovery_on_truncated_json() {
 }
 
 #[test]
-fn pipeline_tool_calls_survive_full_pass() {
+fn pipeline_tool_calls_accumulated_into_state() {
+    // tool_calls are now accumulated into ChunkProcessingState rather than returned
+    // in the per-delta payload, so the delta payload is None for tool-calls-only chunks.
     let payload = json!({
         "choices": [{
             "delta": {
@@ -247,11 +249,18 @@ fn pipeline_tool_calls_survive_full_pass() {
     let parsed: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
     let choice = extract_first_choice(&parsed).unwrap();
     let mut state = ChunkProcessingState::default();
-    let delta = process_choice_delta(choice, &mut state).unwrap();
+    // No content/thinking — returns None (no mid-stream chunk emitted).
     assert!(
-        delta.tool_calls_delta.is_some(),
-        "tool_calls must survive the parse → process pipeline"
+        process_choice_delta(choice, &mut state).is_none(),
+        "tool_calls-only delta must not produce a streaming payload"
     );
+    // Tool call is in state, ready for the final done chunk.
+    let tc = state
+        .take_tool_calls()
+        .expect("tool_calls must be in state after processing");
+    let arr = tc.as_array().unwrap();
+    assert_eq!(arr.len(), 1, "one tool call must be accumulated");
+    assert_eq!(arr[0]["function"]["name"], "fn");
 }
 
 #[test]

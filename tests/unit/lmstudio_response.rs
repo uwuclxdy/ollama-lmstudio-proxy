@@ -1017,3 +1017,222 @@ fn timing_stream_chunks_is_wall_clock_heuristic_not_real_stats() {
         "chunk count used as token estimate when no real usage available"
     );
 }
+
+// =========================================================================
+// GAP A — inbound tool-result messages (role:"tool")
+// =========================================================================
+
+#[test]
+fn normalize_tool_role_maps_tool_name_to_name() {
+    let msgs = vec![
+        json!({"role": "user", "content": "What is the temperature?"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_abc",
+                "type": "function",
+                "function": {"name": "get_temperature", "arguments": {"city": "New York"}}
+            }]
+        }),
+        json!({"role": "tool", "tool_name": "get_temperature", "content": "22°C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    // The tool result message is the third one.
+    let tool_msg = &arr[2];
+    assert_eq!(
+        tool_msg.get("role").and_then(|v| v.as_str()),
+        Some("tool"),
+        "role must remain 'tool'"
+    );
+    assert_eq!(
+        tool_msg.get("name").and_then(|v| v.as_str()),
+        Some("get_temperature"),
+        "tool_name must be mapped to 'name'"
+    );
+    assert!(
+        tool_msg.get("tool_name").is_none(),
+        "tool_name key must be removed"
+    );
+    assert_eq!(
+        tool_msg.get("content").and_then(|v| v.as_str()),
+        Some("22°C"),
+        "content must be preserved"
+    );
+}
+
+#[test]
+fn normalize_tool_role_synthesizes_tool_call_id_from_prior_assistant() {
+    let msgs = vec![
+        json!({"role": "user", "content": "temp?"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_xyz",
+                "type": "function",
+                "function": {"name": "get_temperature", "arguments": {"city": "London"}}
+            }]
+        }),
+        json!({"role": "tool", "tool_name": "get_temperature", "content": "15°C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    let tool_msg = &arr[2];
+    assert_eq!(
+        tool_msg.get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_xyz"),
+        "tool_call_id must be copied from the matching prior assistant tool_calls entry"
+    );
+}
+
+#[test]
+fn normalize_tool_role_omits_tool_call_id_when_no_prior_match() {
+    // No assistant message before the tool result — tool_call_id is omitted.
+    let msgs = vec![json!({"role": "tool", "tool_name": "unknown_fn", "content": "result"})];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    let tool_msg = &arr[0];
+    assert!(
+        tool_msg.get("tool_call_id").is_none(),
+        "tool_call_id must be absent when no prior assistant tool_calls entry matches"
+    );
+    assert_eq!(
+        tool_msg.get("name").and_then(|v| v.as_str()),
+        Some("unknown_fn")
+    );
+}
+
+#[test]
+fn normalize_tool_role_parallel_tool_calls_match_by_name() {
+    // Multiple tool results each matching a different tool_call in the same assistant message.
+    let msgs = vec![
+        json!({"role": "user", "content": "both"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "get_temperature", "arguments": {"city": "NY"}}},
+                {"id": "call_2", "type": "function",
+                 "function": {"name": "get_conditions", "arguments": {"city": "NY"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_temperature", "content": "22°C"}),
+        json!({"role": "tool", "tool_name": "get_conditions", "content": "Sunny"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    assert_eq!(
+        arr[2].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_1"),
+        "get_temperature result must reference call_1"
+    );
+    assert_eq!(
+        arr[3].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_2"),
+        "get_conditions result must reference call_2"
+    );
+}
+
+// =========================================================================
+// GAP B — inbound assistant tool_calls with object arguments
+// =========================================================================
+
+#[test]
+fn normalize_assistant_tool_calls_stringifies_object_arguments() {
+    // Ollama sends arguments as a JSON object; OpenAI/LM Studio requires a JSON string.
+    let msgs = vec![
+        json!({"role": "user", "content": "What is the temp?"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "function": {
+                    "name": "get_temperature",
+                    "arguments": {"city": "Tokyo"}
+                }
+            }]
+        }),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    let assistant = &arr[1];
+    let calls = assistant
+        .get("tool_calls")
+        .and_then(|v| v.as_array())
+        .unwrap();
+    assert_eq!(calls.len(), 1);
+    let args = calls[0].get("function").unwrap().get("arguments").unwrap();
+    assert!(
+        args.is_string(),
+        "arguments must be serialized to a JSON string, got {:?}",
+        args
+    );
+    let parsed: serde_json::Value = serde_json::from_str(args.as_str().unwrap()).unwrap();
+    assert_eq!(
+        parsed.get("city").and_then(|v| v.as_str()),
+        Some("Tokyo"),
+        "round-trip through JSON string must preserve the original value"
+    );
+}
+
+#[test]
+fn normalize_assistant_tool_calls_adds_id_and_type_when_absent() {
+    let msgs = vec![json!({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "function": {"name": "fn_no_id", "arguments": {"k": "v"}}
+        }]
+    })];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    let calls = arr[0].get("tool_calls").and_then(|v| v.as_array()).unwrap();
+    let call = &calls[0];
+    assert!(
+        call.get("id").and_then(|v| v.as_str()).is_some(),
+        "id must be synthesized when absent"
+    );
+    assert_eq!(
+        call.get("type").and_then(|v| v.as_str()),
+        Some("function"),
+        "type must be 'function'"
+    );
+}
+
+#[test]
+fn normalize_assistant_tool_calls_preserves_existing_string_arguments() {
+    // If arguments is already a string (well-formed caller), it must not be double-serialized.
+    let msgs = vec![json!({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "call_ok",
+            "type": "function",
+            "function": {"name": "fn", "arguments": "{\"x\":1}"}
+        }]
+    })];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    let calls = arr[0].get("tool_calls").and_then(|v| v.as_array()).unwrap();
+    let args = calls[0].get("function").unwrap().get("arguments").unwrap();
+    assert!(args.is_string(), "string arguments must remain a string");
+    assert_eq!(args.as_str().unwrap(), "{\"x\":1}");
+}
+
+#[test]
+fn normalize_non_tool_messages_pass_through_unmodified() {
+    let msgs = vec![
+        json!({"role": "user", "content": "hello"}),
+        json!({"role": "assistant", "content": "hi there"}),
+        json!({"role": "system", "content": "be helpful"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    // user and system pass through exactly; assistant without tool_calls passes through.
+    assert_eq!(arr[0], json!({"role": "user", "content": "hello"}));
+    assert_eq!(arr[1], json!({"role": "assistant", "content": "hi there"}));
+    assert_eq!(arr[2], json!({"role": "system", "content": "be helpful"}));
+}
