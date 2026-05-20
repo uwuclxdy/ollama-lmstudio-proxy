@@ -1,23 +1,13 @@
 //! Stable timestamps for /api/tags model entries.
 //!
-//! Ollama's `modified_at` field reflects when the model was last modified on
-//! disk. LM Studio does not surface that timestamp, so the proxy used to
-//! return `Utc::now()` on every call — breaking client caches that key on the
-//! timestamp. Cache once at process start and return the same RFC3339 string
-//! for the lifetime of the proxy.
+//! LM Studio's model list does not expose per-model last-modified time. Ollama's
+//! schema still requires `modified_at`, so use a deterministic RFC3339 fallback
+//! rather than a proxy runtime timestamp that changes every restart.
 
-use std::sync::OnceLock;
+pub const MODEL_MODIFIED_AT_FALLBACK: &str = "1970-01-01T00:00:00Z";
 
-use chrono::{DateTime, Utc};
-
-static PROCESS_START: OnceLock<DateTime<Utc>> = OnceLock::new();
-
-fn process_start() -> &'static DateTime<Utc> {
-    PROCESS_START.get_or_init(Utc::now)
-}
-
-pub fn process_start_modified_at() -> String {
-    process_start().to_rfc3339()
+pub fn model_modified_at_fallback() -> &'static str {
+    MODEL_MODIFIED_AT_FALLBACK
 }
 
 #[cfg(test)]

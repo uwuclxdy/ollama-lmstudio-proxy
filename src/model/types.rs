@@ -356,7 +356,6 @@ impl ModelInfo {
             // from the model key (stable unique identifier in LM Studio's API).
             "digest": hex::encode(Sha256::digest(self.id.as_bytes())),
             "details": {
-                "parent_model": "",
                 "format": self.compatibility_type,
                 "family": self.arch,
                 "families": [self.arch],
@@ -372,7 +371,7 @@ impl ModelInfo {
         if let Some(obj) = base.as_object_mut() {
             obj.insert(
                 "modified_at".to_string(),
-                crate::model::timestamps::process_start_modified_at().into(),
+                crate::model::timestamps::model_modified_at_fallback().into(),
             );
         }
 
@@ -435,13 +434,16 @@ impl ModelInfo {
 
     pub fn to_show_response_verbose(&self, verbose: bool) -> Value {
         let capabilities = self.determine_capabilities();
-        let base = self.base_ollama_representation();
+        let mut details = self.base_ollama_representation()["details"].clone();
+        if let Some(obj) = details.as_object_mut() {
+            obj.insert("parent_model".to_string(), json!(""));
+        }
 
         let mut response = json!({
             "parameters": format!("temperature {}\ntop_p {}\ntop_k {}\nrepeat_penalty {}",
                 DEFAULT_TEMPERATURE, DEFAULT_TOP_P, DEFAULT_TOP_K, DEFAULT_REPEAT_PENALTY),
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
-            "details": base["details"],
+            "details": details,
             "capabilities": capabilities,
             "modified_at": chrono::Utc::now().to_rfc3339()
         });

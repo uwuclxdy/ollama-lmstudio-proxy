@@ -331,7 +331,6 @@ fn tags_model_has_all_spec_keys() {
     }
     let details = &v["details"];
     for key in [
-        "parent_model",
         "format",
         "family",
         "families",
@@ -340,6 +339,10 @@ fn tags_model_has_all_spec_keys() {
     ] {
         assert!(details.get(key).is_some(), "missing details.{key}");
     }
+    assert!(
+        details.get("parent_model").is_none(),
+        "tags details must not include parent_model"
+    );
     assert!(
         v["size"].is_u64(),
         "size must serialize as integer, got {}",
@@ -417,6 +420,13 @@ fn tags_model_family_and_families_both_use_arch() {
     let v = info.to_ollama_tags_model();
     assert_eq!(v["details"]["family"], json!("llama"));
     assert_eq!(v["details"]["families"], json!(["llama"]));
+}
+
+#[test]
+fn tags_model_modified_at_uses_epoch_fallback() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_ollama_tags_model();
+    assert_eq!(v["modified_at"], json!("1970-01-01T00:00:00Z"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

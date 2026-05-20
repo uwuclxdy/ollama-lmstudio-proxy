@@ -142,7 +142,6 @@ pub async fn handle_ollama_tags(
                 "size": 0,
                 "digest": hex::encode(Sha256::digest(entry.name.as_bytes())),
                 "details": {
-                    "parent_model": entry.source_model,
                     "format": "virtual",
                     "family": "unknown",
                     "families": ["unknown"],

@@ -152,6 +152,70 @@ async fn tags_model_without_tag_gets_colon_suffix() {
 }
 
 #[tokio::test]
+async fn tags_model_details_omit_parent_model() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let details = &body["models"][0]["details"];
+    assert!(
+        details.get("parent_model").is_none(),
+        "tags details must not include parent_model; got {details}"
+    );
+}
+
+#[tokio::test]
+async fn tags_model_modified_at_uses_deterministic_fallback() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["models"][0]["modified_at"].as_str(),
+        Some("1970-01-01T00:00:00Z"),
+        "LM Studio model list has no last-modified field, so tags must use a stable fallback; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn tags_virtual_model_created_via_copy_appears_in_list() {
     let p = spawn_proxy().await;
 
