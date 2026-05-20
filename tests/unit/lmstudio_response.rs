@@ -32,6 +32,7 @@ fn lm_completion_response(text: &str, reasoning: Option<&str>) -> serde_json::Va
 #[test]
 fn tool_calls_arguments_string_becomes_object() {
     let tool_calls = vec![json!({
+        "index": 0,
         "id": "call_abc",
         "type": "function",
         "function": {"name": "get_weather", "arguments": "{\"location\":\"London\"}"}
@@ -40,7 +41,9 @@ fn tool_calls_arguments_string_becomes_object() {
     let first = &result.as_array().unwrap()[0];
     assert!(first.get("id").is_none(), "id should be stripped");
     assert!(first.get("type").is_none(), "type should be stripped");
-    let args = first.get("function").unwrap().get("arguments").unwrap();
+    let function = first.get("function").unwrap();
+    assert_eq!(function.get("index"), Some(&json!(0)));
+    let args = function.get("arguments").unwrap();
     assert!(
         args.is_object(),
         "arguments should be an object, got {:?}",
@@ -72,6 +75,7 @@ fn tool_calls_end_to_end_in_chat_response() {
                 "role": "assistant",
                 "content": null,
                 "tool_calls": [{
+                    "index": 0,
                     "id": "call_123",
                     "type": "function",
                     "function": {"name": "my_tool", "arguments": "{\"x\":1}"}
@@ -85,7 +89,9 @@ fn tool_calls_end_to_end_in_chat_response() {
     let msg = result.get("message").unwrap();
     let tc = msg.get("tool_calls").unwrap().as_array().unwrap();
     assert_eq!(tc.len(), 1);
-    let args = tc[0].get("function").unwrap().get("arguments").unwrap();
+    let function = tc[0].get("function").unwrap();
+    assert_eq!(function.get("index"), Some(&json!(0)));
+    let args = function.get("arguments").unwrap();
     assert!(args.is_object(), "expected object, got {:?}", args);
     assert_eq!(args.get("x").and_then(|v| v.as_i64()), Some(1));
     assert!(tc[0].get("id").is_none());

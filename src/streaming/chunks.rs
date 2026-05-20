@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use crate::constants::ERROR_CANCELLED;
@@ -13,10 +13,9 @@ pub struct ChunkProcessingState {
     ///
     /// OpenAI streams tool calls in pieces (name in one delta, arguments spread
     /// across several more). Ollama clients expect ONE chunk containing the
-    /// complete `tool_calls` array once the assistant message is done. We collect
-    /// every Ollama-converted fragment here and emit the accumulated array in the
-    /// final done chunk instead of forwarding each partial delta immediately.
-    accumulated_tool_calls: Vec<Value>,
+    /// complete `tool_calls` array once the assistant message is done. We merge
+    /// fragments by OpenAI call index before converting them to Ollama shape.
+    accumulated_tool_calls: BTreeMap<u64, Value>,
 }
 
 impl ChunkProcessingState {
@@ -30,9 +29,14 @@ impl ChunkProcessingState {
         }
     }
 
-    pub fn accumulate_tool_calls(&mut self, tool_calls: Value) {
-        if let Value::Array(calls) = tool_calls {
-            self.accumulated_tool_calls.extend(calls);
+    pub fn accumulate_tool_calls(&mut self, tool_calls: &[Value]) {
+        for (position, tool_call) in tool_calls.iter().enumerate() {
+            let index = tool_call_index(tool_call, position);
+            let entry = self
+                .accumulated_tool_calls
+                .entry(index)
+                .or_insert_with(|| json!({"index": index, "function": {}}));
+            merge_tool_call_fragment(entry, tool_call, index);
         }
     }
 
@@ -41,9 +45,10 @@ impl ChunkProcessingState {
         if self.accumulated_tool_calls.is_empty() {
             None
         } else {
-            Some(Value::Array(std::mem::take(
-                &mut self.accumulated_tool_calls,
-            )))
+            let calls: Vec<Value> = std::mem::take(&mut self.accumulated_tool_calls)
+                .into_values()
+                .collect();
+            Some(convert_tool_calls_to_ollama(&calls))
         }
     }
 }
@@ -54,6 +59,56 @@ pub struct ChoiceDeltaPayload {
     /// `None` — tool_calls from this delta are accumulated in `ChunkProcessingState`
     /// and will be emitted in the final done chunk, not forwarded per-delta.
     pub tool_calls_delta: Option<Value>,
+}
+
+fn tool_call_index(tool_call: &Value, position: usize) -> u64 {
+    tool_call
+        .get("index")
+        .and_then(|index| index.as_u64())
+        .unwrap_or(position as u64)
+}
+
+fn merge_tool_call_fragment(accumulated: &mut Value, fragment: &Value, index: u64) {
+    let accumulated_object = accumulated.as_object_mut().expect("tool call is an object");
+    accumulated_object.insert("index".to_string(), json!(index));
+
+    if let Some(id) = fragment.get("id") {
+        accumulated_object.insert("id".to_string(), id.clone());
+    }
+    if let Some(call_type) = fragment.get("type") {
+        accumulated_object.insert("type".to_string(), call_type.clone());
+    }
+
+    let function = accumulated_object
+        .entry("function".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let function_object = function.as_object_mut().expect("function is an object");
+
+    if let Some(name) = fragment
+        .get("function")
+        .and_then(|function| function.get("name"))
+    {
+        function_object.insert("name".to_string(), name.clone());
+    }
+    if let Some(arguments) = fragment
+        .get("function")
+        .and_then(|function| function.get("arguments"))
+    {
+        match arguments {
+            Value::String(part) => {
+                let existing = function_object
+                    .entry("arguments".to_string())
+                    .or_insert_with(|| Value::String(String::new()));
+                match existing {
+                    Value::String(buffer) => buffer.push_str(part),
+                    other => *other = Value::String(part.clone()),
+                }
+            }
+            other => {
+                function_object.insert("arguments".to_string(), other.clone());
+            }
+        }
+    }
 }
 
 pub fn extract_first_choice(chunk: &Value) -> Option<&Value> {
@@ -84,7 +139,7 @@ pub fn process_choice_delta(
         {
             // Accumulate into state rather than emitting per-delta.
             // The complete array is emitted once in the final done chunk.
-            state.accumulate_tool_calls(convert_tool_calls_to_ollama(new_tool_calls));
+            state.accumulate_tool_calls(new_tool_calls);
         }
     }
 

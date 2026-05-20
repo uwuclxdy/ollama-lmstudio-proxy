@@ -506,7 +506,9 @@ async fn chat_stream_tool_calls_present_in_output() {
     let p = spawn_proxy().await;
 
     let body = sse_body(&[
-        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"London\"}"}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\""}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"London\""}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}]}"#,
         r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
     ]);
 
@@ -541,17 +543,20 @@ async fn chat_stream_tool_calls_present_in_output() {
         .expect("POST /api/chat");
 
     let chunks = collect_ndjson(resp).await;
-    let has_tool_calls = chunks.iter().any(|c| {
-        c.get("message")
-            .and_then(|m| m.get("tool_calls"))
-            .and_then(|v| v.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false)
-    });
-    assert!(
-        has_tool_calls,
-        "expected tool_calls in at least one chunk; got: {chunks:?}"
-    );
+    let tool_calls = chunks
+        .iter()
+        .find_map(|chunk| {
+            chunk
+                .get("message")
+                .and_then(|message| message.get("tool_calls"))
+                .and_then(|tool_calls| tool_calls.as_array())
+        })
+        .expect("expected tool_calls in final chunk");
+    assert_eq!(tool_calls.len(), 1);
+    let function = &tool_calls[0]["function"];
+    assert_eq!(function["index"], 0);
+    assert_eq!(function["name"], "get_weather");
+    assert_eq!(function["arguments"], json!({"city": "London"}));
 }
 
 // ---------------------------------------------------------------------------

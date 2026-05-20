@@ -427,19 +427,24 @@ pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
 ///
 /// OpenAI represents each tool call as:
 /// ```json
-/// {"id": "call_abc", "type": "function", "function": {"name": "fn", "arguments": "{\"k\":\"v\"}"}}
+/// {"index": 0, "id": "call_abc", "type": "function", "function": {"name": "fn", "arguments": "{\"k\":\"v\"}"}}
 /// ```
 /// where `arguments` is a **JSON string**.
 ///
 /// Ollama expects:
 /// ```json
-/// {"function": {"name": "fn", "arguments": {"k": "v"}}}
+/// {"function": {"index": 0, "name": "fn", "arguments": {"k": "v"}}}
 /// ```
 /// where `arguments` is a **JSON object** and the `id`/`type` wrapper fields are absent.
 pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
     let converted: Vec<Value> = tool_calls
         .iter()
-        .map(|tc| {
+        .enumerate()
+        .map(|(position, tc)| {
+            let index = tc
+                .get("index")
+                .and_then(|index| index.as_u64())
+                .unwrap_or(position as u64);
             let name = tc
                 .get("function")
                 .and_then(|f| f.get("name"))
@@ -462,6 +467,7 @@ pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
 
             json!({
                 "function": {
+                    "index": index,
                     "name": name,
                     "arguments": arguments
                 }

@@ -461,6 +461,7 @@ async fn tools_forwarded_and_tool_calls_translated_to_ollama() {
                 "role": "assistant",
                 "content": null,
                 "tool_calls": [{
+                    "index": 0,
                     "id": "call_abc",
                     "type": "function",
                     "function": {
@@ -512,6 +513,7 @@ async fn tools_forwarded_and_tool_calls_translated_to_ollama() {
     assert_eq!(tool_calls.as_array().unwrap().len(), 1);
 
     let tc = &tool_calls[0];
+    assert_eq!(tc["function"]["index"], 0);
     assert_eq!(tc["function"]["name"], "get_weather");
     // Ollama expects arguments as a JSON object, not a string.
     assert!(

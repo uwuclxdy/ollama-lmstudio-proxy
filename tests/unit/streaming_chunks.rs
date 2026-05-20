@@ -465,12 +465,10 @@ fn final_chunk_generate_propagates_done_reason_length() {
 
 #[test]
 fn tool_calls_accumulated_across_three_deltas() {
-    // LM Studio streams tool calls in fragments: name in one delta, then arguments
-    // spread over several more. The proxy must accumulate all fragments and emit ONE
-    // chunk containing the complete tool_calls array — not three partial chunks.
     let delta_name = json!({
         "delta": {
             "tool_calls": [{
+                "index": 0,
                 "id": "call_1",
                 "type": "function",
                 "function": {"name": "get_temperature", "arguments": ""}
@@ -480,41 +478,103 @@ fn tool_calls_accumulated_across_three_deltas() {
     let delta_args_part1 = json!({
         "delta": {
             "tool_calls": [{
+                "index": 0,
                 "id": "call_1",
                 "type": "function",
-                "function": {"name": "get_temperature", "arguments": "{\"ci"}
+                "function": {"arguments": "{\"city\""}
             }]
         }
     });
     let delta_args_part2 = json!({
         "delta": {
             "tool_calls": [{
+                "index": 0,
                 "id": "call_1",
                 "type": "function",
-                "function": {"name": "get_temperature", "arguments": "ty\":\"NYC\"}"}
+                "function": {"arguments": ":\"NYC\"}"}
             }]
         }
     });
 
     let mut state = ChunkProcessingState::default();
 
-    // All three deltas return None (no content/thinking to stream).
     assert!(process_choice_delta(&delta_name, &mut state).is_none());
     assert!(process_choice_delta(&delta_args_part1, &mut state).is_none());
     assert!(process_choice_delta(&delta_args_part2, &mut state).is_none());
 
-    // All three fragments are accumulated — three entries (one per delta call).
-    let tc = state
+    let tool_calls = state
         .take_tool_calls()
         .expect("accumulated tool_calls must be present");
-    let arr = tc.as_array().unwrap();
-    assert_eq!(arr.len(), 3, "one entry per accumulated delta");
+    let arr = tool_calls.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    let function = arr[0].get("function").unwrap();
+    assert_eq!(function.get("index"), Some(&json!(0)));
+    assert_eq!(function.get("name"), Some(&json!("get_temperature")));
+    assert_eq!(function.get("arguments"), Some(&json!({"city": "NYC"})));
 
-    // After take_tool_calls, state is empty.
     assert!(
         state.take_tool_calls().is_none(),
         "take must consume the accumulated calls"
     );
+}
+
+#[test]
+fn concurrent_tool_call_fragments_are_ordered_by_index() {
+    let first_delta = json!({
+        "delta": {
+            "tool_calls": [
+                {
+                    "index": 1,
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_conditions", "arguments": "{\"city\""}
+                },
+                {
+                    "index": 0,
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "get_temperature", "arguments": "{\"city\""}
+                }
+            ]
+        }
+    });
+    let second_delta = json!({
+        "delta": {
+            "tool_calls": [
+                {
+                    "index": 1,
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"arguments": ":\"London\"}"}
+                },
+                {
+                    "index": 0,
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"arguments": ":\"New York\"}"}
+                }
+            ]
+        }
+    });
+
+    let mut state = ChunkProcessingState::default();
+    assert!(process_choice_delta(&first_delta, &mut state).is_none());
+    assert!(process_choice_delta(&second_delta, &mut state).is_none());
+
+    let tool_calls = state
+        .take_tool_calls()
+        .expect("accumulated tool_calls must be present");
+    let calls = tool_calls.as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["function"]["index"], json!(0));
+    assert_eq!(calls[0]["function"]["name"], json!("get_temperature"));
+    assert_eq!(
+        calls[0]["function"]["arguments"],
+        json!({"city": "New York"})
+    );
+    assert_eq!(calls[1]["function"]["index"], json!(1));
+    assert_eq!(calls[1]["function"]["name"], json!("get_conditions"));
+    assert_eq!(calls[1]["function"]["arguments"], json!({"city": "London"}));
 }
 
 #[test]
