@@ -439,8 +439,6 @@ impl ModelInfo {
             "template": "{{ if .System }}{{ .System }}\n{{ end }}{{ .Prompt }}",
             "details": base["details"],
             "capabilities": capabilities,
-            "digest": format!("{:x}", md5::compute(self.ollama_name.as_bytes())),
-            "size": base["size"].as_u64().unwrap_or(0),
             "modified_at": chrono::Utc::now().to_rfc3339()
         });
 

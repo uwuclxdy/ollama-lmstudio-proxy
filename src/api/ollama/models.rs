@@ -13,7 +13,6 @@ use crate::model::ModelResolver;
 use std::sync::Arc;
 
 use super::resolution::resolve_model_target;
-use crate::lmstudio::keep_alive::{keep_alive_requests_unload, parse_keep_alive_seconds};
 use crate::logging::log_handler_io;
 use crate::model::naming::extract_required_model_name;
 use crate::model::types::ModelInfo;
@@ -33,14 +32,11 @@ pub async fn handle_ollama_show(
     }
 
     let ollama_model_name = extract_required_model_name(&body)?;
-    let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
 
     log_request("POST", "/api/show", Some(ollama_model_name));
 
-    if !keep_alive_requests_unload(keep_alive_seconds) {
-        trigger_model_loading_for_ollama(&context, ollama_model_name, cancellation_token.clone())
-            .await?;
-    }
+    trigger_model_loading_for_ollama(&context, ollama_model_name, cancellation_token.clone())
+        .await?;
 
     let (resolved_id, virtual_entry) = resolve_model_target(
         &context,

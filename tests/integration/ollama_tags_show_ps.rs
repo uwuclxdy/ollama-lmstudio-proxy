@@ -444,6 +444,97 @@ async fn show_virtual_model_includes_alias_metadata() {
     );
 }
 
+// Drift A: keep_alive must be ignored — the proxy must always attempt model
+// loading regardless of what keep_alive the caller sends.
+#[tokio::test]
+async fn show_keep_alive_in_body_does_not_skip_model_load() {
+    let p = spawn_proxy().await;
+
+    // Stand in for LM Studio's model list.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    // Stand in for the model-loading trigger the proxy sends to LM Studio.
+    // A 200 with a minimal body is enough; the proxy doesn't inspect it.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b", "keep_alive": 0}))
+        .send()
+        .await
+        .expect("POST /api/show with keep_alive");
+    assert_eq!(resp.status(), 200);
+
+    // The proxy must have forwarded a model-loading trigger to LM Studio.
+    // keep_alive in a ShowRequest has no meaning and must not suppress this call.
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let load_triggered = received
+        .iter()
+        .any(|r| r.url.path() == "/v1/chat/completions");
+    assert!(
+        load_triggered,
+        "keep_alive in show body must not suppress model loading; \
+         no POST to /v1/chat/completions was observed"
+    );
+}
+
+// Drift B: ShowResponse schema defines no `digest` or `size` fields.
+// The proxy must not emit them for non-virtual models.
+#[tokio::test]
+async fn show_response_omits_digest_and_size() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b"}))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body.get("digest").is_none(),
+        "ShowResponse must not include `digest`; got {body}"
+    );
+    assert!(
+        body.get("size").is_none(),
+        "ShowResponse must not include `size`; got {body}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/ps
 // ---------------------------------------------------------------------------

@@ -418,12 +418,19 @@ fn show_response_has_all_top_level_keys() {
         "template",
         "details",
         "capabilities",
-        "digest",
-        "size",
         "modified_at",
     ] {
         assert!(v.get(key).is_some(), "missing key {key} in show response");
     }
+    // not in ShowResponse schema — must be absent
+    assert!(
+        v.get("digest").is_none(),
+        "digest must not appear in show response"
+    );
+    assert!(
+        v.get("size").is_none(),
+        "size must not appear in show response"
+    );
     // modelfile is not in the schema — must be absent
     assert!(
         v.get("modelfile").is_none(),
