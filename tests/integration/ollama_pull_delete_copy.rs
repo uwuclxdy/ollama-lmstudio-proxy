@@ -476,10 +476,18 @@ async fn delete_virtual_model_succeeds() {
         .await
         .expect("DELETE /api/delete");
     assert_eq!(del.status(), 200, "delete should return 200");
+    let body: Value = del.json().await.expect("delete body");
+    assert_eq!(
+        body,
+        json!({"status": "success"}),
+        "delete response must be bare {{\"status\":\"success\"}}; got {body}"
+    );
 }
 
 #[tokio::test]
 async fn delete_unknown_model_returns_404() {
+    // Non-virtual (native LM Studio) models are not deletable through this proxy;
+    // any unrecognised name returns 404 — this is an architectural limit.
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -582,6 +590,59 @@ async fn delete_missing_model_field_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn copy_returns_bare_status_success() {
+    // The Ollama spec defines no body for the 200 response. The proxy emits
+    // {"status":"success"} and must not include proxy-internal fields such as
+    // `model`, `virtual`, `source_model`, `target_model_id`, `created_at`,
+    // or `updated_at`.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "bare-copy:v1"}))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert_eq!(
+        resp.status(),
+        200,
+        "copy should return 200; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"status": "success"}),
+        "copy response must be bare {{\"status\":\"success\"}}; got {body}"
+    );
+
+    // Proxy-internal fields must be absent.
+    for key in &[
+        "model",
+        "virtual",
+        "source_model",
+        "target_model_id",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            body.get(key).is_none(),
+            "copy response must not contain proxy-internal field '{key}'; got {body}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn copy_creates_virtual_alias_in_tags() {
     let p = spawn_proxy().await;
 
@@ -656,6 +717,8 @@ async fn copy_missing_source_returns_error() {
 
 #[tokio::test]
 async fn copy_missing_fields_returns_400() {
+    // The Ollama spec declares no 400 response, but the proxy returns 400 for
+    // missing required fields as a pragmatic guard against silent failures.
     let p = spawn_proxy().await;
 
     let resp = p
@@ -666,9 +729,10 @@ async fn copy_missing_fields_returns_400() {
         .await
         .expect("POST /api/copy no destination");
 
-    assert!(
-        resp.status().is_client_error(),
-        "expected 4xx when destination missing; got {}",
+    assert_eq!(
+        resp.status(),
+        400,
+        "expected 400 when destination missing; got {}",
         resp.status()
     );
 }

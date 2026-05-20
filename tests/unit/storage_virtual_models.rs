@@ -71,26 +71,23 @@ fn build_metadata_messages_non_array_not_set() {
     assert!(meta.messages.is_none());
 }
 
-// --- VirtualModelEntry::to_response ---
+// --- VirtualModelEntry fields ---
 
 #[test]
-fn entry_to_response_contains_required_fields() {
+fn entry_fields_are_set_correctly() {
+    let now = Utc::now();
     let entry = VirtualModelEntry {
         name: "mymodel".to_string(),
         source_model: "llama3".to_string(),
         target_model_id: "llama-3-8b".to_string(),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: now,
+        updated_at: now,
         metadata: default_metadata(),
     };
-    let resp = entry.to_response();
-    assert_eq!(resp["status"], "success");
-    assert_eq!(resp["model"], "mymodel");
-    assert_eq!(resp["virtual"], true);
-    assert_eq!(resp["source_model"], "llama3");
-    assert_eq!(resp["target_model_id"], "llama-3-8b");
-    assert!(resp["created_at"].is_string());
-    assert!(resp["updated_at"].is_string());
+    assert_eq!(entry.name, "mymodel");
+    assert_eq!(entry.source_model, "llama3");
+    assert_eq!(entry.target_model_id, "llama-3-8b");
+    assert_eq!(entry.created_at, now);
 }
 
 // --- VirtualModelStore::load ---

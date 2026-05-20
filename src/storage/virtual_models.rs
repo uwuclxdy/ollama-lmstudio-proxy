@@ -36,20 +36,6 @@ pub struct VirtualModelStore {
     entries: RwLock<HashMap<String, VirtualModelEntry>>,
 }
 
-impl VirtualModelEntry {
-    pub fn to_response(&self) -> Value {
-        serde_json::json!({
-            "status": "success",
-            "model": self.name,
-            "virtual": true,
-            "source_model": self.source_model,
-            "target_model_id": self.target_model_id,
-            "created_at": self.created_at.to_rfc3339(),
-            "updated_at": self.updated_at.to_rfc3339(),
-        })
-    }
-}
-
 impl VirtualModelStore {
     pub fn build_metadata_from_request(
         body: &Value,

@@ -232,6 +232,9 @@ pub async fn handle_ollama_copy(
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("copy", Some(&body), None);
+    // The Ollama spec declares no 400 for this endpoint, but silently accepting
+    // a request with missing required fields would produce a confusing failure
+    // downstream. We keep the 400 as a pragmatic guard.
     let source = body
         .get("source")
         .and_then(|value| value.as_str())
@@ -243,7 +246,7 @@ pub async fn handle_ollama_copy(
 
     log_request("POST", "/api/copy", Some(destination));
 
-    let entry = if let Some(existing) = context.virtual_models.get(source).await {
+    if let Some(existing) = context.virtual_models.get(source).await {
         context
             .virtual_models
             .create_alias(
@@ -252,7 +255,7 @@ pub async fn handle_ollama_copy(
                 existing.target_model_id.clone(),
                 existing.metadata.clone(),
             )
-            .await?
+            .await?;
     } else {
         let (resolved_id, _) =
             resolve_model_target(&context, &model_resolver, source, cancellation_token).await?;
@@ -265,11 +268,11 @@ pub async fn handle_ollama_copy(
                 resolved_id,
                 VirtualModelMetadata::default(),
             )
-            .await?
-    };
+            .await?;
+    }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama copy", start_time);
-    let response = entry.to_response();
+    let response = json!({"status": "success"});
     log_handler_io("copy", None, Some(&response));
     Ok(json_response(&response))
 }
@@ -283,6 +286,8 @@ pub async fn handle_ollama_delete(
     let model_name = extract_required_model_name(&body)?;
     log_request("DELETE", "/api/delete", Some(model_name));
 
+    // Only proxy-managed virtual aliases can be deleted. Native LM Studio models
+    // are not writable through this proxy, so any unknown name returns 404.
     if context.virtual_models.get(model_name).await.is_none() {
         return Err(ProxyError::not_found(&format!(
             "model '{}' not managed by this proxy",
@@ -290,9 +295,9 @@ pub async fn handle_ollama_delete(
         )));
     }
 
-    let removed = context.virtual_models.delete(model_name).await?;
+    context.virtual_models.delete(model_name).await?;
     log_timed(LOG_PREFIX_SUCCESS, "Ollama delete", start_time);
-    let response = removed.to_response();
+    let response = json!({"status": "success"});
     log_handler_io("delete", None, Some(&response));
     Ok(json_response(&response))
 }
