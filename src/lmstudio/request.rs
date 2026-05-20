@@ -122,10 +122,6 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
         if let Some(logit_bias) = options.get("logit_bias") {
             params.insert("logit_bias".to_string(), logit_bias.clone());
         }
-
-        if let Some(system) = options.get("system") {
-            params.insert("system".to_string(), system.clone());
-        }
     }
 }
 

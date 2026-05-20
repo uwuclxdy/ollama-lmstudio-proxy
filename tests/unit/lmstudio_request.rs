@@ -238,13 +238,20 @@ fn forwards_logit_bias_when_present() {
 }
 
 #[test]
-fn forwards_system_when_present_inside_options() {
-    let options = json!({ "system": "You are a helpful assistant." });
+fn options_system_is_not_forwarded_as_top_level_key() {
+    // LM Studio's chat-completions does not list "system" as a supported
+    // top-level key (see api_docs/lmstudio/1_developer/3_openai-compat/
+    // chat-completions.md). The synthetic system message is injected
+    // elsewhere (api/ollama/resolution.rs::extract_system_prompt), so the
+    // mapper must drop options.system silently.
+    let options = json!({ "system": "hello", "temperature": 0.5 });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert_eq!(
-        params.get("system"),
-        Some(&json!("You are a helpful assistant."))
+    assert!(
+        params.get("system").is_none(),
+        "options.system must not surface as a top-level LM Studio key, got {:?}",
+        params
     );
+    assert_eq!(params.get("temperature"), Some(&json!(0.5)));
 }
 
 #[test]

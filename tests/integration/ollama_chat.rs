@@ -1298,3 +1298,62 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
         "eval_duration must be wall-clock derived (got {eval})"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// options.system must be hoisted to a single {role:"system"} message,
+// not duplicated as a top-level "system" key in the LM Studio request.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn chat_options_system_does_not_leak_as_top_level_field() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("ok", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false,
+            "options": { "system": "Sx" }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat options.system");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/v1/chat/completions")
+        .expect("LM Studio chat completions request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    assert!(
+        body.get("system").is_none(),
+        "options.system must not appear as a top-level key: {body}"
+    );
+
+    let messages = body["messages"].as_array().expect("messages array");
+    let system_count = messages
+        .iter()
+        .filter(|m| m.get("role").and_then(Value::as_str) == Some("system"))
+        .count();
+    assert_eq!(
+        system_count, 1,
+        "exactly one synthetic system message must be present, got {system_count} in {body}"
+    );
+    assert_eq!(
+        messages[0],
+        json!({ "role": "system", "content": "Sx" }),
+        "first message must be {{role:system, content:Sx}}: {body}"
+    );
+}

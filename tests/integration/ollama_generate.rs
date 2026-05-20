@@ -1206,3 +1206,57 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
         "eval_duration must be wall-clock derived (got {eval})"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// options.system must not leak as a top-level LM Studio key on /api/generate.
+// On the text path the system prompt is prepended to the completion prompt;
+// the mapper must not double-forward it as `"system": ...`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn generate_options_system_does_not_leak_as_top_level_field() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("ok", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "hi",
+            "stream": false,
+            "options": { "system": "Sx" }
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate options.system");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/v1/completions")
+        .expect("LM Studio completions request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    assert!(
+        body.get("system").is_none(),
+        "options.system must not appear as a top-level key on completions: {body}"
+    );
+
+    // The system text is fused into the prompt by the generate handler.
+    let prompt = body["prompt"].as_str().expect("prompt string");
+    assert!(
+        prompt.contains("Sx"),
+        "system prompt should be prepended to the completion prompt, got {prompt:?}"
+    );
+}
