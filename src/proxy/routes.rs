@@ -371,27 +371,9 @@ fn encode_query(pairs: &[(String, String)]) -> Option<String> {
     if pairs.is_empty() {
         return None;
     }
-    let mut out = String::new();
-    for (i, (k, v)) in pairs.iter().enumerate() {
-        if i > 0 {
-            out.push('&');
-        }
-        out.push_str(&urlencode(k));
-        out.push('=');
-        out.push_str(&urlencode(v));
-    }
-    Some(out)
-}
-
-fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    out
+    Some(
+        url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .finish(),
+    )
 }
