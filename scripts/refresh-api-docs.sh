@@ -2,23 +2,34 @@
 #
 # Refresh the upstream-mirrored API docs under "api_docs/".
 #
-#   - "api_docs/ollama/<path>"     ← https://docs.ollama.com/<path>
-#   - "api_docs/lmstudio/<path>"   ← lmstudio-ai/docs@main:<path>
+#   - api_docs/ollama/<path>           ← https://docs.ollama.com/<path>
+#         paths listed in OLLAMA_ACTIVE
+#   - api_docs/future/ollama/<path>    ← https://docs.ollama.com/<path>
+#         paths reachable from llms.txt but neither active nor denied
+#   - api_docs/lmstudio/<path>         ← lmstudio-ai/docs@main:<path>
+#         paths listed in LMS_ACTIVE
+#   - api_docs/future/lmstudio/<path>  ← lmstudio-ai/docs@main:<path>
+#         paths in the upstream tree but neither active nor denied
 #
-# Both mirrors are gated by explicit allowlists below. Anything not on the
-# list is intentionally omitted (out of scope for a translation proxy:
-# integrations, platform installers, CLI/Modelfile/FAQ explainers, Ollama
-# cloud auth, LM Studio app UI / SDK pages, Anthropic-compat endpoints,
-# native REST endpoints the proxy never calls, etc.).
+# Layout invariant: future/<source>/<path> mirrors the upstream path of
+# the same doc, so promotion is a one-line list edit — move the entry from
+# its implicit future bucket into the matching *_ACTIVE list and re-run.
 #
-# Local-only files under "api_docs/" (lmstudio_ollama_openai.md,
-# lmstudio_vs_ollama.md, and anything outside the mirrored trees) are
-# never touched.
+# DENY lists capture pages that are pure noise — install guides, third-
+# party integration walkthroughs, marketing landings, lorem-ipsum
+# placeholders, historical changelogs. They are neither active nor future.
+# Anything genuinely new added upstream auto-flows into future/ so it
+# surfaces for review on the next refresh.
 #
-# Re-run safely; the script wipes and rebuilds only the mirrored trees.
+# Local-only files under api_docs/ (e.g. lmstudio_ollama_openai.md,
+# lmstudio_vs_ollama.md) are never touched.
+#
+# Re-run safely: only the mirrored trees are wiped and rebuilt.
+
 set -euo pipefail
 
 OLLAMA_BASE="https://docs.ollama.com"
+OLLAMA_LLMS_TXT="$OLLAMA_BASE/llms.txt"
 LMS_REPO="https://github.com/lmstudio-ai/docs.git"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,11 +37,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCS_DIR="$REPO_ROOT/api_docs"
 OLLAMA_DIR="$DOCS_DIR/ollama"
 LMS_DIR="$DOCS_DIR/lmstudio"
+FUTURE_OLLAMA_DIR="$DOCS_DIR/future/ollama"
+FUTURE_LMS_DIR="$DOCS_DIR/future/lmstudio"
 
-# Explicit allowlist of ollama doc paths the proxy mirrors. Each entry is
-# the path portion of an https://docs.ollama.com/<path> URL. Anything not
-# listed is dropped (see top-of-file comment for the rationale).
-OLLAMA_KEEP_PATHS=(
+# Ollama: faithfully implemented by the proxy today. Keep alphabetised.
+OLLAMA_ACTIVE=(
+    api-reference/get-version.md
+    api-reference/show-model-details.md
     api/chat.md
     api/copy.md
     api/create.md
@@ -44,8 +57,6 @@ OLLAMA_KEEP_PATHS=(
     api/streaming.md
     api/tags.md
     api/usage.md
-    api-reference/get-version.md
-    api-reference/show-model-details.md
     capabilities/embeddings.md
     capabilities/streaming.md
     capabilities/structured-outputs.md
@@ -54,13 +65,29 @@ OLLAMA_KEEP_PATHS=(
     capabilities/vision.md
 )
 
-# Explicit allowlist of LM Studio doc paths under "1_developer/" that the
-# proxy actually depends on (REST endpoints it calls, OpenAI-compat shapes
-# it produces). All other pages — app UI, SDK guides, native chat REST,
-# Anthropic-compat, changelog — are dropped.
-LMS_KEEP_PATHS=(
-    1_developer/2_rest/download.md
+# Ollama: irrelevant to a translation proxy. Never fetched.
+OLLAMA_DENY=(
+    cloud.md
+    docker.md
+    gpu.md
+    import.md
+    index.md
+    linux.md
+    macos.md
+    quickstart.md
+    troubleshooting.md
+    windows.md
+)
+
+# Ollama: subtree denylist (path prefixes). Never fetched.
+OLLAMA_DENY_PREFIXES=(
+    integrations/
+)
+
+# LM Studio: actually called as upstream by the proxy. Keep alphabetised.
+LMS_ACTIVE=(
     1_developer/2_rest/download-status.md
+    1_developer/2_rest/download.md
     1_developer/2_rest/list.md
     1_developer/2_rest/unload.md
     1_developer/3_openai-compat/chat-completions.md
@@ -68,6 +95,30 @@ LMS_KEEP_PATHS=(
     1_developer/3_openai-compat/models.md
     1_developer/3_openai-compat/structured-output.md
 )
+
+# LM Studio: pure noise. Never copied.
+LMS_DENY=(
+    1_developer/_embeddings.md
+    1_developer/api-changelog.md
+)
+
+contains() {
+    local needle="$1"; shift
+    local item
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+has_prefix() {
+    local path="$1"; shift
+    local prefix
+    for prefix in "$@"; do
+        [[ "$path" == "$prefix"* ]] && return 0
+    done
+    return 1
+}
 
 if [[ ! -d "$DOCS_DIR" ]]; then
     echo "error: '$DOCS_DIR' does not exist; run from repo containing api_docs/" >&2
@@ -86,36 +137,90 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 # --- Ollama ----------------------------------------------------------------
 
-# Drop legacy single-file dump; replaced by the per-page tree under ollama/.
+# Drop legacy single-file dump from older script versions.
 rm -f "$DOCS_DIR/ollama.md"
-rm -rf "$OLLAMA_DIR"
-mkdir -p "$OLLAMA_DIR"
+rm -rf "$OLLAMA_DIR" "$FUTURE_OLLAMA_DIR"
+mkdir -p "$OLLAMA_DIR" "$FUTURE_OLLAMA_DIR"
 
-echo "→ fetching ${#OLLAMA_KEEP_PATHS[@]} ollama pages"
-for path in "${OLLAMA_KEEP_PATHS[@]}"; do
-    target="$OLLAMA_DIR/$path"
+echo "→ fetching ollama llms.txt"
+curl -fsSL --retry 3 --retry-delay 2 "$OLLAMA_LLMS_TXT" -o "$tmpdir/llms.txt"
+
+mapfile -t ollama_paths < <(
+    grep -oE "\\(${OLLAMA_BASE}/[^)]+\\)" "$tmpdir/llms.txt" \
+        | sed -E "s#^\\(${OLLAMA_BASE}/##; s#\\)\$##" \
+        | sort -u
+)
+
+if [[ ${#ollama_paths[@]} -eq 0 ]]; then
+    echo "error: llms.txt yielded no paths" >&2
+    exit 1
+fi
+
+ollama_active=0
+ollama_future=0
+ollama_future_paths=()
+
+for path in "${ollama_paths[@]}"; do
+    if contains "$path" "${OLLAMA_DENY[@]}"; then
+        continue
+    fi
+    if has_prefix "$path" "${OLLAMA_DENY_PREFIXES[@]}"; then
+        continue
+    fi
+    if contains "$path" "${OLLAMA_ACTIVE[@]}"; then
+        target="$OLLAMA_DIR/$path"
+    else
+        target="$FUTURE_OLLAMA_DIR/$path"
+        ollama_future_paths+=("$path")
+    fi
     mkdir -p "$(dirname "$target")"
     curl -fsSL --retry 3 --retry-delay 2 "$OLLAMA_BASE/$path" -o "$target"
+    if [[ "$target" == "$OLLAMA_DIR/"* ]]; then
+        ollama_active=$((ollama_active + 1))
+    else
+        ollama_future=$((ollama_future + 1))
+    fi
 done
+
+echo "  ollama: $ollama_active active, $ollama_future future"
 
 # --- LM Studio -------------------------------------------------------------
 
 echo "→ cloning lmstudio-ai/docs (shallow)"
 git clone --depth=1 --quiet "$LMS_REPO" "$tmpdir/lms-docs"
 
-rm -rf "$LMS_DIR"
-mkdir -p "$LMS_DIR"
+rm -rf "$LMS_DIR" "$FUTURE_LMS_DIR"
+mkdir -p "$LMS_DIR" "$FUTURE_LMS_DIR"
 
-echo "→ copying ${#LMS_KEEP_PATHS[@]} lmstudio pages"
-for path in "${LMS_KEEP_PATHS[@]}"; do
-    source="$tmpdir/lms-docs/$path"
-    target="$LMS_DIR/$path"
-    if [[ ! -f "$source" ]]; then
-        echo "warning: upstream file '$path' not found; skipping" >&2
+mapfile -t lms_paths < <(
+    cd "$tmpdir/lms-docs" \
+        && find 1_developer -type f \( -name '*.md' -o -name '*.mdx' \) \
+        | sort
+)
+
+lms_active=0
+lms_future=0
+
+for path in "${lms_paths[@]}"; do
+    if contains "$path" "${LMS_DENY[@]}"; then
         continue
     fi
+    src="$tmpdir/lms-docs/$path"
+    if contains "$path" "${LMS_ACTIVE[@]}"; then
+        target="$LMS_DIR/$path"
+        lms_active=$((lms_active + 1))
+    else
+        target="$FUTURE_LMS_DIR/$path"
+        lms_future=$((lms_future + 1))
+    fi
     mkdir -p "$(dirname "$target")"
-    cp "$source" "$target"
+    cp "$src" "$target"
 done
+
+echo "  lmstudio: $lms_active active, $lms_future future"
+
+if (( ollama_future > 0 || lms_future > 0 )); then
+    echo "ℹ future/ contains $((ollama_future + lms_future)) doc(s) not yet implemented"
+fi
 
 echo "✓ done"
