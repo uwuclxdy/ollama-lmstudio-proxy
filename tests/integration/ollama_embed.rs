@@ -916,6 +916,213 @@ async fn embed_prompt_eval_count_from_usage() {
 }
 
 // ---------------------------------------------------------------------------
+// 26. /api/embed rejects legacy `prompt` field
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_legacy_prompt_field_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "prompt": "x" }))
+        .send()
+        .await
+        .expect("POST /api/embed prompt field");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "`/api/embed` must reject legacy `prompt` field with 400"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    let err = body["error"].as_str().unwrap_or_default().to_lowercase();
+    assert!(
+        err.contains("input"),
+        "error must mention `input` field, got: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 27. /api/embed rejects empty input array
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_empty_input_array_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": [] }))
+        .send()
+        .await
+        .expect("POST /api/embed empty array");
+
+    assert_eq!(resp.status(), 400, "empty array must be rejected with 400");
+}
+
+// ---------------------------------------------------------------------------
+// 28. /api/embed rejects empty string input (regression)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_empty_string_input_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": "" }))
+        .send()
+        .await
+        .expect("POST /api/embed empty string");
+
+    assert_eq!(resp.status(), 400, "empty string must be rejected with 400");
+}
+
+// ---------------------------------------------------------------------------
+// 29. /api/embed rejects array of only empty strings
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_array_of_empty_strings_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": [""] }))
+        .send()
+        .await
+        .expect("POST /api/embed array of empties");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "array of only empty strings must be rejected with 400"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 30. /api/embeddings (legacy) still accepts `prompt`
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embeddings_legacy_still_accepts_prompt_field() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_response_single("all-minilm", vec![0.1, 0.2])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embeddings"))
+        .json(&json!({ "model": "all-minilm", "prompt": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/embeddings prompt");
+
+    assert_eq!(resp.status(), 200, "legacy endpoint must accept `prompt`");
+    let body: Value = resp.json().await.expect("json body");
+    let embedding = body["embedding"].as_array().expect("singular embedding");
+    assert_eq!(embedding.len(), 2, "expected one embedding vector");
+}
+
+// ---------------------------------------------------------------------------
+// 31. /api/embeddings rejects new `input` field
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embeddings_legacy_rejects_input_field_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embeddings"))
+        .json(&json!({ "model": "all-minilm", "input": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/embeddings input field");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "`/api/embeddings` legacy must reject `input` field with 400"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 32. /api/embeddings rejects empty prompt
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embeddings_legacy_rejects_empty_prompt_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embeddings"))
+        .json(&json!({ "model": "all-minilm", "prompt": "" }))
+        .send()
+        .await
+        .expect("POST /api/embeddings empty prompt");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "empty `prompt` must be rejected with 400"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 33. /api/embed accepts mixed array with at least one non-empty entry
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_accepts_mixed_array_with_one_non_empty_entry() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_response_multi("all-minilm", vec![vec![0.0], vec![0.1]])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": ["", "ok"] }))
+        .send()
+        .await
+        .expect("POST /api/embed mixed array");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "mixed array (one non-empty entry) must be accepted"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 25. truncate + dimensions forwarded to /v1/embeddings body
 // ---------------------------------------------------------------------------
 

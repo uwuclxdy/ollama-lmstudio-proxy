@@ -6,7 +6,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
-use crate::constants::{ERROR_MISSING_INPUT, LM_STUDIO_NATIVE_EMBEDDINGS};
+use crate::constants::{
+    ERROR_EMBED_INPUT_EMPTY, ERROR_EMBED_INPUT_REQUIRED, ERROR_EMBEDDINGS_PROMPT_EMPTY,
+    ERROR_EMBEDDINGS_PROMPT_REQUIRED, LM_STUDIO_NATIVE_EMBEDDINGS,
+};
 use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::http::json_response;
@@ -59,17 +62,7 @@ pub async fn handle_ollama_embeddings(
                     );
                 }
 
-                let input_value = body
-                    .get("input")
-                    .or_else(|| body.get("prompt"))
-                    .cloned()
-                    .ok_or_else(|| ProxyError::bad_request(ERROR_MISSING_INPUT))?;
-
-                if let Some(s) = input_value.as_str()
-                    && s.is_empty()
-                {
-                    return Err(ProxyError::bad_request(ERROR_MISSING_INPUT));
-                }
+                let input_value = extract_embedding_input(&body, response_mode)?;
 
                 let resolution_ctx = resolve_model_with_context(
                     &context,
@@ -133,6 +126,59 @@ pub async fn handle_ollama_embeddings(
     }
     .run(operation)
     .await
+}
+
+/// Extract the embedding input value from the request body, gated by endpoint mode.
+///
+/// `/api/embed` (Embed) requires `input` (string or string[]) and rejects the
+/// legacy `prompt` field. `/api/embeddings` (LegacyEmbeddings) requires `prompt`
+/// (string) and rejects the new `input` field. Empty values — empty string,
+/// empty array, or an array of only empty strings — are rejected with 400.
+fn extract_embedding_input(body: &Value, mode: EmbeddingResponseMode) -> Result<Value, ProxyError> {
+    match mode {
+        EmbeddingResponseMode::Embed => {
+            if body.get("prompt").is_some() && body.get("input").is_none() {
+                return Err(ProxyError::bad_request(ERROR_EMBED_INPUT_REQUIRED));
+            }
+            let input = body
+                .get("input")
+                .cloned()
+                .ok_or_else(|| ProxyError::bad_request(ERROR_EMBED_INPUT_REQUIRED))?;
+            if is_empty_embedding_input(&input) {
+                return Err(ProxyError::bad_request(ERROR_EMBED_INPUT_EMPTY));
+            }
+            Ok(input)
+        }
+        EmbeddingResponseMode::LegacyEmbeddings => {
+            if body.get("input").is_some() && body.get("prompt").is_none() {
+                return Err(ProxyError::bad_request(ERROR_EMBEDDINGS_PROMPT_REQUIRED));
+            }
+            let prompt = body
+                .get("prompt")
+                .cloned()
+                .ok_or_else(|| ProxyError::bad_request(ERROR_EMBEDDINGS_PROMPT_REQUIRED))?;
+            if is_empty_embedding_input(&prompt) {
+                return Err(ProxyError::bad_request(ERROR_EMBEDDINGS_PROMPT_EMPTY));
+            }
+            Ok(prompt)
+        }
+    }
+}
+
+/// True when the value is an empty string, an empty array, or an array whose
+/// every string element is empty. Non-string values are treated as non-empty
+/// so callers can let upstream surface a typed error.
+fn is_empty_embedding_input(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.is_empty(),
+        Value::Array(items) => {
+            items.is_empty()
+                || items
+                    .iter()
+                    .all(|item| item.as_str().is_some_and(str::is_empty))
+        }
+        _ => false,
+    }
 }
 
 fn finalize_embedding_response(mut response: Value, mode: EmbeddingResponseMode) -> Value {

@@ -33,7 +33,13 @@ pub const DEFAULT_KEEP_ALIVE_MINUTES: i64 = 5;
 pub const ERROR_MISSING_MODEL: &str = "Missing 'model' field";
 pub const ERROR_MISSING_MESSAGES: &str = "Missing 'messages' field";
 pub const ERROR_MISSING_PROMPT: &str = "Missing 'prompt' field";
-pub const ERROR_MISSING_INPUT: &str = "Missing 'input' or 'prompt' field";
+pub const ERROR_EMBED_INPUT_REQUIRED: &str =
+    "`input` field required (string or string[]). Use `/api/embeddings` for legacy `prompt`.";
+pub const ERROR_EMBED_INPUT_EMPTY: &str =
+    "`input` must not be empty (empty string, empty array, or array of only empty strings)";
+pub const ERROR_EMBEDDINGS_PROMPT_REQUIRED: &str =
+    "`prompt` field required. Use `/api/embed` for batch `input`.";
+pub const ERROR_EMBEDDINGS_PROMPT_EMPTY: &str = "`prompt` must not be empty";
 pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
