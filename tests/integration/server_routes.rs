@@ -422,19 +422,28 @@ async fn oversized_body_returns_413() {
     let p = spawn_proxy().await;
     // MAX_JSON_BODY_SIZE_BYTES = 16 MiB; send 17 MiB
     let big_body = vec![b'x'; 17 * 1024 * 1024];
-    let resp = p
+    // Windows may surface the server-side rejection as a mid-stream connection
+    // abort rather than a clean 413 response: the server closes the socket
+    // after writing the response while the client is still pushing the body.
+    // Either outcome proves the limit was enforced.
+    match p
         .client
         .post(p.url("/api/chat"))
         .header("content-type", "application/json")
         .body(big_body)
         .send()
         .await
-        .expect("POST /api/chat oversized");
-    assert_eq!(
-        resp.status(),
-        413,
-        "body exceeding MAX_JSON_BODY_SIZE_BYTES must return 413"
-    );
+    {
+        Ok(resp) => assert_eq!(
+            resp.status(),
+            413,
+            "body exceeding MAX_JSON_BODY_SIZE_BYTES must return 413"
+        ),
+        Err(e) => assert!(
+            e.is_request() || e.is_body(),
+            "expected 413 or connection error from oversized body; got: {e}"
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
