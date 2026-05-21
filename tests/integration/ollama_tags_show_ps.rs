@@ -99,7 +99,12 @@ async fn tags_multiple_models_ollama_shape() {
     for m in models {
         assert!(m["name"].is_string(), "missing name in {m}");
         assert!(m["model"].is_string(), "missing model in {m}");
-        assert!(m["modified_at"].is_string(), "missing modified_at in {m}");
+        // LM Studio surfaces no per-model mtime; the proxy must omit
+        // modified_at rather than fabricate one.
+        assert!(
+            m.get("modified_at").is_none(),
+            "tags entry must omit modified_at when no real mtime is available; got {m}"
+        );
         assert!(m["size"].is_number(), "missing size in {m}");
         assert_eq!(
             m["context_length"],
@@ -195,7 +200,7 @@ async fn tags_model_details_omit_parent_model() {
 }
 
 #[tokio::test]
-async fn tags_model_modified_at_uses_deterministic_fallback() {
+async fn tags_response_omits_modified_at_when_no_mtime_available() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -219,11 +224,14 @@ async fn tags_model_modified_at_uses_deterministic_fallback() {
     assert_eq!(resp.status(), 200);
 
     let body: Value = resp.json().await.expect("json body");
-    assert_eq!(
-        body["models"][0]["modified_at"].as_str(),
-        Some("1970-01-01T00:00:00Z"),
-        "LM Studio model list has no last-modified field, so tags must use a stable fallback; got {body}"
-    );
+    // LM Studio's model list exposes no per-model mtime. The proxy must omit
+    // `modified_at` rather than fabricate Utc::now() or the epoch.
+    for m in body["models"].as_array().expect("models array") {
+        assert!(
+            m.get("modified_at").is_none(),
+            "tags entry must omit modified_at when no real mtime is available; got {m}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -910,10 +918,6 @@ async fn show_verbose_true_is_strict_superset_of_verbose_false() {
     let verbose_obj = verbose.as_object().expect("verbose must be object");
 
     for (key, value) in concise_obj {
-        // modified_at is a wall-clock timestamp regenerated per request; skip.
-        if key == "modified_at" {
-            continue;
-        }
         // model_info: verbose must be a superset of concise.
         if key == "model_info" {
             let concise_mi = value.as_object().expect("concise model_info");
@@ -979,6 +983,92 @@ async fn show_response_omits_fabricated_parameters_and_template() {
     assert!(
         body.get("template").is_none(),
         "non-alias /api/show must omit `template`; got {body}"
+    );
+}
+
+// T14 — virtual aliases carry a real updated_at and must surface it as
+// modified_at on /api/show.
+#[tokio::test]
+async fn show_response_emits_alias_modified_at_when_provided() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let copy = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "alias-mtime:v1"}))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
+
+    let body: Value = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "alias-mtime:v1"}))
+        .send()
+        .await
+        .expect("POST /api/show virtual")
+        .json()
+        .await
+        .expect("json body");
+
+    let modified_at = body
+        .get("modified_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!("virtual alias show response must surface modified_at; got {body}")
+        });
+    chrono::DateTime::parse_from_rfc3339(modified_at)
+        .unwrap_or_else(|_| panic!("modified_at must be RFC3339; got {modified_at}"));
+}
+
+// T14 — /api/show must not fabricate modified_at when LM Studio has no mtime.
+#[tokio::test]
+async fn show_response_omits_modified_at_when_no_mtime_available() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let body: Value = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b"}))
+        .send()
+        .await
+        .expect("POST /api/show")
+        .json()
+        .await
+        .expect("json body");
+
+    assert!(
+        body.get("modified_at").is_none(),
+        "show response for a native model must omit modified_at; got {body}"
     );
 }
 

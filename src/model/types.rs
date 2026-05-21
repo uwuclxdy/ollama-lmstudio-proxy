@@ -368,16 +368,11 @@ impl ModelInfo {
     }
 
     pub fn to_ollama_tags_model(&self) -> Value {
-        let mut base = self.base_ollama_representation();
-
-        if let Some(obj) = base.as_object_mut() {
-            obj.insert(
-                "modified_at".to_string(),
-                crate::model::timestamps::model_modified_at_fallback().into(),
-            );
-        }
-
-        base
+        // LM Studio's model list exposes no per-model mtime. Real Ollama
+        // returns the model file's mtime in `modified_at`; the proxy omits
+        // the field rather than fabricate one. Ollama's tags schema allows
+        // absence — clients treat it as "unknown, refresh as needed".
+        self.base_ollama_representation()
     }
 
     pub fn to_ollama_ps_model(&self) -> Value {
@@ -487,10 +482,12 @@ impl ModelInfo {
             obj.insert("context_length".to_string(), json!(self.max_context_length));
         }
 
+        // `modified_at` is intentionally absent: LM Studio surfaces no per-model
+        // mtime, so the proxy declines to fabricate one. Virtual aliases that
+        // have a real `updated_at` are layered in by the /api/show handler.
         let mut response = json!({
             "details": details,
             "capabilities": capabilities,
-            "modified_at": chrono::Utc::now().to_rfc3339(),
             "model_info": self.build_model_info(verbose),
         });
 

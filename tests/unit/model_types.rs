@@ -331,7 +331,6 @@ fn tags_model_has_all_spec_keys() {
     for key in [
         "name",
         "model",
-        "modified_at",
         "size",
         "digest",
         "context_length",
@@ -440,10 +439,15 @@ fn tags_model_family_and_families_both_use_arch() {
 }
 
 #[test]
-fn tags_model_modified_at_uses_epoch_fallback() {
+fn tags_entry_omits_modified_at_when_unknown() {
+    // LM Studio's model list has no mtime. The proxy must omit `modified_at`
+    // rather than fabricate one (real Ollama returns the model file mtime).
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_ollama_tags_model();
-    assert_eq!(v["modified_at"], json!("1970-01-01T00:00:00Z"));
+    assert!(
+        v.get("modified_at").is_none(),
+        "tags entry must omit modified_at when no real mtime is available; got {v}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -488,7 +492,7 @@ fn ps_model_expires_at_is_rfc3339_in_future() {
 fn show_response_has_all_top_level_keys() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_show_response(None, false);
-    for key in ["details", "capabilities", "modified_at"] {
+    for key in ["details", "capabilities"] {
         assert!(v.get(key).is_some(), "missing key {key} in show response");
     }
     // not in ShowResponse schema — must be absent
@@ -861,6 +865,23 @@ fn show_response_emits_alias_parameters_and_template_when_provided() {
         v.get("template").and_then(|t| t.as_str()),
         Some("<TEMPLATE>"),
         "alias template must surface verbatim; got {v}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// T14 — modified_at must be omitted when LM Studio surfaces no real mtime.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_response_omits_modified_at_when_unknown() {
+    // LM Studio's API never exposes a per-model mtime. The proxy must omit
+    // `modified_at` rather than insert Utc::now() (which falsely advertises
+    // freshness) or the epoch (which falsely advertises staleness).
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response(None, false);
+    assert!(
+        v.get("modified_at").is_none(),
+        "show response must omit modified_at when no real mtime is available; got {v}"
     );
 }
 

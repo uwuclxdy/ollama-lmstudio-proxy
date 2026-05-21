@@ -75,6 +75,12 @@ pub async fn handle_ollama_show(
         obj.insert("alias_name".to_string(), json!(entry.name));
         obj.insert("source_model".to_string(), json!(entry.source_model));
         obj.insert("target_model_id".to_string(), json!(entry.target_model_id));
+        // Virtual aliases carry a real updated_at — surface it as modified_at
+        // since the proxy persists it on every alias edit.
+        obj.insert(
+            "modified_at".to_string(),
+            json!(entry.updated_at.to_rfc3339()),
+        );
 
         if let Some(system) = &entry.metadata.system_prompt {
             obj.insert("system".to_string(), json!(system));
