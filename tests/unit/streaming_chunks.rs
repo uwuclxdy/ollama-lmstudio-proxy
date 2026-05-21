@@ -767,3 +767,76 @@ fn process_choice_delta_returns_none_for_empty_delta() {
     let mut state = ChunkProcessingState::default();
     assert!(process_choice_delta(&choice, &mut state).is_none());
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// T11 — map_done_reason: translate OpenAI finish_reason to Ollama done_reason
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn done_reason_stop_passthrough() {
+    assert_eq!(map_done_reason("stop"), Some("stop"));
+}
+
+#[test]
+fn done_reason_length_passthrough() {
+    assert_eq!(map_done_reason("length"), Some("length"));
+}
+
+#[test]
+fn done_reason_tool_calls_maps_to_stop() {
+    assert_eq!(map_done_reason("tool_calls"), Some("stop"));
+}
+
+#[test]
+fn done_reason_content_filter_maps_to_stop() {
+    assert_eq!(map_done_reason("content_filter"), Some("stop"));
+}
+
+#[test]
+fn done_reason_function_call_maps_to_stop() {
+    assert_eq!(map_done_reason("function_call"), Some("stop"));
+}
+
+#[test]
+fn done_reason_unknown_value_returns_none() {
+    assert_eq!(map_done_reason("weird_value"), None);
+    assert_eq!(map_done_reason("cancelled"), None);
+}
+
+#[test]
+fn done_reason_empty_string_returns_none() {
+    assert_eq!(map_done_reason(""), None);
+}
+
+#[test]
+fn final_chunk_translates_tool_calls_to_stop() {
+    let c = create_final_chunk(FinalChunkParams {
+        model_name: "m",
+        duration: Duration::from_millis(10),
+        chunk_count: 1,
+        is_chat: true,
+        done_reason: Some("tool_calls"),
+        tool_calls: None,
+    });
+    assert_eq!(
+        c.get("done_reason").and_then(|v| v.as_str()),
+        Some("stop"),
+        "tool_calls finish_reason must translate to stop"
+    );
+}
+
+#[test]
+fn final_chunk_omits_done_reason_for_unknown_value() {
+    let c = create_final_chunk(FinalChunkParams {
+        model_name: "m",
+        duration: Duration::from_millis(10),
+        chunk_count: 1,
+        is_chat: true,
+        done_reason: Some("weird_value"),
+        tool_calls: None,
+    });
+    assert!(
+        c.get("done_reason").is_none(),
+        "unknown done_reason must be omitted, not lied about"
+    );
+}

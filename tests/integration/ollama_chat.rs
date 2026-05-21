@@ -521,7 +521,9 @@ async fn tools_forwarded_and_tool_calls_translated_to_ollama() {
         "arguments must be object, not string"
     );
     assert_eq!(tc["function"]["arguments"]["location"], "London");
-    assert_eq!(body["done_reason"], "tool_calls");
+    // OpenAI's `tool_calls` finish_reason is mapped to Ollama's `stop`. Real
+    // Ollama clients branch on done_reason == "stop" | "length" only.
+    assert_eq!(body["done_reason"], "stop");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

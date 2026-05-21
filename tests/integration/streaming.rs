@@ -561,6 +561,70 @@ async fn chat_stream_tool_calls_present_in_output() {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. T11 — finish_reason "tool_calls" translates to done_reason "stop" in stream
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_stream_translates_tool_calls_finish_reason_to_stop() {
+    let p = spawn_proxy().await;
+
+    let body = sse_body(&[
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"London\"}"}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "weather?"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    let chunks = collect_ndjson(resp).await;
+    let final_chunk = chunks
+        .iter()
+        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
+        .expect("expected final done:true chunk");
+
+    assert_eq!(
+        final_chunk.get("done_reason").and_then(|v| v.as_str()),
+        Some("stop"),
+        "tool_calls finish_reason must translate to Ollama stop: {final_chunk}"
+    );
+
+    let tool_calls = final_chunk
+        .get("message")
+        .and_then(|message| message.get("tool_calls"))
+        .and_then(|tc| tc.as_array())
+        .expect("expected tool_calls in final chunk");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+}
+
+// ---------------------------------------------------------------------------
 // 9. Empty stream — backend emits only [DONE]
 // ---------------------------------------------------------------------------
 

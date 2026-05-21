@@ -453,7 +453,7 @@ fn chat_response_falls_back_to_estimates_without_usage() {
 
 #[test]
 fn chat_response_done_reason_passthrough() {
-    for reason in ["stop", "length", "tool_calls"] {
+    for reason in ["stop", "length"] {
         let lm = json!({
             "choices": [{
                 "message": {"role": "assistant", "content": "x"},
@@ -468,6 +468,68 @@ fn chat_response_done_reason_passthrough() {
             "finish_reason={reason} must propagate as done_reason"
         );
     }
+}
+
+#[test]
+fn chat_response_translates_tool_calls_to_stop() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "x"},
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert_eq!(
+        result.get("done_reason").and_then(|v| v.as_str()),
+        Some("stop"),
+        "OpenAI tool_calls finish_reason must translate to Ollama stop"
+    );
+}
+
+#[test]
+fn chat_response_omits_done_reason_for_unknown_finish_reason() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "x"},
+            "finish_reason": "some_unknown_reason"
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert!(
+        result.get("done_reason").is_none(),
+        "unknown finish_reason must be omitted, not propagated"
+    );
+}
+
+#[test]
+fn generate_response_translates_tool_calls_to_stop() {
+    let lm = json!({
+        "choices": [{"text": "hi", "finish_reason": "tool_calls"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "m", "prompt", Instant::now());
+    assert_eq!(
+        result.get("done_reason").and_then(|v| v.as_str()),
+        Some("stop"),
+        "generate path must also translate tool_calls to stop"
+    );
+}
+
+#[test]
+fn generate_response_omits_done_reason_for_unknown_finish_reason() {
+    let lm = json!({
+        "choices": [{"text": "hi", "finish_reason": "garbage"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "m", "prompt", Instant::now());
+    assert!(
+        result.get("done_reason").is_none(),
+        "unknown finish_reason must be omitted on generate path"
+    );
 }
 
 #[test]

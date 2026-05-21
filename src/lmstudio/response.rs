@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::constants::{
     DEFAULT_LOAD_DURATION_NS, TIMING_EVAL_RATIO, TIMING_PROMPT_RATIO, TOKEN_TO_CHAR_RATIO,
 };
+use crate::streaming::chunks::map_done_reason;
 
 /// Timing information for Ollama responses
 #[derive(Debug, Clone)]
@@ -205,7 +206,7 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response);
+        let done_reason = extract_finish_reason(lm_response).and_then(map_done_reason);
         let mut ollama_message = json!({
             "role": "assistant",
             "content": content
@@ -287,7 +288,7 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response);
+        let done_reason = extract_finish_reason(lm_response).and_then(map_done_reason);
         // `context` is absent from the Ollama OpenAPI schema for GenerateResponse.
         // LM Studio does not expose token IDs anyway, so the field is omitted.
         let mut response_obj = json!({

@@ -112,6 +112,22 @@ fn merge_tool_call_fragment(accumulated: &mut Value, fragment: &Value, index: u6
     }
 }
 
+/// Translate an OpenAI-style `finish_reason` to Ollama's `done_reason`.
+///
+/// Ollama's spec only documents `stop` and `length`; real clients branch on
+/// those literals. OpenAI-only values (`tool_calls`, `content_filter`,
+/// `function_call`) collapse to `stop` — the natural end-of-stream signal.
+/// Anything else (including the empty string) is omitted rather than
+/// forwarded, mirroring the project's "omit instead of lie" precedent.
+pub fn map_done_reason(reason: &str) -> Option<&'static str> {
+    match reason {
+        "stop" => Some("stop"),
+        "length" => Some("length"),
+        "tool_calls" | "content_filter" | "function_call" => Some("stop"),
+        _ => None,
+    }
+}
+
 pub fn extract_first_choice(chunk: &Value) -> Option<&Value> {
     chunk
         .get("choices")
@@ -356,7 +372,7 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     );
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
-        if let Some(reason) = params.done_reason {
+        if let Some(reason) = params.done_reason.and_then(map_done_reason) {
             chunk_obj.insert("done_reason".to_string(), json!(reason));
         }
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
