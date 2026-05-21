@@ -25,10 +25,6 @@ jobs:
             artifact: ollama-lmstudio-proxy-windows-x64.exe
             binary: ollama-lmstudio-proxy.exe
             apt-packages: mingw-w64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: ollama-lmstudio-proxy-macos-x64
-            binary: ollama-lmstudio-proxy
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: ollama-lmstudio-proxy-macos-arm64
