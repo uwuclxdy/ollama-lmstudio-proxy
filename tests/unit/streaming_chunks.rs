@@ -138,8 +138,8 @@ fn delta_object_content_recurses_into_nested_content() {
 
 #[test]
 fn delta_tool_calls_accumulated_into_state() {
-    // A delta with only tool_calls yields no payload (nothing to stream yet)
-    // but the calls are accumulated into state for emission in the final chunk.
+    // A delta with only tool_calls emits an intermediate payload carrying the
+    // partial tool_calls AND accumulates them into state for the final chunk.
     let choice = json!({
         "delta": {
             "tool_calls": [{
@@ -150,14 +150,16 @@ fn delta_tool_calls_accumulated_into_state() {
         }
     });
     let mut state = ChunkProcessingState::default();
-    let payload = process_choice_delta(&choice, &mut state);
-    // No content or thinking — no streaming chunk emitted mid-stream.
+    let payload = process_choice_delta(&choice, &mut state)
+        .expect("tool_calls-only delta must emit an intermediate payload");
+    assert!(payload.content.is_empty());
+    assert!(payload.thinking.is_empty());
     assert!(
-        payload.is_none(),
-        "tool_calls-only delta must not emit a streaming chunk"
+        payload.tool_calls_delta.is_some(),
+        "intermediate payload must carry the partial tool_calls"
     );
 
-    // Accumulated tool_calls should be available for the final done chunk.
+    // Accumulated tool_calls should still be available for the final done chunk.
     let tc = state
         .take_tool_calls()
         .expect("state must hold accumulated tool_calls");
@@ -507,9 +509,12 @@ fn tool_calls_accumulated_across_three_deltas() {
 
     let mut state = ChunkProcessingState::default();
 
-    assert!(process_choice_delta(&delta_name, &mut state).is_none());
-    assert!(process_choice_delta(&delta_args_part1, &mut state).is_none());
-    assert!(process_choice_delta(&delta_args_part2, &mut state).is_none());
+    // Each tool_calls-only delta now produces an intermediate payload AND
+    // accumulates into state. The intermediate carries the per-delta fragment;
+    // the accumulator merges them for the final chunk.
+    assert!(process_choice_delta(&delta_name, &mut state).is_some());
+    assert!(process_choice_delta(&delta_args_part1, &mut state).is_some());
+    assert!(process_choice_delta(&delta_args_part2, &mut state).is_some());
 
     let tool_calls = state
         .take_tool_calls()
@@ -567,8 +572,8 @@ fn concurrent_tool_call_fragments_are_ordered_by_index() {
     });
 
     let mut state = ChunkProcessingState::default();
-    assert!(process_choice_delta(&first_delta, &mut state).is_none());
-    assert!(process_choice_delta(&second_delta, &mut state).is_none());
+    assert!(process_choice_delta(&first_delta, &mut state).is_some());
+    assert!(process_choice_delta(&second_delta, &mut state).is_some());
 
     let tool_calls = state
         .take_tool_calls()
@@ -649,4 +654,49 @@ fn content_and_thinking_deltas_still_stream_mid_message() {
 
     // No tool_calls were accumulated.
     assert!(state.take_tool_calls().is_none());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// T7 — tool-call-only / finish-only / no-op delta handling
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn process_choice_delta_emits_intermediate_chunk_for_tool_calls_only_delta() {
+    let choice = json!({
+        "delta": {
+            "tool_calls": [{
+                "index": 0,
+                "function": {"name": "f"}
+            }]
+        }
+    });
+    let mut state = ChunkProcessingState::default();
+    let payload = process_choice_delta(&choice, &mut state)
+        .expect("tool_calls-only delta must produce an intermediate payload");
+    assert!(payload.content.is_empty());
+    assert!(payload.thinking.is_empty());
+    let tc = payload
+        .tool_calls_delta
+        .expect("tool_calls_delta must be set");
+    let arr = tc.as_array().expect("tool_calls must be an array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["function"]["name"], json!("f"));
+}
+
+#[test]
+fn process_choice_delta_returns_none_for_finish_reason_only_delta() {
+    let choice = json!({ "delta": {}, "finish_reason": "stop" });
+    let mut state = ChunkProcessingState::default();
+    assert!(
+        process_choice_delta(&choice, &mut state).is_none(),
+        "finish_reason-only delta produces no intermediate chunk"
+    );
+    assert_eq!(state.finish_reason(), Some("stop"));
+}
+
+#[test]
+fn process_choice_delta_returns_none_for_empty_delta() {
+    let choice = json!({ "delta": {} });
+    let mut state = ChunkProcessingState::default();
+    assert!(process_choice_delta(&choice, &mut state).is_none());
 }

@@ -99,20 +99,22 @@ pub async fn handle_streaming_response(
                                             Ok(lm_studio_json_chunk) => {
                                                 let mut content_to_send = String::new();
                                                 let mut thinking_to_send = String::new();
+                                                let mut tool_calls_to_send: Option<Value> = None;
 
                                                 if let Some(choice) = extract_first_choice(&lm_studio_json_chunk)
                                                     && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                                         content_to_send = delta_payload.content;
                                                         thinking_to_send = delta_payload.thinking;
+                                                        tool_calls_to_send = delta_payload.tool_calls_delta;
                                                     }
 
-                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
                                                     let ollama_chunk = create_ollama_streaming_chunk(
                                                         &model_clone_for_task,
                                                         &content_to_send,
                                                         is_chat_endpoint,
                                                         false,
-                                                        None,
+                                                        tool_calls_to_send.as_ref(),
                                                         &thinking_to_send,
                                                     );
                                                     chunk_count += 1;
@@ -128,20 +130,22 @@ pub async fn handle_streaming_response(
                                                         log::info!("Successfully recovered chunk data");
                                                         let mut content_to_send = String::new();
                                                         let mut thinking_to_send = String::new();
+                                                        let mut tool_calls_to_send: Option<Value> = None;
 
                                                         if let Some(choice) = extract_first_choice(&recovered_json)
                                                             && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                                                 content_to_send = delta_payload.content;
                                                                 thinking_to_send = delta_payload.thinking;
+                                                                tool_calls_to_send = delta_payload.tool_calls_delta;
                                                             }
 
-                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
                                                             let ollama_chunk = create_ollama_streaming_chunk(
                                                                 &model_clone_for_task,
                                                                 &content_to_send,
                                                                 is_chat_endpoint,
                                                                 false,
-                                                                None,
+                                                                tool_calls_to_send.as_ref(),
                                                                 &thinking_to_send,
                                                             );
                                                             chunk_count += 1;
@@ -183,20 +187,22 @@ pub async fn handle_streaming_response(
                                     log::info!("Successfully recovered data from remaining buffer");
                                     let mut content_to_send = String::new();
                                     let mut thinking_to_send = String::new();
+                                    let mut tool_calls_to_send: Option<Value> = None;
 
                                     if let Some(choice) = extract_first_choice(&recovered_json)
                                         && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                             content_to_send = delta_payload.content;
                                             thinking_to_send = delta_payload.thinking;
+                                            tool_calls_to_send = delta_payload.tool_calls_delta;
                                         }
 
-                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
                                         let ollama_chunk = create_ollama_streaming_chunk(
                                             &model_clone_for_task,
                                             &content_to_send,
                                             is_chat_endpoint,
                                             false,
-                                            None,
+                                            tool_calls_to_send.as_ref(),
                                             &thinking_to_send,
                                         );
                                         chunk_count += 1;

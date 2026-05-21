@@ -230,8 +230,9 @@ fn pipeline_with_recovery_on_truncated_json() {
 
 #[test]
 fn pipeline_tool_calls_accumulated_into_state() {
-    // tool_calls are now accumulated into ChunkProcessingState rather than returned
-    // in the per-delta payload, so the delta payload is None for tool-calls-only chunks.
+    // tool_calls are accumulated into ChunkProcessingState for the final done
+    // chunk AND surfaced via tool_calls_delta for an intermediate chunk so
+    // clients see progressive tool_call data.
     let payload = json!({
         "choices": [{
             "delta": {
@@ -249,12 +250,15 @@ fn pipeline_tool_calls_accumulated_into_state() {
     let parsed: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
     let choice = extract_first_choice(&parsed).unwrap();
     let mut state = ChunkProcessingState::default();
-    // No content/thinking — returns None (no mid-stream chunk emitted).
+    let delta_payload = process_choice_delta(choice, &mut state)
+        .expect("tool_calls-only delta must produce an intermediate payload");
+    assert!(delta_payload.content.is_empty());
+    assert!(delta_payload.thinking.is_empty());
     assert!(
-        process_choice_delta(choice, &mut state).is_none(),
-        "tool_calls-only delta must not produce a streaming payload"
+        delta_payload.tool_calls_delta.is_some(),
+        "intermediate payload must carry the partial tool_calls"
     );
-    // Tool call is in state, ready for the final done chunk.
+    // Tool call is also in state, ready for the final done chunk.
     let tc = state
         .take_tool_calls()
         .expect("tool_calls must be in state after processing");

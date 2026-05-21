@@ -55,8 +55,10 @@ impl ChunkProcessingState {
 pub struct ChoiceDeltaPayload {
     pub content: String,
     pub thinking: String,
-    /// `None` — tool_calls from this delta are accumulated in `ChunkProcessingState`
-    /// and will be emitted in the final done chunk, not forwarded per-delta.
+    /// Partial tool_calls fragment from THIS delta only, in Ollama shape, for
+    /// emission as an intermediate `done:false` chunk. The accumulator in
+    /// `ChunkProcessingState` independently merges fragments for the final
+    /// `done:true` chunk — this field does not consume that state.
     pub tool_calls_delta: Option<Value>,
 }
 
@@ -125,6 +127,7 @@ pub fn process_choice_delta(
 
     let mut content = String::new();
     let mut thinking = String::new();
+    let mut tool_calls_delta: Option<Value> = None;
 
     if let Some(delta) = choice.get("delta") {
         if let Some(content_value) = delta.get("content") {
@@ -136,9 +139,11 @@ pub fn process_choice_delta(
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
             && !new_tool_calls.is_empty()
         {
-            // Accumulate into state rather than emitting per-delta.
-            // The complete array is emitted once in the final done chunk.
+            // Accumulate into state for the final done chunk, AND surface this
+            // delta's fragment to the caller for an intermediate chunk so
+            // clients see progressive tool_call data (per ChatStreamEvent spec).
             state.accumulate_tool_calls(new_tool_calls);
+            tool_calls_delta = Some(convert_tool_calls_to_ollama(new_tool_calls));
         }
     }
 
@@ -153,13 +158,13 @@ pub fn process_choice_delta(
         }
     }
 
-    if content.is_empty() && thinking.is_empty() {
+    if content.is_empty() && thinking.is_empty() && tool_calls_delta.is_none() {
         None
     } else {
         Some(ChoiceDeltaPayload {
             content,
             thinking,
-            tool_calls_delta: None,
+            tool_calls_delta,
         })
     }
 }

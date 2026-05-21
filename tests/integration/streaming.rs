@@ -543,14 +543,15 @@ async fn chat_stream_tool_calls_present_in_output() {
         .expect("POST /api/chat");
 
     let chunks = collect_ndjson(resp).await;
-    let tool_calls = chunks
+    // The final done:true chunk carries the fully-accumulated tool_calls.
+    let final_chunk = chunks
         .iter()
-        .find_map(|chunk| {
-            chunk
-                .get("message")
-                .and_then(|message| message.get("tool_calls"))
-                .and_then(|tool_calls| tool_calls.as_array())
-        })
+        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
+        .expect("expected a final done:true chunk");
+    let tool_calls = final_chunk
+        .get("message")
+        .and_then(|message| message.get("tool_calls"))
+        .and_then(|tool_calls| tool_calls.as_array())
         .expect("expected tool_calls in final chunk");
     assert_eq!(tool_calls.len(), 1);
     let function = &tool_calls[0]["function"];
@@ -1210,4 +1211,81 @@ async fn chat_stream_all_lines_are_valid_json() {
             "every chunk must have done: {chunk}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// T7. Tool-call-only deltas produce intermediate NDJSON lines
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_stream_tool_calls_emit_intermediate_chunks() {
+    let p = spawn_proxy().await;
+
+    let body = sse_body(&[
+        r#"{"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","type":"function","function":{"name":"f","arguments":""}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"k\":1}"}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "weather?"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    let chunks = collect_ndjson(resp).await;
+    assert!(!chunks.is_empty(), "expected at least one chunk");
+
+    // The final chunk is done:true and carries the fully-accumulated tool_calls.
+    let final_chunk = chunks
+        .iter()
+        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
+        .expect("expected a final done:true chunk");
+    let final_calls = final_chunk
+        .get("message")
+        .and_then(|m| m.get("tool_calls"))
+        .and_then(|v| v.as_array())
+        .expect("final chunk must carry the accumulated tool_calls");
+    assert_eq!(final_calls.len(), 1);
+    assert_eq!(final_calls[0]["function"]["name"], json!("f"));
+    assert_eq!(final_calls[0]["function"]["arguments"], json!({"k": 1}));
+
+    // At least one intermediate chunk (done:false) must carry partial tool_calls.
+    let intermediate_with_tools = chunks.iter().any(|c| {
+        c.get("done").and_then(|d| d.as_bool()) == Some(false)
+            && c.get("message")
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+    });
+    assert!(
+        intermediate_with_tools,
+        "expected at least one intermediate (done:false) chunk with tool_calls; got {chunks:#?}"
+    );
 }
