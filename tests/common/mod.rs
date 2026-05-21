@@ -22,11 +22,11 @@ use ollama_lmstudio_proxy::proxy::server::cors_layer;
 
 static INIT_RUNTIME: Once = Once::new();
 
-fn ensure_runtime_initialized() {
+fn ensure_runtime_initialized(enable_chunk_recovery: bool) {
     INIT_RUNTIME.call_once(|| {
         init_runtime_config(RuntimeConfig {
             max_buffer_size: 262_144,
-            enable_chunk_recovery: true,
+            enable_chunk_recovery,
         });
         LogConfig::init(false);
     });
@@ -47,7 +47,11 @@ impl TestProxy {
 }
 
 pub async fn spawn_proxy() -> TestProxy {
-    ensure_runtime_initialized();
+    spawn_proxy_with_recovery(true).await
+}
+
+pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy {
+    ensure_runtime_initialized(enable_chunk_recovery);
 
     let mock = MockServer::start().await;
     let state_dir = tempfile::tempdir().expect("create temp state dir");
@@ -58,7 +62,7 @@ pub async fn spawn_proxy() -> TestProxy {
         log_level: "off".to_string(),
         load_timeout_seconds: 15,
         max_buffer_size: 262_144,
-        enable_chunk_recovery: true,
+        enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
         update: false,
     };

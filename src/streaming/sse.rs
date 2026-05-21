@@ -160,7 +160,13 @@ pub async fn handle_streaming_response(
                                                         recovery_buffer.push_str(SSE_MESSAGE_BOUNDARY);
                                                     }
                                                 } else {
-                                                    log::error!("SSE parsing error: {}", e);
+                                                    // Spec: mid-stream parse failures with recovery off must
+                                                    // surface a bare {"error":"…"} NDJSON line and end the
+                                                    // stream (no trailing done:true).
+                                                    let message = format!("SSE parsing error: {}", e);
+                                                    log::error!("{}", message);
+                                                    send_error_and_close(&tx, &message).await;
+                                                    break 'stream_loop Err(message);
                                                 }
                                             }
                                         }
