@@ -19,6 +19,7 @@ use crate::model::ModelResolver;
 use crate::model::naming::extract_required_model_name;
 
 use super::resolution::{make_top_level_params, resolve_model_with_context};
+use super::unload_only::{UnloadOnlyCall, is_generate_unload_only, respond_unload_only};
 
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
@@ -30,6 +31,24 @@ pub async fn handle_ollama_generate(
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
+
+    // Spec: `{"model":"x","keep_alive":0}` (no/empty `prompt`) is an
+    // unload-only call. Short-circuit before the inference path — firing the
+    // request would race the TTL=0 teardown and return "Model is unloaded."
+    if is_generate_unload_only(&body, keep_alive_seconds) {
+        let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
+        return respond_unload_only(UnloadOnlyCall {
+            context: &context,
+            model_resolver,
+            ollama_model_name: &ollama_model_name,
+            keep_alive_seconds,
+            is_chat: false,
+            stream,
+            start_time,
+            cancellation_token,
+        })
+        .await;
+    }
 
     let operation = {
         let context = context.clone();

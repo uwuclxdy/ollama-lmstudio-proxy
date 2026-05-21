@@ -1406,3 +1406,154 @@ async fn chat_drops_min_p_truncate_and_dimensions_options() {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// keep_alive:0 with no/empty messages → unload-only, no inference
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Per `api_docs/ollama/api/chat.md`, `ChatRequest.required = [model]`; the
+// documented unload call is `{"model":"x","keep_alive":0}` with no messages.
+// The proxy must skip the LM Studio chat call entirely and only hit the
+// native unload endpoint.
+
+async fn assert_no_chat_inference_calls(p: &crate::common::TestProxy) {
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    for r in &received {
+        assert_ne!(
+            r.url.path(),
+            "/v1/chat/completions",
+            "unload-only request must not POST /v1/chat/completions"
+        );
+        assert_ne!(
+            r.url.path(),
+            "/v1/completions",
+            "unload-only request must not POST /v1/completions"
+        );
+    }
+}
+
+async fn wait_for_unload_call(p: &crate::common::TestProxy) -> bool {
+    for _ in 0..50 {
+        let received = p.mock.received_requests().await.unwrap_or_default();
+        if received
+            .iter()
+            .any(|r| r.url.path() == "/api/v1/models/unload")
+        {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn chat_keep_alive_zero_with_no_messages_unloads_without_inference() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "keep_alive": 0,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive:0 no messages");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["message"]["role"], "assistant");
+    assert_eq!(body["message"]["content"], "");
+    assert_eq!(body["model"], "llama3.1:8b");
+
+    assert_no_chat_inference_calls(&p).await;
+    assert!(
+        wait_for_unload_call(&p).await,
+        "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
+}
+
+#[tokio::test]
+async fn chat_keep_alive_zero_with_empty_messages_unloads_without_inference() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [],
+            "keep_alive": 0,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive:0 empty messages");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["message"]["role"], "assistant");
+    assert_eq!(body["message"]["content"], "");
+
+    assert_no_chat_inference_calls(&p).await;
+    assert!(
+        wait_for_unload_call(&p).await,
+        "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
+}
+
+#[tokio::test]
+async fn chat_keep_alive_zero_no_messages_streaming_returns_ndjson_done_chunk() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "keep_alive": 0,
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive:0 stream");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let final_chunk = chunks.last().expect("at least one chunk");
+    assert_eq!(final_chunk["done"], true);
+    assert_eq!(final_chunk["message"]["role"], "assistant");
+    assert_eq!(final_chunk["message"]["content"], "");
+
+    assert_no_chat_inference_calls(&p).await;
+    assert!(wait_for_unload_call(&p).await);
+}

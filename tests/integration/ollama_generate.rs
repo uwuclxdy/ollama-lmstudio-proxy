@@ -1260,3 +1260,151 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
         "system prompt should be prepended to the completion prompt, got {prompt:?}"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 28. keep_alive:0 with no prompt → unload-only, no inference
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Per `api_docs/ollama/api/generate.md`, `GenerateRequest.required = [model]`;
+// the documented unload call is `{"model":"x","keep_alive":0}` with no prompt.
+// The proxy must skip the LM Studio inference call entirely and only hit the
+// native unload endpoint.
+
+async fn assert_no_inference_calls(p: &crate::common::TestProxy) {
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    for r in &received {
+        assert_ne!(
+            r.url.path(),
+            "/v1/completions",
+            "unload-only request must not POST /v1/completions"
+        );
+        assert_ne!(
+            r.url.path(),
+            "/v1/chat/completions",
+            "unload-only request must not POST /v1/chat/completions"
+        );
+    }
+}
+
+async fn wait_for_unload_call(p: &crate::common::TestProxy) -> bool {
+    for _ in 0..50 {
+        let received = p.mock.received_requests().await.unwrap_or_default();
+        if received
+            .iter()
+            .any(|r| r.url.path() == "/api/v1/models/unload")
+        {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn generate_keep_alive_zero_with_no_prompt_unloads_without_inference() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "keep_alive": 0,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate keep_alive:0 no prompt");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["response"], "");
+    assert_eq!(body["model"], "llama3.2:3b");
+
+    assert_no_inference_calls(&p).await;
+    assert!(
+        wait_for_unload_call(&p).await,
+        "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
+}
+
+#[tokio::test]
+async fn generate_keep_alive_zero_with_empty_prompt_unloads_without_inference() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "",
+            "keep_alive": 0,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate keep_alive:0 empty prompt");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["response"], "");
+
+    assert_no_inference_calls(&p).await;
+    assert!(
+        wait_for_unload_call(&p).await,
+        "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
+}
+
+#[tokio::test]
+async fn generate_keep_alive_zero_no_prompt_streaming_returns_ndjson_done_chunk() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "keep_alive": 0,
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate keep_alive:0 stream");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let final_chunk = chunks.last().expect("at least one chunk");
+    assert_eq!(final_chunk["done"], true);
+    assert_eq!(final_chunk["response"], "");
+
+    assert_no_inference_calls(&p).await;
+    assert!(wait_for_unload_call(&p).await);
+}
