@@ -1282,21 +1282,26 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON body");
 
+    // The buggy stats-branch path reports `total_duration: 1` and the
+    // per-field .max(1) floors stamp 1 ns onto every duration. The 10 µs
+    // threshold sits 10000× above that floor while tolerating fast hosts
+    // where the wall-clock round-trip is sub-200 µs and the proportional
+    // split between prompt_eval and eval can land below 100 µs per side.
     let total = body["total_duration"].as_u64().expect("total_duration u64");
     assert!(
-        total > 100_000,
+        total > 10_000,
         "total_duration must be wall-clock ns when stats are empty (got {total})"
     );
     let prompt_eval = body["prompt_eval_duration"]
         .as_u64()
         .expect("prompt_eval_duration u64");
     assert!(
-        prompt_eval > 100_000,
+        prompt_eval > 10_000,
         "prompt_eval_duration must be wall-clock derived (got {prompt_eval})"
     );
     let eval = body["eval_duration"].as_u64().expect("eval_duration u64");
     assert!(
-        eval > 100_000,
+        eval > 10_000,
         "eval_duration must be wall-clock derived (got {eval})"
     );
 }
