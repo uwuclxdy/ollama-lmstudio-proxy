@@ -285,6 +285,7 @@ pub fn create_cancellation_chunk(
     model_ollama_name: &str,
     duration: Duration,
     tokens_generated_estimate: u64,
+    tool_calls: Option<Value>,
     is_chat_endpoint: bool,
 ) -> Value {
     // Ollama's spec only documents `done_reason: stop | length`; "cancelled" is not a value
@@ -295,8 +296,21 @@ pub fn create_cancellation_chunk(
         Some(tokens_generated_estimate),
     );
 
-    let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
+    // tool_calls are a chat-only concept. Drop them defensively on the generate path.
+    let tool_calls_for_chunk = if is_chat_endpoint {
+        tool_calls.as_ref()
+    } else {
+        None
+    };
+
+    let mut chunk = create_ollama_streaming_chunk(
+        model_ollama_name,
+        "",
+        is_chat_endpoint,
+        true,
+        tool_calls_for_chunk,
+        "",
+    );
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));

@@ -338,7 +338,7 @@ fn assert_six_timings(chunk: &Value) {
 
 #[test]
 fn cancellation_chunk_chat_has_empty_content() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, None, true);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -359,7 +359,7 @@ fn cancellation_chunk_chat_has_empty_content() {
 
 #[test]
 fn cancellation_chunk_generate_has_empty_response() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, None, false);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -376,7 +376,7 @@ fn cancellation_chunk_generate_has_empty_response() {
 
 #[test]
 fn cancellation_chunk_zero_tokens_still_empty_content() {
-    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, true);
+    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, None, true);
     let chat_content = chat
         .get("message")
         .and_then(|m| m.get("content"))
@@ -385,10 +385,77 @@ fn cancellation_chunk_zero_tokens_still_empty_content() {
     assert_eq!(chat_content, "");
     assert!(chat.get("done_reason").is_none());
 
-    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, false);
+    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, None, false);
     let generate_response = generate.get("response").and_then(|v| v.as_str()).unwrap();
     assert_eq!(generate_response, "");
     assert!(generate.get("done_reason").is_none());
+}
+
+#[test]
+fn cancellation_chunk_chat_embeds_buffered_tool_calls() {
+    // Mirror the success path: an interrupted stream that already buffered
+    // tool_calls must surface them on the final done chunk per the chat spec.
+    let mut state = ChunkProcessingState::default();
+    let delta = json!({
+        "delta": {
+            "tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_temp", "arguments": "{\"city\":\"NYC\"}"}
+            }]
+        }
+    });
+    let _ = process_choice_delta(&delta, &mut state);
+    let buffered = state
+        .take_tool_calls()
+        .expect("delta must accumulate tool_calls");
+
+    let c = create_cancellation_chunk(
+        "m",
+        Duration::from_millis(50),
+        7,
+        Some(buffered.clone()),
+        true,
+    );
+    let msg = c
+        .get("message")
+        .expect("chat cancellation must carry a message");
+    let calls = msg
+        .get("tool_calls")
+        .and_then(|v| v.as_array())
+        .expect("buffered tool_calls must surface on cancellation");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].get("function").unwrap().get("name").unwrap(),
+        "get_temp"
+    );
+    assert_six_timings(&c);
+}
+
+#[test]
+fn cancellation_chunk_chat_omits_tool_calls_when_none() {
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, None, true);
+    let msg = c.get("message").unwrap();
+    assert!(
+        msg.get("tool_calls").is_none(),
+        "no buffered tool_calls means no tool_calls field on the message"
+    );
+}
+
+#[test]
+fn cancellation_chunk_generate_never_has_tool_calls() {
+    // Generate has no tool_calls semantically — defensively drop them even if
+    // a caller passes Some(..).
+    let tc = json!([{
+        "function": {"name": "x", "arguments": {"k": "v"}}
+    }]);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, Some(tc), false);
+    assert!(c.get("message").is_none(), "generate has no message");
+    assert!(
+        c.get("tool_calls").is_none(),
+        "generate chunks must never carry tool_calls"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════

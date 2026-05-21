@@ -61,6 +61,7 @@ pub async fn handle_streaming_response(
                         &model_clone_for_task,
                         start_time.elapsed(),
                         chunk_count,
+                        chunk_state.take_tool_calls(),
                         is_chat_endpoint,
                     );
                     send_chunk_and_close_channel(&tx, cancellation_chunk).await;
