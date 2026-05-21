@@ -762,6 +762,58 @@ async fn generate_vision_streaming_emits_done_chunk() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 15b. vision + suffix — `suffix` is FIM-only and dropped on vision path
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `/v1/chat/completions` has no fill-in-the-middle semantics, so the proxy
+// drops `suffix` rather than forwarding it. Behaviour: upstream chat body
+// must not contain a `suffix` key.
+
+#[tokio::test]
+async fn generate_suffix_with_images_is_dropped_from_upstream_body() {
+    let p = spawn_proxy().await;
+    mount_vlm_catalog(&p, "llava-7b-v1.6").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Described.", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llava-7b:latest",
+            "prompt": "Describe the image",
+            "images": [b64],
+            "suffix": "ignored on vision",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate vision + suffix");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/v1/chat/completions")
+        .expect("LM Studio chat/completions request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    assert!(
+        body.get("suffix").is_none(),
+        "suffix must be dropped on vision path, got body: {body}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 16. missing prompt → 400
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -160,7 +160,9 @@ pub async fn handle_ollama_generate(
                 let suffix_val = body.get("suffix");
 
                 if has_images && suffix_val.is_some() {
-                    log::debug!("unsupported on vision path: suffix");
+                    log::warn!(
+                        "Ollama options ignored (LM Studio does not support them on vision path): suffix"
+                    );
                 }
 
                 let mut lm_request = build_lm_studio_request(
