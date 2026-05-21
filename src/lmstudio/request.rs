@@ -22,7 +22,6 @@ pub fn map_ollama_to_lmstudio_params(
 
     map_direct_params(ollama_options, &mut params);
     map_token_limits(ollama_options, &mut params);
-    map_penalties(ollama_options, &mut params);
     map_format_params(ollama_options, structured_format, &mut params);
 
     if let Some(options) = ollama_options {
@@ -112,6 +111,7 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
         "stop",
         "presence_penalty",
         "frequency_penalty",
+        "repeat_penalty",
     ];
 
     let Some(options) = ollama_options else {
@@ -162,18 +162,6 @@ fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map
 
     if let Some(ctx) = options.get("num_ctx") {
         params.insert("context_length".to_string(), ctx.clone());
-    }
-}
-
-fn map_penalties(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
-    if let Some(options) = ollama_options
-        && let Some(repeat_penalty_val) = options.get("repeat_penalty")
-    {
-        if !params.contains_key("frequency_penalty") && !params.contains_key("presence_penalty") {
-            params.insert("repeat_penalty".to_string(), repeat_penalty_val.clone());
-        } else if !params.contains_key("frequency_penalty") {
-            params.insert("frequency_penalty".to_string(), repeat_penalty_val.clone());
-        }
     }
 }
 

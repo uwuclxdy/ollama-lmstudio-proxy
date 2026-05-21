@@ -368,41 +368,46 @@ fn num_predict_maps_to_max_tokens_when_max_tokens_absent() {
 }
 
 #[test]
-fn repeat_penalty_alone_forwarded_as_repeat_penalty() {
+fn repeat_penalty_forwarded_when_alone() {
     let options = json!({ "repeat_penalty": 1.1 });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
     assert_eq!(params.get("repeat_penalty"), Some(&json!(1.1)));
     assert!(params.get("frequency_penalty").is_none());
+    assert!(params.get("presence_penalty").is_none());
 }
 
 #[test]
-fn repeat_penalty_routes_to_frequency_when_presence_set() {
+fn repeat_penalty_keeps_its_name_alongside_presence_penalty() {
     let options = json!({ "repeat_penalty": 1.1, "presence_penalty": 0.5 });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert_eq!(params.get("repeat_penalty"), Some(&json!(1.1)));
     assert_eq!(params.get("presence_penalty"), Some(&json!(0.5)));
-    assert_eq!(params.get("frequency_penalty"), Some(&json!(1.1)));
     assert!(
-        params.get("repeat_penalty").is_none(),
-        "repeat_penalty must be rerouted, not forwarded: {:?}",
+        params.get("frequency_penalty").is_none(),
+        "repeat_penalty must not be renamed to frequency_penalty: {:?}",
         params
     );
 }
 
 #[test]
-fn repeat_penalty_dropped_when_both_penalties_set() {
+fn repeat_penalty_forwarded_alongside_frequency_penalty() {
+    let options = json!({ "repeat_penalty": 1.1, "frequency_penalty": 0.5 });
+    let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert_eq!(params.get("repeat_penalty"), Some(&json!(1.1)));
+    assert_eq!(params.get("frequency_penalty"), Some(&json!(0.5)));
+}
+
+#[test]
+fn all_three_penalties_forwarded_independently() {
     let options = json!({
         "repeat_penalty": 1.1,
         "presence_penalty": 0.5,
         "frequency_penalty": 0.3,
     });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert_eq!(params.get("repeat_penalty"), Some(&json!(1.1)));
     assert_eq!(params.get("presence_penalty"), Some(&json!(0.5)));
     assert_eq!(params.get("frequency_penalty"), Some(&json!(0.3)));
-    assert!(
-        params.get("repeat_penalty").is_none(),
-        "repeat_penalty must be dropped when both slots are taken: {:?}",
-        params
-    );
 }
 
 #[test]
