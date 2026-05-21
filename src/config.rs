@@ -47,12 +47,6 @@ pub struct Config {
         help = "ttl for model resolution cache in seconds"
     )]
     pub model_resolution_cache_ttl_seconds: u64,
-
-    #[arg(
-        long,
-        help = "check for updates and replace executable if newer version available"
-    )]
-    pub update: bool,
 }
 
 #[derive(Debug, Clone)]

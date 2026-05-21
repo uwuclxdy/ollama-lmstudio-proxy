@@ -6,20 +6,6 @@ use ollama_lmstudio_proxy::{config, logging, proxy, update};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::parse();
 
-    if cfg.update {
-        return match update::check_and_update().await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                eprintln!();
-                eprintln!("update failed: {}", e);
-                eprintln!(
-                    "visit https://github.com/uwuclxdy/ollama-lmstudio-proxy/releases to download manually"
-                );
-                Err(e)
-            }
-        };
-    }
-
     config::validate_config(&cfg)?;
 
     setup_logging(&cfg.log_level)?;
@@ -27,6 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let debug_enabled =
         cfg.log_level.eq_ignore_ascii_case("debug") || cfg.log_level.eq_ignore_ascii_case("trace");
     logging::LogConfig::init(debug_enabled);
+
+    update::check_for_update();
 
     config::init_runtime_config(config::RuntimeConfig {
         max_buffer_size: cfg.max_buffer_size,
