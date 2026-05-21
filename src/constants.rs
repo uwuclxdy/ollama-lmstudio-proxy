@@ -40,6 +40,8 @@ pub const ERROR_EMBED_INPUT_EMPTY: &str =
 pub const ERROR_EMBEDDINGS_PROMPT_REQUIRED: &str =
     "`prompt` field required. Use `/api/embed` for batch `input`.";
 pub const ERROR_EMBEDDINGS_PROMPT_EMPTY: &str = "`prompt` must not be empty";
+pub const ERROR_RAW_WITH_IMAGES: &str =
+    "`raw` cannot be combined with `images`: LM Studio cannot serve raw prompts to vision models";
 pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";

@@ -963,21 +963,18 @@ async fn repeat_penalty_option_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 23. vision raw:true skips system injection before image messages
+// 23. raw:true + images → 400. LM Studio's /v1/completions does not accept
+// multimodal input and /v1/chat/completions always applies a chat template,
+// so `raw` cannot be honored on the vision path.
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn vision_raw_skips_system_injection() {
+async fn generate_raw_true_with_images_returns_400() {
     let p = spawn_proxy().await;
     mount_vlm_catalog(&p, "llava-7b-v1.6").await;
 
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(lm_chat_response("Raw vision reply.", "stop")),
-        )
-        .mount(&p.mock)
-        .await;
+    // No upstream mock is mounted — the proxy must reject before any LM
+    // Studio call is attempted.
 
     let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
@@ -987,17 +984,80 @@ async fn vision_raw_skips_system_injection() {
         .json(&json!({
             "model": "llava-7b:latest",
             "prompt": "What do you see?",
-            "system": "Ignored because raw:true.",
             "images": [b64],
             "raw": true,
             "stream": false
         }))
         .send()
         .await
-        .expect("POST /api/generate vision raw");
+        .expect("POST /api/generate raw + images");
+
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("JSON body");
+    let err_msg = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .expect("error field");
+    assert!(
+        err_msg.contains("raw") && err_msg.contains("images"),
+        "error must mention raw and images, got {err_msg:?}"
+    );
+
+    // No inference call must have been made.
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let chat_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/v1/chat/completions")
+        .count();
+    assert_eq!(
+        chat_hits, 0,
+        "raw + images must not hit /v1/chat/completions"
+    );
+    let completion_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/v1/completions")
+        .count();
+    assert_eq!(
+        completion_hits, 0,
+        "raw + images must not hit /v1/completions"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 23b. raw:true with an empty `images` array is equivalent to no images —
+// must NOT 400; routes through the normal text-completions path.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn generate_raw_true_with_empty_images_array_does_not_reject() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Raw reply.", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "[INST] Hi [/INST]",
+            "images": [],
+            "raw": true,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate raw + empty images");
 
     assert_eq!(resp.status(), 200);
-    p.mock.verify().await;
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["response"], "Raw reply.");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

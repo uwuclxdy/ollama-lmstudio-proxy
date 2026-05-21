@@ -8,7 +8,10 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::api::response::{ResponseContext, ResponseParams, handle_response};
-use crate::constants::{ERROR_MISSING_PROMPT, LM_STUDIO_NATIVE_CHAT, LM_STUDIO_NATIVE_COMPLETIONS};
+use crate::constants::{
+    ERROR_MISSING_PROMPT, ERROR_RAW_WITH_IMAGES, LM_STUDIO_NATIVE_CHAT,
+    LM_STUDIO_NATIVE_COMPLETIONS,
+};
 use crate::error::ProxyError;
 use crate::http::client::CancellableRequest;
 use crate::lmstudio::images::build_vision_chat_messages;
@@ -80,6 +83,17 @@ pub async fn handle_ollama_generate(
                 let current_images = body.get("images");
                 let raw = body.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
+                // LM Studio's /v1/completions does not accept multimodal
+                // input and /v1/chat/completions always applies a chat
+                // template — so `raw + images` is unsatisfiable. Treat an
+                // empty `images` array as absent.
+                let has_images = current_images
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|arr| !arr.is_empty());
+                if raw && has_images {
+                    return Err(ProxyError::bad_request(ERROR_RAW_WITH_IMAGES));
+                }
+
                 let resolution_ctx = resolve_model_with_context(
                     &context,
                     &model_resolver,
@@ -93,7 +107,7 @@ pub async fn handle_ollama_generate(
                 let mut prompt_override_storage: Option<String> = None;
                 let chat_messages_payload: Option<Value>;
 
-                let (lm_studio_endpoint, lm_request_type) = if current_images.is_some() {
+                let (lm_studio_endpoint, lm_request_type) = if has_images {
                     let system_for_vision = if raw {
                         None
                     } else {
@@ -145,7 +159,7 @@ pub async fn handle_ollama_generate(
                 let top_level_params = make_top_level_params(&body);
                 let suffix_val = body.get("suffix");
 
-                if current_images.is_some() && suffix_val.is_some() {
+                if has_images && suffix_val.is_some() {
                     log::debug!("unsupported on vision path: suffix");
                 }
 
@@ -158,7 +172,7 @@ pub async fn handle_ollama_generate(
                     Some(&top_level_params),
                 );
 
-                if current_images.is_none()
+                if !has_images
                     && let Some(s) = suffix_val
                     && let Some(obj) = lm_request.as_object_mut()
                 {
