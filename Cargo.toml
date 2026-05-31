@@ -8,7 +8,7 @@ description = "Blazingly fast proxy server that bridges Ollama and LM Studio"
 license = "MIT"
 repository = "https://github.com/uwuclxdy/ollama-lmstudio-proxy"
 keywords = ["ollama", "lmstudio", "proxy", "llm", "ai"]
-categories = ["network-programming", "web-servers", "command-line-utilities"]
+categories = ["network-programming", "command-line-utilities"]
 readme = "README.md"
 
 [dependencies]
