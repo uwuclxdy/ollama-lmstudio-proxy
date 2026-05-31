@@ -78,6 +78,9 @@ ollama-lmstudio-proxy \
 | `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
 | `--lmstudio-token`                      | —                       | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); skipped when caller already sends `Authorization` |
 | `--use-native-chat`                     | `false`                 | Experimental: route `/api/chat` through LM Studio native `/api/v1/chat` for richer reasoning events and accurate stats |
+| `--flash-attention`                     | `false`                 | Experimental: enable flash attention when loading models via `/api/v1/models/load` |
+| `--offload-kv-cache`                    | `false`                 | Experimental: offload KV cache to GPU when loading models via `/api/v1/models/load` |
+| `--eval-batch-size`                     | —                       | Experimental: set eval batch size when loading models via `/api/v1/models/load` |
 | `--update`                              | —                       | Self-update from latest GitHub release                   |
 
 ## LM Studio API Compatibility

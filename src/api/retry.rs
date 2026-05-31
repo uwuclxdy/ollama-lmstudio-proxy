@@ -7,12 +7,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
 use crate::check_cancelled;
+use crate::config::get_runtime_config;
 use crate::constants::{
-    ERROR_LM_STUDIO_UNAVAILABLE, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS,
+    ERROR_LM_STUDIO_UNAVAILABLE, LM_STUDIO_MODELS_LOAD, LM_STUDIO_NATIVE_CHAT, LOG_PREFIX_INFO,
+    LOG_PREFIX_SUCCESS,
 };
 use crate::error::ProxyError;
 use crate::http::CancellableRequest;
-use crate::lmstudio::is_model_loading_error;
+use crate::lmstudio::{build_load_config_body, is_model_loading_error};
 use crate::logging::log_timed;
 
 #[derive(Serialize)]
@@ -35,6 +37,23 @@ pub async fn trigger_model_loading(
     cancellation_token: CancellationToken,
 ) -> Result<bool, ProxyError> {
     let model_for_lm_studio_trigger = ollama_model_name;
+
+    if let Some(load_body) =
+        build_load_config_body(model_for_lm_studio_trigger, get_runtime_config())
+    {
+        let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
+        let load_request = CancellableRequest::new(context.client, cancellation_token.clone());
+        match load_request
+            .make_request(reqwest::Method::POST, &load_url, Some(load_body))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
+            Err(e) => {
+                log::warn!("model load config: best-effort POST failed: {}", e.message);
+            }
+        }
+    }
 
     let url = context.endpoint_url(LM_STUDIO_NATIVE_CHAT);
     let minimal_request_body = MinimalChatRequestPayload {

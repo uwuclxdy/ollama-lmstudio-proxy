@@ -7,6 +7,7 @@ pub const LM_STUDIO_NATIVE_EMBEDDINGS: &str = "/v1/embeddings";
 pub const LM_STUDIO_NATIVE_DOWNLOAD: &str = "/api/v1/models/download";
 pub const LM_STUDIO_NATIVE_DOWNLOAD_STATUS: &str = "/api/v1/models/download/status";
 pub const LM_STUDIO_NATIVE_UNLOAD: &str = "/api/v1/models/unload";
+pub const LM_STUDIO_MODELS_LOAD: &str = "/api/v1/models/load";
 
 /// Latest upstream Ollama server version for compatibility endpoints
 pub const OLLAMA_SERVER_VERSION: &str = "0.30.0";

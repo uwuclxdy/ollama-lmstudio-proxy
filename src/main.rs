@@ -19,6 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config::init_runtime_config(config::RuntimeConfig {
         max_buffer_size: cfg.max_buffer_size,
         enable_chunk_recovery: cfg.enable_chunk_recovery,
+        flash_attention: cfg.flash_attention,
+        offload_kv_cache: cfg.offload_kv_cache,
+        eval_batch_size: cfg.eval_batch_size,
     });
 
     let server = proxy::ProxyServer::new(cfg)?;

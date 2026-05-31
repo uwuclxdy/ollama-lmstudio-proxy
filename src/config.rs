@@ -60,12 +60,33 @@ pub struct Config {
         help = "experimental: route /api/chat through LM Studio native /api/v1/chat for richer reasoning events and accurate stats"
     )]
     pub use_native_chat: bool,
+
+    #[arg(
+        long,
+        help = "experimental: enable flash attention when loading models via /api/v1/models/load"
+    )]
+    pub flash_attention: bool,
+
+    #[arg(
+        long,
+        help = "experimental: offload KV cache to GPU when loading models via /api/v1/models/load"
+    )]
+    pub offload_kv_cache: bool,
+
+    #[arg(
+        long,
+        help = "experimental: set eval batch size when loading models via /api/v1/models/load"
+    )]
+    pub eval_batch_size: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub max_buffer_size: usize,
     pub enable_chunk_recovery: bool,
+    pub flash_attention: bool,
+    pub offload_kv_cache: bool,
+    pub eval_batch_size: Option<u32>,
 }
 
 impl Default for RuntimeConfig {
@@ -73,6 +94,9 @@ impl Default for RuntimeConfig {
         Self {
             max_buffer_size: usize::MAX,
             enable_chunk_recovery: true,
+            flash_attention: false,
+            offload_kv_cache: false,
+            eval_batch_size: None,
         }
     }
 }
