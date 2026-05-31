@@ -18,6 +18,8 @@ Useful if you want to use **LM Studio models through Ollama API** (for example C
 - SSE processing response streaming with chunk recovery and cancellation
 - Thinking/reasoning capability detection for models
 - Auto-retry, model preload hints, and catalog-backed downloads via `/api/pull`
+- Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) passthrough — point Claude Code straight at the proxy
+- Optional native `/api/v1/chat` backend (`--use-native-chat`) for richer reasoning events, accurate stats, and MCP tools
 
 ## Installation
 
@@ -51,7 +53,7 @@ cargo build --release
 ### Basic Usage
 
 ```bash
-# Start with default settings (native API)
+# Start with default settings
 ollama-lmstudio-proxy
 
 # Custom configuration
@@ -76,12 +78,11 @@ ollama-lmstudio-proxy \
 | `--model-resolution-cache-ttl-seconds`  | `300`                   | Cache TTL for model resolution                           |
 | `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |
 | `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
-| `--lmstudio-token`                      | —                       | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); skipped when caller already sends `Authorization` |
+| `--lmstudio-token`                      | —                       | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); sent on backend requests, overridden by a caller-supplied `Authorization` |
 | `--use-native-chat`                     | `false`                 | Experimental: route `/api/chat` through LM Studio native `/api/v1/chat` for richer reasoning events and accurate stats |
 | `--flash-attention`                     | `false`                 | Experimental: enable flash attention when loading models via `/api/v1/models/load` |
 | `--offload-kv-cache`                    | `false`                 | Experimental: offload KV cache to GPU when loading models via `/api/v1/models/load` |
 | `--eval-batch-size`                     | —                       | Experimental: set eval batch size when loading models via `/api/v1/models/load` |
-| `--update`                              | —                       | Self-update from latest GitHub release                   |
 
 ## LM Studio API Compatibility
 
@@ -96,7 +97,7 @@ translate to LM Studio native API equivalents.
 | `GET /api/tags`                 | Translates to `/api/v1/models`; includes proxy-managed aliases     |
 | `GET /api/ps`                   | Translates to `/api/v1/models`; shows loaded models plus aliases   |
 | `POST /api/show`                | Fetches real LM Studio metadata; merges alias info when present    |
-| `POST /api/chat`                | Translates to `/v1/chat/completions`                               |
+| `POST /api/chat`                | Translates to `/v1/chat/completions` (or native `/api/v1/chat` with `--use-native-chat`) |
 | `POST /api/generate`            | Translates to `/v1/completions`; vision requests use chat endpoint |
 | `POST /api/embed`               | Translates to `/v1/embeddings`; also handles `/api/embeddings`     |
 | `GET /api/version`              | Returns proxy version in Ollama format                             |
