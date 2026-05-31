@@ -312,6 +312,50 @@ async fn route_push_is_present() {
 }
 
 #[tokio::test]
+async fn route_web_search_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({"query": "test"}))
+        .send()
+        .await
+        .expect("POST /api/web_search");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/api/web_search must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/api/web_search must return 501 (cloud-only Ollama feature)"
+    );
+}
+
+#[tokio::test]
+async fn route_web_fetch_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/api/web_fetch"))
+        .json(&json!({"url": "https://example.com"}))
+        .send()
+        .await
+        .expect("POST /api/web_fetch");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/api/web_fetch must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/api/web_fetch must return 501 (cloud-only Ollama feature)"
+    );
+}
+
+#[tokio::test]
 async fn route_create_is_present() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;

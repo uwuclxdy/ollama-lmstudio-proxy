@@ -100,6 +100,8 @@ translate to LM Studio native API equivalents.
 | `POST /api/create`              | Creates proxy-managed virtual aliases (no custom blobs)            |
 | `POST /api/pull`                | Translates to `/api/v1/models/download`; streams download progress |
 | `POST /api/push`                | Returns 501 — LM Studio has no model registry                      |
+| `POST /api/web_search`          | Returns 501 — cloud-only Ollama feature, no LM Studio backend      |
+| `POST /api/web_fetch`           | Returns 501 — cloud-only Ollama feature, no LM Studio backend      |
 | `DELETE /api/delete`            | Removes proxy-managed aliases only                                 |
 | `POST /api/copy`                | Duplicates aliases or references LM Studio models                  |
 | `HEAD/POST /api/blobs/:digest`  | Stores and validates blobs for alias manifests                     |

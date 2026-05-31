@@ -93,6 +93,8 @@ pub fn create_router(server: AppState) -> Router {
         .route("/api/copy", post(copy_handler))
         .route("/api/delete", delete(delete_handler))
         .route("/api/push", post(push_handler))
+        .route("/api/web_search", post(web_search_handler))
+        .route("/api/web_fetch", post(web_fetch_handler))
         .route("/api/show", post(show_handler))
         .route("/api/ps", get(ps_handler))
         .route("/api/version", get(version_handler))
@@ -257,6 +259,18 @@ async fn delete_handler(
 async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
     Err(ProxyError::not_implemented(
         "push is not supported: LM Studio has no model registry",
+    ))
+}
+
+async fn web_search_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "web_search is not supported: cloud-only Ollama feature with no LM Studio backend",
+    ))
+}
+
+async fn web_fetch_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "web_fetch is not supported: cloud-only Ollama feature with no LM Studio backend",
     ))
 }
 
