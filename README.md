@@ -104,7 +104,29 @@ translate to LM Studio native API equivalents.
 | `POST /api/copy`                | Duplicates aliases or references LM Studio models                  |
 | `HEAD/POST /api/blobs/:digest`  | Stores and validates blobs for alias manifests                     |
 
-`ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without modification.
+`ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without modification. This
+includes `POST /v1/messages` (Anthropic-compat) and `POST /v1/responses` (OpenAI Responses),
+which LM Studio serves natively — the proxy remaps the `model` field from the Ollama-style name
+to the resolved LM Studio id before forwarding.
+
+### Anthropic / Claude Code clients
+
+Clients that speak the Anthropic Messages API (including Claude Code) can point directly at the
+proxy. LM Studio handles `/v1/messages` natively, so no extra configuration is needed beyond
+setting the base URL.
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:11434
+export ANTHROPIC_AUTH_TOKEN=ollama
+```
+
+Then run Claude Code as usual — use any Ollama-style model name:
+
+```bash
+claude --model granite-4-micro
+```
+
+The token is accepted but not validated; any non-empty value works.
 
 ### Virtual model aliases
 

@@ -342,6 +342,85 @@ async fn openai_embeddings_backend_error_propagated() {
     assert_eq!(resp.status(), 422);
 }
 
+// ── POST /v1/messages (Anthropic-compat passthrough) ─────────────────────────
+
+#[tokio::test]
+async fn anthropic_messages_model_remapped_and_forwarded() {
+    let p = spawn_proxy().await;
+    // LM Studio key is the full publisher/name form; client sends a short Ollama-style name.
+    mount_native_models(&p, "ibm/granite-4-micro").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "model": "ibm/granite-4-micro",
+            "messages": [{ "role": "user", "content": "Hello" }]
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-request-id", "msg-001")
+                .set_body_json(json!({
+                    "id": "msg_001",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Hi there!" }],
+                    "model": "ibm/granite-4-micro",
+                    "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 5, "output_tokens": 3 }
+                })),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Client uses a short Ollama-style name; proxy must resolve and remap it.
+    let resp = p
+        .client
+        .post(p.url("/v1/messages"))
+        .json(&json!({
+            "model": "granite-4-micro",
+            "max_tokens": 256,
+            "messages": [{ "role": "user", "content": "Hello" }]
+        }))
+        .send()
+        .await
+        .expect("POST /v1/messages");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("x-request-id").unwrap(), "msg-001");
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["type"], "message");
+    assert_eq!(body["role"], "assistant");
+}
+
+#[tokio::test]
+async fn anthropic_messages_backend_error_propagated() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "ibm/granite-4-micro").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "type": "error",
+            "error": { "type": "invalid_request_error", "message": "missing max_tokens" }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/messages"))
+        .json(&json!({ "model": "granite-4-micro", "messages": [] }))
+        .send()
+        .await
+        .expect("POST /v1/messages 400");
+
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+}
+
 // ── POST /v1/responses (LM Studio extension) ──────────────────────────────────
 
 #[tokio::test]
@@ -421,6 +500,54 @@ async fn openai_responses_streaming_bytes_roundtrip() {
     assert_eq!(resp.status(), 200);
     let bytes = resp.bytes().await.expect("bytes");
     assert_eq!(bytes.as_ref(), sse_payload.as_bytes());
+}
+
+// ── POST /v1/responses — model name remapping ────────────────────────────────
+
+#[tokio::test]
+async fn openai_responses_model_remapped_and_forwarded() {
+    let p = spawn_proxy().await;
+    // Full LM Studio key; client will send only the short tail.
+    mount_native_models(&p, "openai/gpt-oss-20b").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(body_partial_json(json!({
+            "model": "openai/gpt-oss-20b",
+            "input": "Say one word"
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-response-id", "resp-remap-001")
+                .set_body_json(json!({
+                    "id": "resp_remap_001",
+                    "object": "response",
+                    "output": [{ "type": "message", "content": "Sure" }]
+                })),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Client uses a short Ollama-style name; proxy must resolve and remap it.
+    let resp = p
+        .client
+        .post(p.url("/v1/responses"))
+        .json(&json!({
+            "model": "gpt-oss-20b",
+            "input": "Say one word"
+        }))
+        .send()
+        .await
+        .expect("POST /v1/responses model remap");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("x-response-id").unwrap(),
+        "resp-remap-001"
+    );
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["object"], "response");
 }
 
 // ── POST /v1/chat/completions — structured output (response_format) ───────────
