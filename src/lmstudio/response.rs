@@ -177,7 +177,7 @@ impl TimingInfo {
             };
 
         Self {
-            total_duration: total_duration_ns,
+            total_duration: total_duration_ns.max(1),
             load_duration: DEFAULT_LOAD_DURATION_NS,
             prompt_eval_count: final_prompt_tokens,
             prompt_eval_duration: prompt_eval_duration_ns.max(1),
