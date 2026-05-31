@@ -31,24 +31,30 @@ pub fn map_ollama_to_lmstudio_params(
     params
 }
 
+/// Normalise an Ollama `think` value to LM Studio's `reasoning` setting.
+///
+/// LM Studio accepts: off | low | medium | high | on. Ollama/OpenAI use `"none"`
+/// for disabled, which we map to `"off"`. Bools collapse to `"on"`/`"off"`; any
+/// other string passes through; unexpected types are forwarded as-is.
+pub fn normalize_reasoning(think_val: &Value) -> Value {
+    match think_val {
+        Value::Bool(true) => json!("on"),
+        Value::Bool(false) => json!("off"),
+        Value::String(s) if s.eq_ignore_ascii_case("none") => json!("off"),
+        Value::String(s) => json!(s),
+        other => {
+            log::debug!("think: unexpected value type {:?}, forwarding as-is", other);
+            other.clone()
+        }
+    }
+}
+
 fn apply_top_level_params(
     top: &TopLevelParams<'_>,
     request_obj: &mut serde_json::Map<String, Value>,
 ) {
     if let Some(think_val) = top.think {
-        // LM Studio accepts: off | low | medium | high | on.
-        // Ollama/OpenAI use "none" for disabled; normalise it to "off".
-        let reasoning: Value = match think_val {
-            Value::Bool(true) => json!("on"),
-            Value::Bool(false) => json!("off"),
-            Value::String(s) if s.eq_ignore_ascii_case("none") => json!("off"),
-            Value::String(s) => json!(s),
-            other => {
-                log::debug!("think: unexpected value type {:?}, forwarding as-is", other);
-                other.clone()
-            }
-        };
-        request_obj.insert("reasoning".to_string(), reasoning);
+        request_obj.insert("reasoning".to_string(), normalize_reasoning(think_val));
     }
     if let Some(lp) = top.logprobs {
         request_obj.insert("logprobs".to_string(), lp.clone());
