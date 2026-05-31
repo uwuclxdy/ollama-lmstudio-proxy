@@ -151,7 +151,7 @@ These parameters go at the **top level** of the request body (not inside `option
 
 | Ollama field               | LM Studio parameter                  | Notes                                                                        |
 |----------------------------|--------------------------------------|------------------------------------------------------------------------------|
-| `think`                    | `reasoning`                          | `true`→`"on"`, `false`→`"off"`, string passed through; omit to leave unset  |
+| `think` / `reasoning_effort` | `reasoning`                        | `true`→`"on"`, `false`→`"off"`, `"none"`→`"off"`; levels `low\|medium\|high\|on\|off` pass through; `reasoning_effort` accepted as alias when `think` is absent |
 | `logprobs`, `top_logprobs` | Same name                            | Direct passthrough                                                           |
 | `suffix`                   | `suffix`                             | Forwarded on non-vision generate requests only                               |
 | `raw`                      | —                                    | Disables system-prompt injection in generate requests                        |

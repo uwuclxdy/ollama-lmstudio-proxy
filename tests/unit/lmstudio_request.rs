@@ -684,6 +684,64 @@ fn top_level_none_inserts_no_reasoning_logprobs_keys() {
 }
 
 #[test]
+fn think_none_string_normalised_to_off() {
+    for s in ["none", "None", "NONE"] {
+        let think_val = json!(s);
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hi"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(
+            request.get("reasoning"),
+            Some(&json!("off")),
+            "\"{}\" must map to \"off\"",
+            s
+        );
+    }
+}
+
+#[test]
+fn think_known_levels_pass_through_unchanged() {
+    for s in ["low", "medium", "high", "on", "off"] {
+        let think_val = json!(s);
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hi"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(
+            request.get("reasoning"),
+            Some(&json!(s)),
+            "\"{}\" must pass through unchanged",
+            s
+        );
+    }
+}
+
+#[test]
 fn top_level_all_none_fields_inserts_nothing() {
     let top = TopLevelParams {
         think: None,

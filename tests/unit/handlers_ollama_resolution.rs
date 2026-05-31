@@ -156,3 +156,30 @@ fn extract_system_prompt_rejects_non_string_system() {
     let body = json!({ "system": 42 });
     assert!(extract_system_prompt(&body).is_none());
 }
+
+#[test]
+fn reasoning_effort_used_when_think_absent() {
+    let body = json!({ "reasoning_effort": "medium", "model": "x", "messages": [] });
+    let top = make_top_level_params(&body);
+    assert_eq!(
+        top.think,
+        Some(&json!("medium")),
+        "reasoning_effort must be picked up when think is absent"
+    );
+}
+
+#[test]
+fn think_wins_over_reasoning_effort_when_both_present() {
+    let body = json!({
+        "think": "high",
+        "reasoning_effort": "low",
+        "model": "x",
+        "messages": []
+    });
+    let top = make_top_level_params(&body);
+    assert_eq!(
+        top.think,
+        Some(&json!("high")),
+        "think must take precedence over reasoning_effort"
+    );
+}

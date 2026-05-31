@@ -13,9 +13,12 @@ use crate::storage::VirtualModelEntry;
 /// Pull the three Ollama top-level forwarded keys (`think`, `logprobs`,
 /// `top_logprobs`) out of a request body. Both /api/chat and /api/generate
 /// forward these to LM Studio (`reasoning`, `logprobs`, `top_logprobs`).
+///
+/// `reasoning_effort` (OpenAI alias) is accepted as a fallback when `think` is
+/// absent. When both are present, `think` takes precedence.
 pub fn make_top_level_params(body: &Value) -> TopLevelParams<'_> {
     TopLevelParams {
-        think: body.get("think"),
+        think: body.get("think").or_else(|| body.get("reasoning_effort")),
         logprobs: body.get("logprobs"),
         top_logprobs: body.get("top_logprobs"),
     }

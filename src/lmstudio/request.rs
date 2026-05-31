@@ -36,9 +36,12 @@ fn apply_top_level_params(
     request_obj: &mut serde_json::Map<String, Value>,
 ) {
     if let Some(think_val) = top.think {
+        // LM Studio accepts: off | low | medium | high | on.
+        // Ollama/OpenAI use "none" for disabled; normalise it to "off".
         let reasoning: Value = match think_val {
             Value::Bool(true) => json!("on"),
             Value::Bool(false) => json!("off"),
+            Value::String(s) if s.eq_ignore_ascii_case("none") => json!("off"),
             Value::String(s) => json!(s),
             other => {
                 log::debug!("think: unexpected value type {:?}, forwarding as-is", other);
