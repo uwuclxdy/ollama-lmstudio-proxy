@@ -64,6 +64,7 @@ pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy
         max_buffer_size: 262_144,
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
+        lmstudio_token: None,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

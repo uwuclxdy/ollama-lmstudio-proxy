@@ -173,3 +173,31 @@ fn header_names_are_case_insensitively_stripped() {
     assert!(!out.contains_key("host"));
     assert!(!out.contains_key("content-length"));
 }
+
+// ── caller authorization header preserved on passthrough ─────────────────────
+
+#[test]
+fn caller_authorization_is_forwarded_on_passthrough() {
+    // When the caller provides an Authorization header, build_forward_headers
+    // must carry it through so that it overrides any client-level default header
+    // (i.e., the proxy token is not forced onto passthrough requests that
+    // already have their own auth).
+    let h = make_warp_headers(&[("authorization", "Bearer caller-token")]);
+    let out = build_forward_headers(&h, false);
+    let auth = out
+        .get("authorization")
+        .expect("authorization must be forwarded");
+    assert_eq!(auth.to_str().unwrap(), "Bearer caller-token");
+}
+
+#[test]
+fn no_authorization_from_caller_produces_no_auth_header() {
+    // When the caller sends no Authorization, build_forward_headers must not
+    // invent one — the client default header (if set) fills the gap at send time.
+    let h = make_warp_headers(&[("content-type", "application/json")]);
+    let out = build_forward_headers(&h, false);
+    assert!(
+        !out.contains_key("authorization"),
+        "must not inject an authorization header when the caller provided none"
+    );
+}

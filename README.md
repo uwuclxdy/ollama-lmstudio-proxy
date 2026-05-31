@@ -76,6 +76,7 @@ ollama-lmstudio-proxy \
 | `--model-resolution-cache-ttl-seconds`  | `300`                   | Cache TTL for model resolution                           |
 | `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |
 | `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
+| `--lmstudio-token`                      | —                       | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); skipped when caller already sends `Authorization` |
 | `--update`                              | —                       | Self-update from latest GitHub release                   |
 
 ## LM Studio API Compatibility

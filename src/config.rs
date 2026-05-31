@@ -47,6 +47,13 @@ pub struct Config {
         help = "ttl for model resolution cache in seconds"
     )]
     pub model_resolution_cache_ttl_seconds: u64,
+
+    #[arg(
+        long,
+        env = "LMSTUDIO_TOKEN",
+        help = "bearer token for LM Studio authentication (sets Authorization header on all outbound requests)"
+    )]
+    pub lmstudio_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]

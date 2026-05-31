@@ -31,12 +31,21 @@ impl ProxyServer {
         config: Config,
         state_dir: PathBuf,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
             .pool_max_idle_per_host(32)
             .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(60))
-            .build()?;
+            .tcp_keepalive(Duration::from_secs(60));
+
+        if let Some(ref token) = config.lmstudio_token {
+            let mut default_headers = reqwest::header::HeaderMap::new();
+            let header_value = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+                .map_err(|e| format!("invalid lmstudio-token: {}", e))?;
+            default_headers.insert(reqwest::header::AUTHORIZATION, header_value);
+            client_builder = client_builder.default_headers(default_headers);
+        }
+
+        let client = client_builder.build()?;
 
         let cache: Cache<String, String> = Cache::builder()
             .max_capacity(1000)
@@ -157,6 +166,10 @@ pub fn cors_layer() -> CorsLayer {
         ])
         .allow_headers(Any)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/auth_token.rs"]
+mod tests;
 
 fn get_state_directory() -> PathBuf {
     if let Ok(xdg_cache) = std::env::var("XDG_CACHE_HOME") {
