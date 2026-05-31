@@ -51,6 +51,17 @@ pub async fn spawn_proxy() -> TestProxy {
 }
 
 pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy {
+    spawn_proxy_inner(enable_chunk_recovery, false).await
+}
+
+/// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
+/// `/api/chat` routes through LM Studio's native endpoint instead of the
+/// OpenAI-compat `/v1/chat/completions`.
+pub async fn spawn_proxy_with_native() -> TestProxy {
+    spawn_proxy_inner(true, true).await
+}
+
+async fn spawn_proxy_inner(enable_chunk_recovery: bool, use_native_chat: bool) -> TestProxy {
     ensure_runtime_initialized(enable_chunk_recovery);
 
     let mock = MockServer::start().await;
@@ -65,6 +76,7 @@ pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
         lmstudio_token: None,
+        use_native_chat,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

@@ -7,16 +7,24 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::api::response::{ResponseContext, ResponseParams, handle_response};
-use crate::constants::{ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT};
+use crate::constants::{
+    DEFAULT_STREAM_TIMEOUT_SECONDS, ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT,
+    LM_STUDIO_V1_CHAT,
+};
 use crate::error::ProxyError;
-use crate::http::client::CancellableRequest;
+use crate::http::client::{CancellableRequest, handle_json_response};
+use crate::http::json_response;
 use crate::lmstudio::images::{convert_per_message_images, inject_images_into_messages};
 use crate::lmstudio::keep_alive::{apply_keep_alive_ttl, parse_keep_alive_seconds};
+use crate::lmstudio::native_chat::{
+    NativeChatRequestParams, build_native_chat_request, convert_native_to_ollama_chat,
+};
 use crate::lmstudio::request::{LMStudioRequestType, build_lm_studio_request};
 use crate::lmstudio::response::normalize_chat_messages;
 use crate::logging::LogConfig;
 use crate::model::ModelResolver;
 use crate::model::naming::extract_required_model_name;
+use crate::streaming::handle_native_streaming_response;
 
 use super::resolution::{make_top_level_params, resolve_model_with_context};
 use super::unload_only::{UnloadOnlyCall, is_chat_unload_only, respond_unload_only};
@@ -27,6 +35,7 @@ pub async fn handle_ollama_chat(
     body: Value,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    use_native_chat: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
@@ -90,6 +99,50 @@ pub async fn handle_ollama_chat(
                 .await?;
 
                 let message_count = messages.len();
+
+                // Native /api/v1/chat path: build the request from the raw Ollama
+                // messages (the native builder owns its own `input`/image shaping)
+                // and dispatch to the native converter / streaming driver.
+                if use_native_chat {
+                    let mut native_request = build_native_chat_request(NativeChatRequestParams {
+                        model_lm_studio_id: &resolution_ctx.lm_studio_model_id,
+                        messages: body.get("messages").unwrap_or(&Value::Null),
+                        system_prompt: resolution_ctx.system_prompt.as_deref(),
+                        ollama_options: resolution_ctx.effective_options.as_ref(),
+                        think: make_top_level_params(&body).think,
+                        stream,
+                    });
+                    apply_keep_alive_ttl(&mut native_request, keep_alive_seconds);
+
+                    let response =
+                        CancellableRequest::new(context.client, cancellation_token.clone())
+                            .make_request(
+                                reqwest::Method::POST,
+                                &context.endpoint_url(LM_STUDIO_V1_CHAT),
+                                Some(native_request),
+                            )
+                            .await?;
+
+                    return if stream {
+                        handle_native_streaming_response(
+                            response,
+                            &ollama_model_name,
+                            start_time,
+                            cancellation_token,
+                            DEFAULT_STREAM_TIMEOUT_SECONDS,
+                        )
+                        .await
+                    } else {
+                        let native_value =
+                            handle_json_response(response, cancellation_token).await?;
+                        let ollama_response = convert_native_to_ollama_chat(
+                            &native_value,
+                            &ollama_model_name,
+                            start_time,
+                        );
+                        Ok(json_response(&ollama_response))
+                    };
+                }
 
                 let normalized_messages =
                     normalize_chat_messages(messages, resolution_ctx.system_prompt.as_deref());

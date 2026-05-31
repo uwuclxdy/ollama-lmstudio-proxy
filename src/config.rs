@@ -54,6 +54,12 @@ pub struct Config {
         help = "bearer token for LM Studio authentication (sets Authorization header on all outbound requests)"
     )]
     pub lmstudio_token: Option<String>,
+
+    #[arg(
+        long,
+        help = "experimental: route /api/chat through LM Studio native /api/v1/chat for richer reasoning events and accurate stats"
+    )]
+    pub use_native_chat: bool,
 }
 
 #[derive(Debug, Clone)]

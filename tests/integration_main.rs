@@ -8,6 +8,9 @@ mod common;
 #[path = "integration/ollama_chat.rs"]
 mod ollama_chat;
 
+#[path = "integration/native_chat.rs"]
+mod native_chat;
+
 #[path = "integration/ollama_generate.rs"]
 mod ollama_generate;
 

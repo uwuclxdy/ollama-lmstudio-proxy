@@ -77,6 +77,7 @@ ollama-lmstudio-proxy \
 | `--max-buffer-size`                     | `262144`                | Initial buffer size for SSE message assembly (bytes)     |
 | `--enable-chunk-recovery`               | `false`                 | Enable partial chunk recovery for streams                |
 | `--lmstudio-token`                      | —                       | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); skipped when caller already sends `Authorization` |
+| `--use-native-chat`                     | `false`                 | Experimental: route `/api/chat` through LM Studio native `/api/v1/chat` for richer reasoning events and accurate stats |
 | `--update`                              | —                       | Self-update from latest GitHub release                   |
 
 ## LM Studio API Compatibility
