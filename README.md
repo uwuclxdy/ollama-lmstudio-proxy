@@ -181,6 +181,23 @@ These parameters go at the **top level** of the request body (not inside `option
 | `suffix`                   | `suffix`                             | Forwarded on non-vision generate requests only                               |
 | `raw`                      | —                                    | Disables system-prompt injection in generate requests                        |
 | `keep_alive`               | `ttl`                                | Seconds (int) or duration string (`"5m"`); `0` unloads the model immediately |
+| `integrations`             | `integrations`                       | **Native path only** (`--use-native-chat`). Array of MCP tool specs forwarded verbatim to LM Studio. See below. |
+
+### MCP integrations (`--use-native-chat`)
+
+When `--use-native-chat` is active, `/api/chat` accepts an `integrations` array that is forwarded
+verbatim to LM Studio's `/api/v1/chat`. Non-array values are silently ignored.
+
+Each element may be:
+
+- A bare plugin-id string: `"huggingface"`
+- A plugin object: `{"type": "plugin", "id": "browser", "allowed_tools": ["browser_navigate"]}`
+- An ephemeral MCP server: `{"type": "ephemeral_mcp", "server_label": "hf", "server_url": "https://hf.co/mcp", "allowed_tools": ["model_search"], "headers": {}}`
+
+Required LM Studio settings (under **Developer** in the LM Studio UI):
+
+- **Allow calling servers from mcp.json** — enables `plugin` entries.
+- **Allow per-request MCPs** — enables `ephemeral_mcp` entries.
 
 If you do not need structured output, you can still pass overrides such as `stop`, `seed`, or additional
 OpenAI-compatible payloads and the proxy will pass them through untouched.

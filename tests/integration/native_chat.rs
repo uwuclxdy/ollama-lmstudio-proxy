@@ -117,6 +117,108 @@ async fn non_streaming_routes_to_native_and_converts_response() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Integrations passthrough
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn integrations_forwarded_verbatim_to_native_backend() {
+    let p = spawn_proxy_with_native().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // Backend must receive the `integrations` array exactly as sent.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .and(body_partial_json(json!({
+            "integrations": [
+                "huggingface",
+                { "type": "plugin", "id": "browser" },
+                {
+                    "type": "ephemeral_mcp",
+                    "server_label": "hf",
+                    "server_url": "https://hf.co/mcp"
+                }
+            ]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "llama3.1-8b-instruct",
+            "output": [{ "type": "message", "content": "ok" }],
+            "stats": {
+                "input_tokens": 5,
+                "total_output_tokens": 1,
+                "tokens_per_second": 40.0,
+                "time_to_first_token_seconds": 0.1
+            }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": [
+                "huggingface",
+                { "type": "plugin", "id": "browser" },
+                {
+                    "type": "ephemeral_mcp",
+                    "server_label": "hf",
+                    "server_url": "https://hf.co/mcp"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with integrations");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["message"]["content"], "ok");
+}
+
+#[tokio::test]
+async fn non_array_integrations_not_forwarded() {
+    let p = spawn_proxy_with_native().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // Backend receives the request but without any `integrations` key.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "llama3.1-8b-instruct",
+            "output": [{ "type": "message", "content": "ok" }],
+            "stats": {
+                "input_tokens": 5,
+                "total_output_tokens": 1,
+                "tokens_per_second": 40.0,
+                "time_to_first_token_seconds": 0.1
+            }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Send `integrations` as a non-array (object) — must be silently dropped.
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": { "type": "plugin", "id": "browser" }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with non-array integrations");
+
+    assert_eq!(resp.status(), 200);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Streaming: native SSE events → Ollama NDJSON chunks
 // ═══════════════════════════════════════════════════════════════════════════
 

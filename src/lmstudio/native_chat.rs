@@ -33,6 +33,13 @@ pub struct NativeChatRequestParams<'a> {
     /// Ollama `think` / reasoning value, normalised to LM Studio's `reasoning`.
     pub think: Option<&'a Value>,
     pub stream: bool,
+    /// MCP integrations forwarded verbatim from the incoming Ollama body.
+    ///
+    /// Only forwarded when it is a JSON array; absent or non-array values are
+    /// silently dropped. Each element may be a bare plugin-id string,
+    /// `{type:"plugin", id, allowed_tools?}`, or
+    /// `{type:"ephemeral_mcp", server_label, server_url, ...}`.
+    pub integrations: Option<&'a Value>,
 }
 
 /// Map an Ollama chat request to a native LM Studio `/api/v1/chat` JSON body.
@@ -56,6 +63,11 @@ pub fn build_native_chat_request(params: NativeChatRequestParams<'_>) -> Value {
 
     if let Some(think_val) = params.think {
         body.insert("reasoning".to_string(), normalize_reasoning(think_val));
+    }
+
+    // Forward MCP integrations verbatim; only accepted when the value is an array.
+    if let Some(Value::Array(arr)) = params.integrations {
+        body.insert("integrations".to_string(), Value::Array(arr.clone()));
     }
 
     body.insert("stream".to_string(), json!(params.stream));

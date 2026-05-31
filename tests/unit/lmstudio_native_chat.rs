@@ -15,6 +15,7 @@ fn build(messages: &Value, options: Option<&Value>, think: Option<&Value>) -> Va
         ollama_options: options,
         think,
         stream: false,
+        integrations: None,
     })
 }
 
@@ -140,6 +141,7 @@ fn request_omits_reasoning_and_system_when_absent() {
         ollama_options: None,
         think: None,
         stream: true,
+        integrations: None,
     });
     assert!(body.get("reasoning").is_none());
     assert!(body.get("system_prompt").is_none());
@@ -267,4 +269,66 @@ fn native_tool_call_shape_matches_converter_input() {
 #[test]
 fn done_reason_is_stop() {
     assert_eq!(native_done_reason(), "stop");
+}
+
+#[test]
+fn request_forwards_integrations_array() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let integrations = json!([
+        "huggingface",
+        { "type": "plugin", "id": "browser", "allowed_tools": ["browser_navigate"] },
+        {
+            "type": "ephemeral_mcp",
+            "server_label": "hf",
+            "server_url": "https://hf.co/mcp",
+            "allowed_tools": ["model_search"]
+        }
+    ]);
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: None,
+        stream: false,
+        integrations: Some(&integrations),
+    });
+
+    let fwd = body["integrations"].as_array().expect("integrations array");
+    assert_eq!(fwd.len(), 3);
+    assert_eq!(fwd[0], json!("huggingface"));
+    assert_eq!(fwd[1]["type"], json!("plugin"));
+    assert_eq!(fwd[2]["type"], json!("ephemeral_mcp"));
+}
+
+#[test]
+fn request_omits_integrations_when_absent() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: None,
+        stream: false,
+        integrations: None,
+    });
+    assert!(body.get("integrations").is_none());
+}
+
+#[test]
+fn request_omits_integrations_when_not_array() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    // A non-array value must be silently dropped.
+    let non_array = json!("plugin-id-string");
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: None,
+        stream: false,
+        integrations: Some(&non_array),
+    });
+    assert!(body.get("integrations").is_none());
 }

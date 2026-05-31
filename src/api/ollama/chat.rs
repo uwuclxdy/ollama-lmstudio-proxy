@@ -104,6 +104,9 @@ pub async fn handle_ollama_chat(
                 // messages (the native builder owns its own `input`/image shaping)
                 // and dispatch to the native converter / streaming driver.
                 if use_native_chat {
+                    // Only forward `integrations` on the native path; the default
+                    // OpenAI-compat path never reads this field.
+                    let integrations = body.get("integrations").filter(|v| v.is_array());
                     let mut native_request = build_native_chat_request(NativeChatRequestParams {
                         model_lm_studio_id: &resolution_ctx.lm_studio_model_id,
                         messages: body.get("messages").unwrap_or(&Value::Null),
@@ -111,6 +114,7 @@ pub async fn handle_ollama_chat(
                         ollama_options: resolution_ctx.effective_options.as_ref(),
                         think: make_top_level_params(&body).think,
                         stream,
+                        integrations,
                     });
                     apply_keep_alive_ttl(&mut native_request, keep_alive_seconds);
 
