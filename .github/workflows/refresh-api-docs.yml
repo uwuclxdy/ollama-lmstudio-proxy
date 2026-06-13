@@ -23,12 +23,12 @@ jobs:
       - name: Detect changes
         id: diff
         run: |
-          if git diff --quiet -- "api docs/"; then
+          if git diff --quiet -- "api-docs/"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "no upstream changes"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat -- "api docs/"
+            git diff --stat -- "api-docs/"
           fi
 
       - name: Open pull request
@@ -42,13 +42,13 @@ jobs:
             Automated sync via scripts/refresh-api-docs.sh.
           title: 'docs(api): refresh upstream API doc mirrors'
           body: |
-            Automated refresh of `api docs/ollama.md` and
-            `api docs/lm studio/{1_developer,1_python,2_typescript,3_cli}/`
-            from `ollama/ollama@main` and `lmstudio-ai/docs@main`.
+            Automated refresh of `api-docs/ollama/`, `api-docs/lmstudio/`
+            and `api-docs/future/` from `docs.ollama.com` and
+            `lmstudio-ai/docs@main`.
 
             Triggered by `.github/workflows/refresh-api-docs.yml`.
             Review the diff before merging — upstream API changes may
             require corresponding proxy updates.
           add-paths: |
-            api docs/**
+            api-docs/**
           delete-branch: true
