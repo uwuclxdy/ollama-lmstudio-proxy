@@ -237,6 +237,27 @@ fn min_p_is_not_forwarded_and_is_warn_logged() {
 }
 
 #[test]
+fn draft_num_predict_is_not_forwarded_and_is_warn_logged() {
+    // Ollama's speculative-decoding draft-token cap. LM Studio exposes no
+    // per-request knob for it, so the proxy drops it and surfaces a warn-log
+    // key instead of forwarding an option upstream can't honor.
+    let options = json!({ "draft_num_predict": 4 });
+    let unsupported = collect_unsupported_keys(&options);
+    assert!(
+        unsupported.contains(&"draft_num_predict"),
+        "draft_num_predict must be in unsupported list: {:?}",
+        unsupported
+    );
+
+    let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert!(
+        params.get("draft_num_predict").is_none(),
+        "draft_num_predict must not appear in mapped params: {:?}",
+        params
+    );
+}
+
+#[test]
 fn truncate_dropped_on_chat_build_kept_on_embeddings_build() {
     let messages = json!([{ "role": "user", "content": "hi" }]);
     let opts = json!({ "truncate": true });
@@ -506,6 +527,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "vocab_only": false,
         "penalize_newline": true,
         "min_p": 0.05,
+        "draft_num_predict": 4,
     });
     let unsupported = collect_unsupported_keys(&options);
     for key in [
@@ -526,6 +548,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "vocab_only",
         "penalize_newline",
         "min_p",
+        "draft_num_predict",
     ] {
         assert!(
             unsupported.contains(&key),
@@ -554,6 +577,7 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "vocab_only",
         "penalize_newline",
         "min_p",
+        "draft_num_predict",
     ] {
         assert!(
             params.get(key).is_none(),

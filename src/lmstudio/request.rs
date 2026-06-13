@@ -207,6 +207,11 @@ const UNSUPPORTED_OPTION_KEYS: &[&str] = &[
     "vocab_only",
     // LM Studio's chat-completions accepts top_p/top_k but not min_p.
     "min_p",
+    // Speculative-decoding draft-token cap. LM Studio configures speculative
+    // decoding at model-load time (draft model selection), with no per-request
+    // knob in its REST/native API — so this has no upstream equivalent and is
+    // warn-dropped like Ollama with no draft model loaded (a no-op there too).
+    "draft_num_predict",
 ];
 
 pub(crate) fn collect_unsupported_keys(options: &Value) -> Vec<&'static str> {
