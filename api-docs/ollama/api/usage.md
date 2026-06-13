@@ -21,7 +21,7 @@ For endpoints that return usage metrics, the response body will include the usag
 
 ```json theme={"system"}
 {
-  "model": "gemma3",
+  "model": "gemma4",
   "created_at": "2025-10-17T23:14:07.414671Z",
   "response": "Hello! How can I help you today?",
   "done": true,

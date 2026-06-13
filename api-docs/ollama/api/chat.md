@@ -46,7 +46,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChatResponse'
               example:
-                model: gemma3
+                model: gemma4
                 created_at: '2025-10-17T23:14:07.414671Z'
                 message:
                   role: assistant
@@ -67,7 +67,7 @@ paths:
           label: Default
           source: |
             curl http://localhost:11434/api/chat -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "messages": [
                 {
                   "role": "user",
@@ -79,7 +79,7 @@ paths:
           label: Non-streaming
           source: |
             curl http://localhost:11434/api/chat -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "messages": [
                 {
                   "role": "user",
@@ -93,7 +93,7 @@ paths:
           source: >
             curl -X POST http://localhost:11434/api/chat -H "Content-Type:
             application/json" -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "messages": [
                 {
                   "role": "user",
@@ -173,7 +173,7 @@ paths:
           label: Images
           source: |
             curl http://localhost:11434/api/chat -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "messages": [
                 {
                   "role": "user",

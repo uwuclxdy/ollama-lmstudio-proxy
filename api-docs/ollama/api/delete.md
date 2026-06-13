@@ -34,7 +34,7 @@ paths:
             schema:
               $ref: '#/components/schemas/DeleteRequest'
             example:
-              model: gemma3
+              model: gemma4
       responses:
         '200':
           description: Model successfully deleted
@@ -43,7 +43,7 @@ paths:
           label: Delete model
           source: |
             curl -X DELETE http://localhost:11434/api/delete -d '{
-              "model": "gemma3"
+              "model": "gemma4"
             }'
 components:
   schemas:

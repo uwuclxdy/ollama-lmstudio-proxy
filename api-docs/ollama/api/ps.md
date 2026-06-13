@@ -39,18 +39,18 @@ paths:
                 $ref: '#/components/schemas/PsResponse'
               example:
                 models:
-                  - name: gemma3
-                    model: gemma3
+                  - name: gemma4
+                    model: gemma4
                     size: 6591830464
                     digest: >-
-                      a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a
+                      c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb
                     details:
                       parent_model: ''
                       format: gguf
-                      family: gemma3
+                      family: gemma4
                       families:
-                        - gemma3
-                      parameter_size: 4.3B
+                        - gemma4
+                      parameter_size: 8.0B
                       quantization_level: Q4_K_M
                     expires_at: '2025-10-17T16:47:07.93355-07:00'
                     size_vram: 5333539264
