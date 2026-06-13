@@ -34,8 +34,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CopyRequest'
             example:
-              source: gemma3
-              destination: gemma3-backup
+              source: gemma4
+              destination: gemma4-backup
       responses:
         '200':
           description: Model successfully copied
@@ -44,8 +44,8 @@ paths:
           label: Copy a model to a new name
           source: |
             curl http://localhost:11434/api/copy -d '{
-              "source": "gemma3",
-              "destination": "gemma3-backup"
+              "source": "gemma4",
+              "destination": "gemma4-backup"
             }'
 components:
   schemas:

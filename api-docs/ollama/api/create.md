@@ -35,7 +35,7 @@ paths:
               $ref: '#/components/schemas/CreateRequest'
             example:
               model: mario
-              from: gemma3
+              from: gemma4
               system: You are Mario from Super Mario Bros.
       responses:
         '200':
@@ -56,7 +56,7 @@ paths:
           label: Default
           source: |
             curl http://localhost:11434/api/create -d '{
-              "from": "gemma3",
+              "from": "gemma4",
               "model": "alpaca",
               "system": "You are Alpaca, a helpful AI assistant. You only answer with Emojis."
             }'
@@ -65,7 +65,7 @@ paths:
           source: |
             curl http://localhost:11434/api/create -d '{
               "model": "ollama",
-              "from": "gemma3",
+              "from": "gemma4",
               "system": "You are Ollama the llama."
             }'
         - lang: bash

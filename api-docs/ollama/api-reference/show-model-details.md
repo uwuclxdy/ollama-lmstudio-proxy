@@ -34,7 +34,7 @@ paths:
             schema:
               $ref: '#/components/schemas/ShowRequest'
             example:
-              model: gemma3
+              model: gemma4
       responses:
         '200':
           description: Model information
@@ -57,44 +57,64 @@ paths:
                 details:
                   parent_model: ''
                   format: gguf
-                  family: gemma3
+                  family: gemma4
                   families:
-                    - gemma3
-                  parameter_size: 4.3B
+                    - gemma4
+                  parameter_size: 8.0B
                   quantization_level: Q4_K_M
                 model_info:
-                  gemma3.attention.head_count: 8
-                  gemma3.attention.head_count_kv: 4
-                  gemma3.attention.key_length: 256
-                  gemma3.attention.sliding_window: 1024
-                  gemma3.attention.value_length: 256
-                  gemma3.block_count: 34
-                  gemma3.context_length: 131072
-                  gemma3.embedding_length: 2560
-                  gemma3.feed_forward_length: 10240
-                  gemma3.mm.tokens_per_image: 256
-                  gemma3.vision.attention.head_count: 16
-                  gemma3.vision.attention.layer_norm_epsilon: 0.000001
-                  gemma3.vision.block_count: 27
-                  gemma3.vision.embedding_length: 1152
-                  gemma3.vision.feed_forward_length: 4304
-                  gemma3.vision.image_size: 896
-                  gemma3.vision.num_channels: 3
-                  gemma3.vision.patch_size: 14
-                  general.architecture: gemma3
+                  gemma4.attention.head_count: 8
+                  gemma4.attention.head_count_kv: 2
+                  gemma4.attention.key_length: 512
+                  gemma4.attention.key_length_swa: 256
+                  gemma4.attention.layer_norm_rms_epsilon: 0.000001
+                  gemma4.attention.shared_kv_layers: 18
+                  gemma4.attention.sliding_window: 512
+                  gemma4.attention.value_length: 512
+                  gemma4.attention.value_length_swa: 256
+                  gemma4.audio.attention.head_count: 8
+                  gemma4.audio.attention.layer_norm_epsilon: 0.000001
+                  gemma4.audio.block_count: 12
+                  gemma4.audio.conv_kernel_size: 5
+                  gemma4.audio.embedding_length: 1024
+                  gemma4.audio.feed_forward_length: 4096
+                  gemma4.block_count: 42
+                  gemma4.context_length: 131072
+                  gemma4.embedding_length: 2560
+                  gemma4.embedding_length_per_layer_input: 256
+                  gemma4.feed_forward_length: 10240
+                  gemma4.final_logit_softcapping: 30
+                  gemma4.rope.dimension_count: 512
+                  gemma4.rope.dimension_count_swa: 256
+                  gemma4.rope.freq_base: 1000000
+                  gemma4.rope.freq_base_swa: 10000
+                  gemma4.vision.attention.head_count: 12
+                  gemma4.vision.attention.layer_norm_epsilon: 0.000001
+                  gemma4.vision.block_count: 16
+                  gemma4.vision.embedding_length: 768
+                  gemma4.vision.feed_forward_length: 3072
+                  gemma4.vision.num_channels: 3
+                  gemma4.vision.patch_size: 16
+                  gemma4.vision.projector.scale_factor: 3
+                  general.architecture: gemma4
                   general.file_type: 15
-                  general.parameter_count: 4299915632
                   general.quantization_version: 2
-                  tokenizer.ggml.add_bos_token: true
+                  tokenizer.ggml.add_bos_token: false
                   tokenizer.ggml.add_eos_token: false
+                  tokenizer.ggml.add_mask_token: false
                   tokenizer.ggml.add_padding_token: false
                   tokenizer.ggml.add_unknown_token: false
                   tokenizer.ggml.bos_token_id: 2
                   tokenizer.ggml.eos_token_id: 1
+                  tokenizer.ggml.eos_token_ids:
+                    - 1
+                    - 106
+                    - 50
+                  tokenizer.ggml.mask_token_id: 4
                   tokenizer.ggml.merges: null
                   tokenizer.ggml.model: llama
                   tokenizer.ggml.padding_token_id: 0
-                  tokenizer.ggml.pre: default
+                  tokenizer.ggml.pre: gemma4
                   tokenizer.ggml.scores: null
                   tokenizer.ggml.token_type: null
                   tokenizer.ggml.tokens: null
@@ -104,13 +124,13 @@ paths:
           label: Default
           source: |
             curl http://localhost:11434/api/show -d '{
-              "model": "gemma3"
+              "model": "gemma4"
             }'
         - lang: bash
           label: Verbose
           source: |
             curl http://localhost:11434/api/show -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "verbose": true
             }'
 components:

@@ -34,7 +34,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PullRequest'
             example:
-              model: gemma3
+              model: gemma4
       responses:
         '200':
           description: Pull status updates.
@@ -54,13 +54,13 @@ paths:
           label: Default
           source: |
             curl http://localhost:11434/api/pull -d '{
-              "model": "gemma3"
+              "model": "gemma4"
             }'
         - lang: bash
           label: Non-streaming
           source: |
             curl http://localhost:11434/api/pull -d '{
-              "model": "gemma3",
+              "model": "gemma4",
               "stream": false
             }'
 components:

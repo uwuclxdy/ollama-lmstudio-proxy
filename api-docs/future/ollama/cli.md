@@ -7,7 +7,7 @@
 ### Run a model
 
 ```
-ollama run gemma3
+ollama run gemma4
 ```
 
 ### Launch integrations
@@ -66,7 +66,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 #### Multimodal models
 
 ```
-ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
+ollama run gemma4 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
 ### Generate embeddings
@@ -84,13 +84,13 @@ echo "Hello world" | ollama run nomic-embed-text
 ### Download a model
 
 ```
-ollama pull gemma3
+ollama pull gemma4
 ```
 
 ### Remove a model
 
 ```
-ollama rm gemma3
+ollama rm gemma4
 ```
 
 ### List models
@@ -116,7 +116,7 @@ ollama signout
 First, create a `Modelfile`
 
 ```
-FROM gemma3
+FROM gemma4
 SYSTEM """You are a happy cat."""
 ```
 
@@ -135,7 +135,7 @@ ollama ps
 ### Stop a running model
 
 ```
-ollama stop gemma3
+ollama stop gemma4
 ```
 
 ### Start Ollama

@@ -39,18 +39,18 @@ paths:
                 $ref: '#/components/schemas/ListResponse'
               example:
                 models:
-                  - name: gemma3
-                    model: gemma3
+                  - name: gemma4
+                    model: gemma4
                     modified_at: '2025-10-03T23:34:03.409490317-07:00'
-                    size: 3338801804
+                    size: 9608350245
                     digest: >-
-                      a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a
+                      c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb
                     details:
                       format: gguf
-                      family: gemma
+                      family: gemma4
                       families:
-                        - gemma
-                      parameter_size: 4.3B
+                        - gemma4
+                      parameter_size: 8.0B
                       quantization_level: Q4_K_M
       x-codeSamples:
         - lang: bash
