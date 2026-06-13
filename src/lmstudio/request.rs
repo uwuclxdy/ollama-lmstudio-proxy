@@ -109,7 +109,7 @@ pub fn build_lm_studio_request(
 
 fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
     // Listed in LM Studio's chat-completions doc
-    // (api_docs/lmstudio/1_developer/3_openai-compat/chat-completions.md).
+    // (api-docs/lmstudio/1_developer/3_openai-compat/chat-completions.md).
     // `min_p` is intentionally absent — it has no LM Studio equivalent and is
     // warn-logged via UNSUPPORTED_OPTION_KEYS.
     const DIRECT_MAPPINGS: &[&str] = &[
@@ -138,7 +138,7 @@ fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Ma
     }
 }
 
-// Ollama spec (api_docs/ollama/api/embed.md) defines `truncate` and
+// Ollama spec (api-docs/ollama/api/embed.md) defines `truncate` and
 // `dimensions` only for /api/embed. They have no meaning on chat-completions
 // and must not pollute the upstream body there.
 fn forward_embeddings_only_params(

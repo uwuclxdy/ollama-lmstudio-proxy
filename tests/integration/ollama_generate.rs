@@ -1378,7 +1378,7 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
 // 28. keep_alive:0 with no prompt → unload-only, no inference
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Per `api_docs/ollama/api/generate.md`, `GenerateRequest.required = [model]`;
+// Per `api-docs/ollama/api/generate.md`, `GenerateRequest.required = [model]`;
 // the documented unload call is `{"model":"x","keep_alive":0}` with no prompt.
 // The proxy must skip the LM Studio inference call entirely and only hit the
 // native unload endpoint.

@@ -202,7 +202,7 @@ fn finalize_embedding_response(mut response: Value, mode: EmbeddingResponseMode)
 /// Lift Ollama's top-level `/api/embed` advanced parameters (`truncate`, `dimensions`)
 /// into the `options` map so the shared option-mapper picks them up.
 ///
-/// Per Ollama spec (api_docs/ollama.md §"Generate Embeddings"), `truncate` and
+/// Per Ollama spec (api-docs/ollama.md §"Generate Embeddings"), `truncate` and
 /// `dimensions` sit at the top level of the request body, peers of `model` and
 /// `input`. Values inside an existing `options` object take precedence.
 pub fn lift_embed_top_level_params(body: &mut Value) {

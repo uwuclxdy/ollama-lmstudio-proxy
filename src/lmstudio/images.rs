@@ -117,7 +117,7 @@ pub fn convert_per_message_images(messages: Value) -> Value {
 /// Injects top-level images (from `/api/generate`-style requests routed through chat)
 /// into the LAST user message — never a system or assistant message.
 ///
-/// Reference: api_docs/ollama.md §"Generate a chat completion" (with images): images
+/// Reference: api-docs/ollama.md §"Generate a chat completion" (with images): images
 /// travel as part of the user turn that submitted them.
 pub fn inject_images_into_messages(messages: Value, images: &Value) -> Value {
     let image_parts = build_image_parts(images);

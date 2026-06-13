@@ -1367,8 +1367,8 @@ async fn chat_options_system_does_not_leak_as_top_level_field() {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LM Studio's chat-completions accepts a fixed key set
-// (api_docs/lmstudio/.../chat-completions.md). The Ollama spec
-// (api_docs/ollama/api/embed.md) lists `truncate` and `dimensions` as
+// (api-docs/lmstudio/.../chat-completions.md). The Ollama spec
+// (api-docs/ollama/api/embed.md) lists `truncate` and `dimensions` as
 // embedding-only fields, and Ollama's `ModelOptions.min_p` has no LM Studio
 // equivalent. None of these may leak into the chat request body.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1418,7 +1418,7 @@ async fn chat_drops_min_p_truncate_and_dimensions_options() {
 // keep_alive:0 with no/empty messages → unload-only, no inference
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Per `api_docs/ollama/api/chat.md`, `ChatRequest.required = [model]`; the
+// Per `api-docs/ollama/api/chat.md`, `ChatRequest.required = [model]`; the
 // documented unload call is `{"model":"x","keep_alive":0}` with no messages.
 // The proxy must skip the LM Studio chat call entirely and only hit the
 // native unload endpoint.

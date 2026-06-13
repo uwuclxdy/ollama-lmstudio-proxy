@@ -5,7 +5,7 @@
 //! NDJSON progress chunks.
 //!
 //! LM Studio's status payload is rich; Ollama's `/api/pull` stream is narrower
-//! (see api_docs/ollama.md §"Pull a Model"):
+//! (see api-docs/ollama.md §"Pull a Model"):
 //!   - in-progress: `{"status":"pulling <digest>", "digest":..., "total":..., "completed":...}`
 //!   - terminal:    `{"status":"success"}` (literal — clients match by equality).
 

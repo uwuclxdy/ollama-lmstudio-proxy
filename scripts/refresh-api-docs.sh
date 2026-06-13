@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Refresh the upstream-mirrored API docs under "api_docs/".
+# Refresh the upstream-mirrored API docs under "api-docs/".
 #
-#   - api_docs/ollama/<path>           ← https://docs.ollama.com/<path>
+#   - api-docs/ollama/<path>           ← https://docs.ollama.com/<path>
 #         paths listed in OLLAMA_ACTIVE
-#   - api_docs/future/ollama/<path>    ← https://docs.ollama.com/<path>
+#   - api-docs/future/ollama/<path>    ← https://docs.ollama.com/<path>
 #         paths reachable from llms.txt but neither active nor denied
-#   - api_docs/lmstudio/<path>         ← lmstudio-ai/docs@main:<path>
+#   - api-docs/lmstudio/<path>         ← lmstudio-ai/docs@main:<path>
 #         paths listed in LMS_ACTIVE
-#   - api_docs/future/lmstudio/<path>  ← lmstudio-ai/docs@main:<path>
+#   - api-docs/future/lmstudio/<path>  ← lmstudio-ai/docs@main:<path>
 #         paths in the upstream tree but neither active nor denied
 #
 # Layout invariant: future/<source>/<path> mirrors the upstream path of
@@ -21,7 +21,7 @@
 # Anything genuinely new added upstream auto-flows into future/ so it
 # surfaces for review on the next refresh.
 #
-# Local-only files under api_docs/ (e.g. lmstudio_ollama_openai.md,
+# Local-only files under api-docs/ (e.g. lmstudio_ollama_openai.md,
 # lmstudio_vs_ollama.md) are never touched.
 #
 # Re-run safely: only the mirrored trees are wiped and rebuilt.
@@ -34,7 +34,7 @@ LMS_REPO="https://github.com/lmstudio-ai/docs.git"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCS_DIR="$REPO_ROOT/api_docs"
+DOCS_DIR="$REPO_ROOT/api-docs"
 OLLAMA_DIR="$DOCS_DIR/ollama"
 LMS_DIR="$DOCS_DIR/lmstudio"
 FUTURE_OLLAMA_DIR="$DOCS_DIR/future/ollama"
@@ -119,7 +119,7 @@ has_prefix() {
 }
 
 if [[ ! -d "$DOCS_DIR" ]]; then
-    echo "error: '$DOCS_DIR' does not exist; run from repo containing api_docs/" >&2
+    echo "error: '$DOCS_DIR' does not exist; run from repo containing api-docs/" >&2
     exit 1
 fi
 

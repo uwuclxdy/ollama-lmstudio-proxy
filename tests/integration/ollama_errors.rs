@@ -1,5 +1,5 @@
 // Integration tests for upstream HTTP error status code forwarding and
-// mid-stream pull error chunk shape — per api_docs/ollama/api/errors.md.
+// mid-stream pull error chunk shape — per api-docs/ollama/api/errors.md.
 //
 // Drift A: proxy must forward upstream 429 (Too Many Requests) and 502 (Bad
 //   Gateway) instead of collapsing them to 503.
@@ -148,7 +148,7 @@ async fn pull_stream_error_chunk_is_bare_error_object() {
     // When LM Studio's download endpoint fails mid-stream (e.g. status poll
     // returns an error), the proxy must emit a chunk with only the "error"
     // key — no "status", "model", or any other field.
-    // Per api_docs/ollama/api/errors.md §"Errors that occur while streaming".
+    // Per api-docs/ollama/api/errors.md §"Errors that occur while streaming".
     let p = spawn_proxy().await;
 
     // Initiate download — LM Studio starts a download job.

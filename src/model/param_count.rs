@@ -2,7 +2,7 @@
 //! into a u64 count of weights.
 //!
 //! Ollama's `general.parameter_count` field is documented as a raw count
-//! (e.g. 8030261248 for an 8.0B model — `api_docs/ollama.md` line 1485).
+//! (e.g. 8030261248 for an 8.0B model — `api-docs/ollama.md` line 1485).
 //! LM Studio's `params_string` is a human-friendly shorthand; this helper
 //! converts between the two formats.
 

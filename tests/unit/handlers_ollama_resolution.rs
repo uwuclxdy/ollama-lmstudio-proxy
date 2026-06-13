@@ -94,7 +94,7 @@ fn absent_think_gives_none_in_generate() {
 }
 
 /// /api/generate: a top-level `system` string is the canonical Ollama field.
-/// Reference: api_docs/ollama.md §"Generate a completion" — `system` overrides
+/// Reference: api-docs/ollama.md §"Generate a completion" — `system` overrides
 /// the Modelfile-defined system prompt.
 #[test]
 fn extract_system_prompt_finds_top_level_system() {
@@ -114,7 +114,7 @@ fn extract_system_prompt_falls_back_to_options_system() {
 }
 
 /// When both are present the top-level field wins (it is the documented
-/// override). Reference: api_docs/ollama.md §"Generate a completion".
+/// override). Reference: api-docs/ollama.md §"Generate a completion".
 #[test]
 fn extract_system_prompt_top_level_wins_over_options() {
     let body = json!({

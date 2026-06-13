@@ -334,7 +334,7 @@ fn forwards_logit_bias_when_present() {
 #[test]
 fn options_system_is_not_forwarded_as_top_level_key() {
     // LM Studio's chat-completions does not list "system" as a supported
-    // top-level key (see api_docs/lmstudio/1_developer/3_openai-compat/
+    // top-level key (see api-docs/lmstudio/1_developer/3_openai-compat/
     // chat-completions.md). The synthetic system message is injected
     // elsewhere (api/ollama/resolution.rs::extract_system_prompt), so the
     // mapper must drop options.system silently.

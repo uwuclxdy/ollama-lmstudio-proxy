@@ -1,6 +1,6 @@
 //! Short-circuit handler for `keep_alive: 0` requests with no prompt/messages.
 //!
-//! Per the Ollama spec (`api_docs/ollama/api/generate.md` and `chat.md`), both
+//! Per the Ollama spec (`api-docs/ollama/api/generate.md` and `chat.md`), both
 //! `GenerateRequest` and `ChatRequest` only require the `model` field. The
 //! documented invocation `{"model":"x","keep_alive":0}` is an unload-only
 //! request: no inference is performed, the model is unloaded, and a single
@@ -17,7 +17,7 @@
 //! regular inference path and the unload races the inference response — see
 //! the existing `keep_alive_zero_accepted` integration tests.
 //!
-//! `done_reason` is omitted: `api_docs/ollama/api/generate.md` and `chat.md`
+//! `done_reason` is omitted: `api-docs/ollama/api/generate.md` and `chat.md`
 //! only document `stop | length`, and the project's policy (see
 //! `src/streaming/chunks.rs`) is to omit unknown reasons rather than fabricate
 //! one.

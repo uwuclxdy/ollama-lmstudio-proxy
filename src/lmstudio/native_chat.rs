@@ -10,7 +10,7 @@
 //! the converter mirrors `convert_to_ollama_chat`'s output shape.
 //!
 //! Source of truth:
-//! - `api_docs/future/lmstudio/1_developer/2_rest/chat.md` (request + response)
+//! - `api-docs/future/lmstudio/1_developer/2_rest/chat.md` (request + response)
 
 use std::time::Instant;
 
