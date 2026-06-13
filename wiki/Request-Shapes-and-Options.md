@@ -29,6 +29,18 @@ enforcement.
 | `truncate` | `truncate` | Direct passthrough |
 | `dimensions` | `dimensions` | Direct passthrough (embeddings) |
 
+### Accepted but ignored
+
+Ollama-only sampling/runtime options with no LM Studio equivalent (e.g. `mirostat*`,
+`tfs_z`, `typical_p`, `repeat_last_n`, `num_keep`, `num_gpu`, `num_thread`, `numa`) are
+accepted without error and dropped, surfaced once per request in a warn-log so they are
+not silently swallowed.
+
+`draft_num_predict` (max speculative draft tokens per step) falls here too: LM Studio
+configures speculative decoding at model-load time via a draft model, with no per-request
+knob in its API, so the option is dropped — a no-op, matching Ollama itself when no draft
+model is loaded.
+
 ## Fields that go at the top level
 
 | Ollama field | LM Studio parameter | Notes |
