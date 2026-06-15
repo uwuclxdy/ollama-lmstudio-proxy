@@ -9,18 +9,18 @@ endpoint is translated to its native equivalent.
 |----------|-----------|
 | `GET /` | Returns "Ollama is running" |
 | `GET /api/tags` | Translates to `/api/v1/models`; includes proxy-managed aliases |
-| `GET /api/ps` | Translates to `/api/v1/models`; shows loaded models plus aliases |
+| `GET /api/ps` | Translates to `/api/v1/models`; shows loaded models plus aliases; `size_vram` mirrors the loaded model `size` (LM Studio reports no GPU/CPU split); `expires_at` is a best-effort placeholder |
 | `POST /api/show` | Fetches real LM Studio metadata; merges alias info when present |
-| `POST /api/chat` | Translates to `/v1/chat/completions` (or native `/api/v1/chat` with `--use-native-chat`) |
-| `POST /api/generate` | Translates to `/v1/completions`; vision requests use chat endpoint |
+| `POST /api/chat` | Translates to `/api/v0/chat/completions` for real token stats (or native `/api/v1/chat` with `--use-native-chat`) |
+| `POST /api/generate` | Translates to `/api/v0/completions`; vision requests use the v0 chat endpoint |
 | `POST /api/embed` | Translates to `/v1/embeddings`; also handles `/api/embeddings` |
-| `GET /api/version` | Returns proxy version in Ollama format |
+| `GET /api/version` | Returns configurable version string (`--ollama-version`, default `0.30.0`) in Ollama format |
 | `GET /health` | Validates LM Studio reachability |
 | `POST /api/create` | Creates proxy-managed virtual aliases (no custom blobs) |
 | `POST /api/pull` | Translates to `/api/v1/models/download`; streams download progress |
 | `POST /api/push` | Returns 501 (LM Studio has no model registry) |
-| `POST /api/web_search` | Returns 501 (cloud-only Ollama feature, no LM Studio backend) |
-| `POST /api/web_fetch` | Returns 501 (cloud-only Ollama feature, no LM Studio backend) |
+| `POST /api/web_search` | Generic JSON passthrough to a configurable provider (`--search-url`); returns 501 when unconfigured. Request: `{query, max_results?}`; provider response returned verbatim |
+| `POST /api/web_fetch` | Fetches URL, renders HTML to markdown. Request: `{url}`; response: `{title, content, links}`. SSRF guard on by default (disable with `--allow-private-fetch`). No LM Studio dependency |
 | `DELETE /api/delete` | Removes proxy-managed aliases only |
 | `POST /api/copy` | Duplicates aliases or references LM Studio models |
 | `HEAD/POST /api/blobs/:digest` | Stores and validates blobs for alias manifests |
