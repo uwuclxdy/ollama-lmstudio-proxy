@@ -184,6 +184,10 @@ fn is_blocked_ip_rejects_non_public() {
         "fc00::1",          // unique-local
         "fe80::1",          // link-local
         "::ffff:127.0.0.1", // v4-mapped loopback
+        "100.64.0.1",       // CGNAT (carrier-grade NAT) lower bound
+        "100.127.255.255",  // CGNAT upper bound
+        "240.0.0.1",        // reserved (240.0.0.0/4)
+        "255.255.255.255",  // limited broadcast
     ] {
         let ip: IpAddr = s.parse().expect("ip");
         assert!(is_blocked_ip(ip), "{s} should be blocked");
@@ -196,6 +200,8 @@ fn is_blocked_ip_allows_public() {
         "1.1.1.1",
         "8.8.8.8",
         "93.184.216.34",
+        "100.63.255.255", // just below CGNAT — public
+        "100.128.0.1",    // just above CGNAT — public
         "2606:4700:4700::1111",
     ] {
         let ip: IpAddr = s.parse().expect("ip");
@@ -209,6 +215,7 @@ async fn resolve_public_addr_rejects_private_literals() {
         "http://127.0.0.1/x",
         "http://169.254.169.254/latest/meta-data",
         "http://10.1.2.3/admin",
+        "http://100.64.0.1/x", // CGNAT — rejected on every hop via client_for
     ] {
         assert!(
             resolve_public_addr(&Url::parse(u).expect("url"))

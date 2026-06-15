@@ -268,12 +268,19 @@ async fn resolve_public_addr(url: &Url) -> Result<SocketAddr, ProxyError> {
 fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
+            let oct = v4.octets();
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.is_multicast()
+                // CGNAT 100.64.0.0/10 — carrier-grade NAT: routable-looking but
+                // internal, so a public name resolving here would still hit a LAN.
+                || (oct[0] == 100 && (64..=127).contains(&oct[1]))
+                // 240.0.0.0/4 — reserved/experimental (255.255.255.255 broadcast is
+                // already caught above; this covers the rest of the block).
+                || oct[0] >= 240
         }
         IpAddr::V6(v6) => {
             if let Some(mapped) = v6.to_ipv4_mapped() {
