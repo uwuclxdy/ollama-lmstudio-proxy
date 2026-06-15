@@ -57,21 +57,33 @@ pub async fn spawn_proxy() -> TestProxy {
 }
 
 pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy {
-    spawn_proxy_inner(enable_chunk_recovery, false).await
+    spawn_proxy_inner(enable_chunk_recovery, false, false).await
 }
 
 /// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
 /// `/api/chat` routes through LM Studio's native endpoint instead of the
 /// OpenAI-compat `/api/v0/chat/completions`.
 pub async fn spawn_proxy_with_native() -> TestProxy {
-    spawn_proxy_inner(true, true).await
+    spawn_proxy_inner(true, true, false).await
 }
 
-async fn spawn_proxy_inner(enable_chunk_recovery: bool, use_native_chat: bool) -> TestProxy {
+/// Boot a proxy with `/api/web_search` configured to forward to the mock
+/// server's `/search` endpoint (mount a POST `/search` mock to drive it).
+pub async fn spawn_proxy_with_search() -> TestProxy {
+    spawn_proxy_inner(true, false, true).await
+}
+
+async fn spawn_proxy_inner(
+    enable_chunk_recovery: bool,
+    use_native_chat: bool,
+    configure_search: bool,
+) -> TestProxy {
     ensure_runtime_initialized(enable_chunk_recovery);
 
     let mock = MockServer::start().await;
     let state_dir = tempfile::tempdir().expect("create temp state dir");
+
+    let search_url = configure_search.then(|| format!("{}/search", mock.uri()));
 
     let config = Config {
         listen: "127.0.0.1:0".to_string(),
@@ -87,6 +99,8 @@ async fn spawn_proxy_inner(enable_chunk_recovery: bool, use_native_chat: bool) -
         offload_kv_cache: false,
         eval_batch_size: None,
         allow_private_fetch: true,
+        search_url,
+        search_api_key: None,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

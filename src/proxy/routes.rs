@@ -263,10 +263,16 @@ async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyErr
     ))
 }
 
-async fn web_search_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
-    Err(ProxyError::not_implemented(
-        "web_search is not supported: cloud-only Ollama feature with no LM Studio backend",
-    ))
+async fn web_search_handler(
+    State(s): State<AppState>,
+    JsonBody(body): JsonBody<Value>,
+) -> Result<Response, ProxyError> {
+    web::handle_web_search(
+        body,
+        s.config.search_url.as_deref(),
+        s.config.search_api_key.as_deref(),
+    )
+    .await
 }
 
 async fn web_fetch_handler(JsonBody(body): JsonBody<Value>) -> Result<Response, ProxyError> {

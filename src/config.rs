@@ -84,6 +84,20 @@ pub struct Config {
         help = "allow /api/web_fetch to reach private/loopback/link-local addresses (blocked by default to prevent SSRF)"
     )]
     pub allow_private_fetch: bool,
+
+    #[arg(
+        long,
+        env = "SEARCH_URL",
+        help = "search provider endpoint for /api/web_search; receives POST {query, max_results} and must return Ollama-shaped {results:[{title,url,content}]}. Unset → /api/web_search returns 501"
+    )]
+    pub search_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "SEARCH_API_KEY",
+        help = "bearer token sent to the search provider (--search-url) for /api/web_search"
+    )]
+    pub search_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]

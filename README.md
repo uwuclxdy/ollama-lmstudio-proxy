@@ -29,6 +29,7 @@ It translates their requests and hands them to LM Studio.
 - **Downloads:** `/api/pull` streams catalog downloads straight from LM Studio.
 - **Passthrough:** Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) work out of the box.
 - **Web fetch:** `/api/web_fetch` retrieves a URL and returns `{title, content, links}` (HTML rendered to markdown) — no cloud account needed.
+- **Web search:** `/api/web_search` forwards to a search provider you configure with `--search-url` (optional `--search-api-key`); returns `{results}` (501 until configured).
 - **Native mode:** optional `/api/v1/chat` backend for richer per-event reasoning/tool-call streaming and MCP tools.
 
 ## 🔁 How it works

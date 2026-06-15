@@ -99,6 +99,65 @@ pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
     })))
 }
 
+/// Handle `POST /api/web_search` via a generic JSON-passthrough provider.
+///
+/// Forwards `{query, max_results}` to the operator-configured `search_url`
+/// (optionally with a bearer key) and returns the provider's JSON verbatim —
+/// expected to already be Ollama-shaped (`{results:[{title,url,content}]}`).
+/// Returns 501 when no provider is configured. `search_url` is set by the
+/// operator (not the caller), so there is no SSRF surface here.
+pub async fn handle_web_search(
+    body: Value,
+    search_url: Option<&str>,
+    search_api_key: Option<&str>,
+) -> Result<Response, ProxyError> {
+    let Some(provider_url) = search_url else {
+        return Err(ProxyError::not_implemented(
+            "web_search is not configured: set --search-url to a provider that accepts {query, max_results} and returns {results:[{title,url,content}]}",
+        ));
+    };
+
+    let query = body
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ProxyError::bad_request("Missing 'query' field"))?;
+
+    // Ollama's web-search spec: max_results defaults to 5, capped at 10.
+    let max_results = body
+        .get("max_results")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5)
+        .clamp(1, 10);
+
+    let mut request = web_client()
+        .post(provider_url)
+        .json(&json!({ "query": query, "max_results": max_results }));
+    if let Some(key) = search_api_key {
+        request = request.bearer_auth(key);
+    }
+
+    let response = request.send().await.map_err(|e| {
+        ProxyError::new(format!("web_search: request to provider failed: {e}"), 502)
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(ProxyError::new(
+            format!("web_search: provider returned status {status}"),
+            502,
+        ));
+    }
+
+    let value: Value = response.json().await.map_err(|e| {
+        ProxyError::new(
+            format!("web_search: provider response was not valid JSON: {e}"),
+            502,
+        )
+    })?;
+    Ok(json_response(&value))
+}
+
 /// GET `start`, following up to [`MAX_REDIRECTS`] redirects manually. When
 /// `guard_ssrf` is set, every hop's host is resolved and rejected if it maps to
 /// a private/loopback/link-local address (SSRF defense). Returns the final

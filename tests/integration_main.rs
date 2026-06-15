@@ -43,3 +43,6 @@ mod ollama_errors;
 
 #[path = "integration/web_fetch.rs"]
 mod web_fetch;
+
+#[path = "integration/web_search.rs"]
+mod web_search;
