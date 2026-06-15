@@ -21,6 +21,9 @@ pub fn make_top_level_params(body: &Value) -> TopLevelParams<'_> {
         think: body.get("think").or_else(|| body.get("reasoning_effort")),
         logprobs: body.get("logprobs"),
         top_logprobs: body.get("top_logprobs"),
+        // Caller fills this from the resolved model's capability after building
+        // the params (the body alone can't say whether the model reasons).
+        model_is_thinking: false,
     }
 }
 
@@ -41,6 +44,9 @@ pub struct ModelResolutionContext {
     pub effective_options: Option<Value>,
     pub effective_format: Option<Value>,
     pub system_prompt: Option<String>,
+    /// Whether the resolved model is reasoning-capable (`ModelInfo::is_thinking_model`).
+    /// Drives the default-`reasoning:on` behavior when the caller omits `think`.
+    pub model_supports_thinking: bool,
 }
 
 pub async fn resolve_model_target<'a>(
@@ -66,8 +72,13 @@ pub async fn resolve_model_with_context<'a>(
     request_body: &Value,
     cancellation_token: CancellationToken,
 ) -> Result<ModelResolutionContext, ProxyError> {
-    let (lm_studio_model_id, virtual_entry) =
-        resolve_model_target(context, model_resolver, requested_model, cancellation_token).await?;
+    let (lm_studio_model_id, virtual_entry) = resolve_model_target(
+        context,
+        model_resolver,
+        requested_model,
+        cancellation_token.clone(),
+    )
+    .await?;
 
     let request_options = request_body.get("options");
     let request_format = request_body.get("format");
@@ -92,11 +103,39 @@ pub async fn resolve_model_with_context<'a>(
         .and_then(|entry| entry.metadata.system_prompt.clone());
     let system_prompt = system_from_body.or(system_from_virtual);
 
+    // Resolve the model's reasoning capability so the inference path can default
+    // `reasoning:on` for thinking models when the caller omitted `think`
+    // (matching real Ollama). The lookup costs a `GET /api/v1/models`, so skip it
+    // unless it can change the outcome: only when an inference body (`messages`
+    // or `prompt`) carries NO explicit `think`/`reasoning_effort`. An explicit
+    // value always wins downstream, and embeddings (which send `input`, never
+    // `messages`/`prompt`) never reason — both paths stay zero-extra-call.
+    // Best-effort: an unknown / unfetchable model is treated as non-thinking.
+    let think_absent =
+        request_body.get("think").is_none() && request_body.get("reasoning_effort").is_none();
+    let is_inference_body =
+        request_body.get("messages").is_some() || request_body.get("prompt").is_some();
+    let model_supports_thinking = if think_absent && is_inference_body {
+        let model_info = fetch_model_info_for_id(
+            context,
+            model_resolver,
+            &lm_studio_model_id,
+            cancellation_token,
+        )
+        .await?;
+        model_info
+            .map(|info| info.is_thinking_model())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     Ok(ModelResolutionContext {
         lm_studio_model_id,
         effective_options,
         effective_format,
         system_prompt,
+        model_supports_thinking,
     })
 }
 

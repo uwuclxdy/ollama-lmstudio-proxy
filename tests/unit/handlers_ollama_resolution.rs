@@ -42,6 +42,7 @@ fn suffix_inserted_into_lm_request() {
         think: None,
         logprobs: None,
         top_logprobs: None,
+        model_is_thinking: false,
     };
 
     let mut lm_request = build_lm_studio_request(
@@ -182,4 +183,56 @@ fn think_wins_over_reasoning_effort_when_both_present() {
         Some(&json!("high")),
         "think must take precedence over reasoning_effort"
     );
+}
+
+#[test]
+fn make_top_level_params_defaults_model_is_thinking_false() {
+    // The body alone can't tell whether the model reasons; the inference path
+    // fills this from the resolved model, so the constructed default is false.
+    let body = json!({ "think": true, "model": "x", "messages": [] });
+    let top = make_top_level_params(&body);
+    assert!(!top.model_is_thinking);
+}
+
+// Build a minimal ModelInfo without the HTTP stack. `resolve_model_with_context`
+// populates `model_supports_thinking` from exactly this predicate, so testing
+// `is_thinking_model()` pins the field's value for both cases.
+fn model_info(id: &str, supports_reasoning: bool) -> ModelInfo {
+    ModelInfo {
+        id: id.to_string(),
+        ollama_name: format!("{id}:latest"),
+        model_type: "llm".to_string(),
+        publisher: "test".to_string(),
+        arch: "llama".to_string(),
+        compatibility_type: "gguf".to_string(),
+        quantization: "q4_0".to_string(),
+        state: "not-loaded".to_string(),
+        max_context_length: 4096,
+        context_length: 4096,
+        is_loaded: false,
+        supports_vision: false,
+        supports_tools: false,
+        supports_reasoning,
+        has_backend_capabilities: true,
+        size_bytes: None,
+        params_string: None,
+        display_name: None,
+        description: None,
+        loaded_flash_attention: None,
+        loaded_eval_batch_size: None,
+        loaded_parallel: None,
+    }
+}
+
+#[test]
+fn model_supports_thinking_true_for_reasoning_model() {
+    // Mirrors how resolve_model_with_context derives model_supports_thinking.
+    let info = model_info("some-model", true);
+    assert!(info.is_thinking_model());
+}
+
+#[test]
+fn model_supports_thinking_false_for_non_reasoning_model() {
+    let info = model_info("some-model", false);
+    assert!(!info.is_thinking_model());
 }

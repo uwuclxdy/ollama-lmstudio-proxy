@@ -12,6 +12,11 @@ pub struct TopLevelParams<'a> {
     pub think: Option<&'a Value>,
     pub logprobs: Option<&'a Value>,
     pub top_logprobs: Option<&'a Value>,
+    /// Whether the resolved model is reasoning-capable. When `think` is absent
+    /// and this is true, the proxy defaults `reasoning` to `"on"`, matching real
+    /// Ollama (thinking models reason by default). An explicit `think` always
+    /// wins (`think:false` → `"off"` stays authoritative).
+    pub model_is_thinking: bool,
 }
 
 pub fn map_ollama_to_lmstudio_params(
@@ -55,6 +60,10 @@ fn apply_top_level_params(
 ) {
     if let Some(think_val) = top.think {
         request_obj.insert("reasoning".to_string(), normalize_reasoning(think_val));
+    } else if top.model_is_thinking {
+        // No explicit `think`, but the model reasons by default → enable it,
+        // mirroring real Ollama. Explicit `think` (handled above) always wins.
+        request_obj.insert("reasoning".to_string(), json!("on"));
     }
     if let Some(lp) = top.logprobs {
         request_obj.insert("logprobs".to_string(), lp.clone());

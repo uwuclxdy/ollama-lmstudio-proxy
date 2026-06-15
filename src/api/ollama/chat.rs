@@ -121,12 +121,21 @@ pub async fn handle_ollama_chat(
                     // Only forward `integrations` on the native path; the default
                     // OpenAI-compat path never reads this field.
                     let integrations = body.get("integrations").filter(|v| v.is_array());
+                    // Mirror the OpenAI-compat default: absent `think` on a
+                    // thinking-capable model enables reasoning. Explicit `think`
+                    // always wins. The local `default_think` outlives the borrow.
+                    let default_think = Value::String("on".to_string());
+                    let native_think = make_top_level_params(&body).think.or_else(|| {
+                        resolution_ctx
+                            .model_supports_thinking
+                            .then_some(&default_think)
+                    });
                     let mut native_request = build_native_chat_request(NativeChatRequestParams {
                         model_lm_studio_id: &resolution_ctx.lm_studio_model_id,
                         messages: body.get("messages").unwrap_or(&Value::Null),
                         system_prompt: resolution_ctx.system_prompt.as_deref(),
                         ollama_options: resolution_ctx.effective_options.as_ref(),
-                        think: make_top_level_params(&body).think,
+                        think: native_think,
                         stream,
                         integrations,
                     });
@@ -175,7 +184,8 @@ pub async fn handle_ollama_chat(
                     with_per_message_images
                 };
 
-                let top_level_params = make_top_level_params(&body);
+                let mut top_level_params = make_top_level_params(&body);
+                top_level_params.model_is_thinking = resolution_ctx.model_supports_thinking;
                 let mut lm_request = build_lm_studio_request(
                     &resolution_ctx.lm_studio_model_id,
                     LMStudioRequestType::Chat {

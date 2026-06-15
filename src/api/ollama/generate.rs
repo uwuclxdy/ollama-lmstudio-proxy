@@ -190,7 +190,8 @@ pub async fn handle_ollama_generate(
                 );
 
                 let routed_to_chat = lm_studio_endpoint == LM_STUDIO_NATIVE_CHAT;
-                let top_level_params = make_top_level_params(&body);
+                let mut top_level_params = make_top_level_params(&body);
+                top_level_params.model_is_thinking = resolution_ctx.model_supports_thinking;
                 let suffix_val = body.get("suffix");
 
                 // `suffix` (fill-in-the-middle) is a /completions-only feature; drop
