@@ -7,10 +7,10 @@
 VSCode Copilot, Claude Code, and any other Ollama client talk to this proxy.
 It translates their requests and hands them to LM Studio.
 
-[![Crates.io](https://img.shields.io/crates/v/ollama-lmstudio-proxy?logo=rust&color=orange)](https://crates.io/crates/ollama-lmstudio-proxy)
-[![Downloads](https://img.shields.io/crates/d/ollama-lmstudio-proxy?color=blue)](https://crates.io/crates/ollama-lmstudio-proxy)
 [![Release](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://shields.uwuclxdy.dev/badge/license-MIT-green.svg)](LICENSE)
+[![Crates.io](https://shields.uwuclxdy.dev/crates/v/ollama-lmstudio-proxy?color=orange)](https://crates.io/crates/ollama-lmstudio-proxy)
+[![Downloads](https://shields.uwuclxdy.dev/crates/d/ollama-lmstudio-proxy?color=blue)](https://crates.io/crates/ollama-lmstudio-proxy)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Install](#-installation) · [Quick start](#-quick-start) · [Alternatives](#-alternatives) · [FAQ](#-faq) · [Docs](#-documentation)
 
