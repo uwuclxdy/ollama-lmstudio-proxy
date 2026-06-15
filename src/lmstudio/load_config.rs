@@ -31,8 +31,8 @@ pub fn build_load_config_body(
         return None;
     }
 
-    let mut body = json!({ "model": model });
-    let obj = body.as_object_mut().expect("json object");
+    let mut obj = serde_json::Map::new();
+    obj.insert("model".to_string(), json!(model));
 
     if let Some(ctx) = context_length {
         obj.insert("context_length".to_string(), json!(ctx));
@@ -47,7 +47,7 @@ pub fn build_load_config_body(
         obj.insert("eval_batch_size".to_string(), json!(batch));
     }
 
-    Some(body)
+    Some(Value::Object(obj))
 }
 
 /// Pull a usable `num_ctx` (positive integer) out of merged Ollama options.
