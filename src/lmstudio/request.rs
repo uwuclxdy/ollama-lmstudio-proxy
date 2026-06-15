@@ -110,12 +110,13 @@ pub fn build_lm_studio_request(
 fn map_direct_params(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
     // Listed in LM Studio's chat-completions doc
     // (api-docs/lmstudio/1_developer/3_openai-compat/chat-completions.md).
-    // `min_p` is intentionally absent — it has no LM Studio equivalent and is
-    // warn-logged via UNSUPPORTED_OPTION_KEYS.
+    // LM Studio v0 chat accepts `min_p` (verified live), so it is forwarded as a
+    // direct sampling key alongside `top_k`.
     const DIRECT_MAPPINGS: &[&str] = &[
         "temperature",
         "top_p",
         "top_k",
+        "min_p",
         "seed",
         "stop",
         "presence_penalty",
@@ -147,14 +148,19 @@ fn forward_embeddings_only_params(
 ) {
     const EMBEDDINGS_ONLY: &[&str] = &["truncate", "dimensions"];
 
-    let Some(options) = ollama_options else {
-        return;
-    };
-    for key in EMBEDDINGS_ONLY {
-        if let Some(value) = options.get(key) {
-            body.insert((*key).to_string(), value.clone());
+    if let Some(options) = ollama_options {
+        for key in EMBEDDINGS_ONLY {
+            if let Some(value) = options.get(key) {
+                body.insert((*key).to_string(), value.clone());
+            }
         }
     }
+
+    // Ollama's documented default is `truncate: true` (api-docs/ollama/api/
+    // embed.md); fill the gap only when the caller omitted it so an explicit
+    // value (even `false`) always wins.
+    body.entry("truncate".to_string())
+        .or_insert(serde_json::json!(true));
 }
 
 fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map<String, Value>) {
@@ -205,8 +211,6 @@ const UNSUPPORTED_OPTION_KEYS: &[&str] = &[
     "use_mmap",
     "use_mlock",
     "vocab_only",
-    // LM Studio's chat-completions accepts top_p/top_k but not min_p.
-    "min_p",
     // Speculative-decoding draft-token cap. LM Studio configures speculative
     // decoding at model-load time (draft model selection), with no per-request
     // knob in its REST/native API — so this has no upstream equivalent and is
@@ -237,6 +241,10 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
         Value::String(mode) if mode.eq_ignore_ascii_case("json") => Some(json!({
             "type": "json_schema",
             "json_schema": {
+                // `name` is a required field of LM Studio's json_schema
+                // response_format envelope; Ollama supplies none, so this is a
+                // synthetic label LM Studio ignores (verified live). Dropping it
+                // risks a 400.
                 "name": "json",
                 "schema": { "type": "object" }
             }
@@ -245,8 +253,12 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
         Value::Object(_) => Some(json!({
             "type": "json_schema",
             "json_schema": {
+                // `name` is a required field of LM Studio's json_schema
+                // response_format envelope; Ollama supplies none, so this is a
+                // synthetic label LM Studio ignores (verified live). Dropping it
+                // risks a 400.
                 "name": "ollama_format",
-                "strict": "true",
+                "strict": true,
                 "schema": format_value.clone()
             }
         })),

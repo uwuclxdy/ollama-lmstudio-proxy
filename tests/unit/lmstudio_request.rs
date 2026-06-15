@@ -242,21 +242,29 @@ fn forwards_stop_array() {
 }
 
 #[test]
-fn min_p_is_not_forwarded_and_is_warn_logged() {
-    // LM Studio's chat-completions doc lists supported params; min_p is not
-    // among them, so the proxy must drop it and surface a warn-log key.
-    let options = json!({ "min_p": 0.1 });
+fn forwards_min_p() {
+    let options = json!({ "min_p": 0.05 });
+    let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert_eq!(params.get("min_p"), Some(&json!(0.05)));
+}
+
+#[test]
+fn min_p_is_forwarded_and_not_warn_logged() {
+    // LM Studio v0 chat accepts min_p (verified live), so the proxy forwards it
+    // as a direct sampling key and must not surface it as an unsupported option.
+    let options = json!({ "min_p": 0.05 });
     let unsupported = collect_unsupported_keys(&options);
     assert!(
-        unsupported.contains(&"min_p"),
-        "min_p must be in unsupported list: {:?}",
+        !unsupported.contains(&"min_p"),
+        "min_p must not be in unsupported list: {:?}",
         unsupported
     );
 
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
-    assert!(
-        params.get("min_p").is_none(),
-        "min_p must not appear in mapped params: {:?}",
+    assert_eq!(
+        params.get("min_p"),
+        Some(&json!(0.05)),
+        "min_p must be forwarded into mapped params: {:?}",
         params
     );
 }
@@ -367,6 +375,45 @@ fn dimensions_dropped_on_chat_build_kept_on_embeddings_build() {
         embed_req.get("dimensions"),
         Some(&json!(64)),
         "dimensions must appear in embeddings build: {embed_req}"
+    );
+}
+
+#[test]
+fn embed_truncate_defaults_true_when_caller_omits_it() {
+    // Ollama's documented default is `truncate: true` (api-docs/ollama/api/
+    // embed.md); the embeddings build must fill the gap when no options arrive.
+    let input = json!("hi");
+    let embed_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Embeddings { input: &input },
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        embed_req.get("truncate"),
+        Some(&json!(true)),
+        "truncate must default to true on embeddings build: {embed_req}"
+    );
+}
+
+#[test]
+fn embed_explicit_truncate_false_is_not_overwritten_by_default() {
+    let input = json!("hi");
+    let opts = json!({ "truncate": false });
+    let embed_req = build_lm_studio_request(
+        "m",
+        LMStudioRequestType::Embeddings { input: &input },
+        Some(&opts),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        embed_req.get("truncate"),
+        Some(&json!(false)),
+        "explicit truncate:false must win over the default: {embed_req}"
     );
 }
 
@@ -498,7 +545,7 @@ fn format_object_becomes_json_schema() {
     let js = rf
         .get("json_schema")
         .expect("json_schema sub-object must be set");
-    assert_eq!(js.get("strict"), Some(&json!("true")));
+    assert_eq!(js.get("strict"), Some(&json!(true)));
     assert_eq!(js.get("schema"), Some(&schema));
 }
 
@@ -551,7 +598,6 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock": false,
         "vocab_only": false,
         "penalize_newline": true,
-        "min_p": 0.05,
         "draft_num_predict": 4,
     });
     let unsupported = collect_unsupported_keys(&options);
@@ -572,7 +618,6 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock",
         "vocab_only",
         "penalize_newline",
-        "min_p",
         "draft_num_predict",
     ] {
         assert!(
@@ -601,7 +646,6 @@ fn unsupported_keys_present_in_collect_absent_from_mapped_params() {
         "use_mlock",
         "vocab_only",
         "penalize_newline",
-        "min_p",
         "draft_num_predict",
     ] {
         assert!(
