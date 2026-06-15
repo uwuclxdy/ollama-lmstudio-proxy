@@ -61,6 +61,8 @@ OLLAMA_ACTIVE=(
     capabilities/thinking.md
     capabilities/tool-calling.md
     capabilities/vision.md
+    capabilities/web-search.md
+    context-length.md
 )
 
 # Ollama: irrelevant to a translation proxy. Never fetched.
@@ -87,7 +89,9 @@ OLLAMA_DENY_PREFIXES=(
 LMS_ACTIVE=(
     1_developer/2_rest/download-status.md
     1_developer/2_rest/download.md
+    1_developer/2_rest/endpoints.mdx
     1_developer/2_rest/list.md
+    1_developer/2_rest/load.md
     1_developer/2_rest/unload.md
     1_developer/3_openai-compat/chat-completions.md
     1_developer/3_openai-compat/models.md
