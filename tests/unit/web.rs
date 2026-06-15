@@ -168,3 +168,62 @@ fn extract_links_caps_at_max_links() {
     }
     assert_eq!(extract_links(&html, &base()).len(), MAX_LINKS);
 }
+
+// ── SSRF guard ───────────────────────────────────────────────────────────────
+
+#[test]
+fn is_blocked_ip_rejects_non_public() {
+    for s in [
+        "127.0.0.1",
+        "10.0.0.1",
+        "192.168.1.1",
+        "172.16.0.1",
+        "169.254.169.254", // cloud metadata
+        "0.0.0.0",
+        "::1",
+        "fc00::1",          // unique-local
+        "fe80::1",          // link-local
+        "::ffff:127.0.0.1", // v4-mapped loopback
+    ] {
+        let ip: IpAddr = s.parse().expect("ip");
+        assert!(is_blocked_ip(ip), "{s} should be blocked");
+    }
+}
+
+#[test]
+fn is_blocked_ip_allows_public() {
+    for s in [
+        "1.1.1.1",
+        "8.8.8.8",
+        "93.184.216.34",
+        "2606:4700:4700::1111",
+    ] {
+        let ip: IpAddr = s.parse().expect("ip");
+        assert!(!is_blocked_ip(ip), "{s} should be allowed");
+    }
+}
+
+#[tokio::test]
+async fn validate_public_host_rejects_private_literals() {
+    for u in [
+        "http://127.0.0.1/x",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.1.2.3/admin",
+    ] {
+        assert!(
+            validate_public_host(&Url::parse(u).expect("url"))
+                .await
+                .is_err(),
+            "{u} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn validate_public_host_allows_public_literal() {
+    assert!(
+        validate_public_host(&Url::parse("http://1.1.1.1/").expect("url"))
+            .await
+            .is_ok()
+    );
+}

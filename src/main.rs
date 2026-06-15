@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flash_attention: cfg.flash_attention,
         offload_kv_cache: cfg.offload_kv_cache,
         eval_batch_size: cfg.eval_batch_size,
+        allow_private_fetch: cfg.allow_private_fetch,
     });
 
     let server = proxy::ProxyServer::new(cfg)?;

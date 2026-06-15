@@ -30,6 +30,9 @@ fn ensure_runtime_initialized(enable_chunk_recovery: bool) {
             flash_attention: false,
             offload_kv_cache: false,
             eval_batch_size: None,
+            // web_fetch integration tests hit the loopback wiremock server, so
+            // the SSRF guard must allow private addresses under test.
+            allow_private_fetch: true,
         });
         LogConfig::init(false);
     });
@@ -83,6 +86,7 @@ async fn spawn_proxy_inner(enable_chunk_recovery: bool, use_native_chat: bool) -
         flash_attention: false,
         offload_kv_cache: false,
         eval_batch_size: None,
+        allow_private_fetch: true,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

@@ -8,6 +8,7 @@
 //! only allows `http`/`https`.
 
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -16,26 +17,29 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::config::get_runtime_config;
 use crate::error::ProxyError;
 use crate::http::json_response;
 
 const WEB_FETCH_TIMEOUT_SECONDS: u64 = 30;
-const WEB_FETCH_REDIRECT_LIMIT: usize = 10;
+/// Max redirect hops to follow manually (each one is SSRF-revalidated).
+const MAX_REDIRECTS: usize = 10;
 /// Cap the returned `links` array so a link-heavy page can't bloat the response.
 const MAX_LINKS: usize = 100;
 /// Cap the fetched body so a hostile/huge response can't exhaust memory.
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 /// Dedicated client for outbound web fetches: no default auth header (so the LM
-/// Studio token never leaks to third-party hosts), a bounded timeout, a capped
-/// redirect chain, and a descriptive user-agent.
+/// Studio token never leaks to third-party hosts), a bounded timeout, and a
+/// descriptive user-agent. Redirects are followed MANUALLY (`Policy::none`) so
+/// every hop can be re-validated against the SSRF guard.
 fn web_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .user_agent(concat!("ollama-lmstudio-proxy/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(WEB_FETCH_TIMEOUT_SECONDS))
-            .redirect(reqwest::redirect::Policy::limited(WEB_FETCH_REDIRECT_LIMIT))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     })
@@ -52,15 +56,15 @@ pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
 
     let url = normalize_url(raw_url)?;
 
-    let response =
-        web_client().get(url.clone()).send().await.map_err(|e| {
-            ProxyError::new(format!("web_fetch: request to '{url}' failed: {e}"), 502)
-        })?;
+    // Follow redirects manually so every hop is SSRF-checked (the guard is
+    // skipped only when `--allow-private-fetch` is set).
+    let guard_ssrf = !get_runtime_config().allow_private_fetch;
+    let (response, final_url) = fetch_following_redirects(url, guard_ssrf).await?;
 
     let status = response.status();
     if !status.is_success() {
         return Err(ProxyError::new(
-            format!("web_fetch: '{url}' returned status {status}"),
+            format!("web_fetch: '{final_url}' returned status {status}"),
             502,
         ));
     }
@@ -71,14 +75,12 @@ pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
         && len > MAX_RESPONSE_BYTES as u64
     {
         return Err(ProxyError::new(
-            format!("web_fetch: '{url}' body too large ({len} bytes)"),
+            format!("web_fetch: '{final_url}' body too large ({len} bytes)"),
             502,
         ));
     }
 
-    // The post-redirect URL is the correct base for resolving relative links.
-    let final_url = response.url().clone();
-    let html = read_body_capped(response, &url).await?;
+    let html = read_body_capped(response, &final_url).await?;
 
     let title = extract_title(&html).unwrap_or_default();
     // Skip script/style/noscript so their raw CSS/JS never leaks into the
@@ -95,6 +97,119 @@ pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
         "content": content,
         "links": links,
     })))
+}
+
+/// GET `start`, following up to [`MAX_REDIRECTS`] redirects manually. When
+/// `guard_ssrf` is set, every hop's host is resolved and rejected if it maps to
+/// a private/loopback/link-local address (SSRF defense). Returns the final
+/// response and the URL it was served from (the correct base for relative links).
+async fn fetch_following_redirects(
+    start: Url,
+    guard_ssrf: bool,
+) -> Result<(reqwest::Response, Url), ProxyError> {
+    let mut current = start;
+    for _ in 0..=MAX_REDIRECTS {
+        if guard_ssrf {
+            validate_public_host(&current).await?;
+        }
+        let response = web_client()
+            .get(current.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                ProxyError::new(
+                    format!("web_fetch: request to '{current}' failed: {e}"),
+                    502,
+                )
+            })?;
+
+        if response.status().is_redirection()
+            && let Some(location) = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+        {
+            let next = current.join(location).map_err(|e| {
+                ProxyError::new(
+                    format!("web_fetch: bad redirect target '{location}': {e}"),
+                    502,
+                )
+            })?;
+            if !matches!(next.scheme(), "http" | "https") {
+                return Err(ProxyError::bad_request(&format!(
+                    "web_fetch: redirect to unsupported scheme '{}'",
+                    next.scheme()
+                )));
+            }
+            current = next;
+            continue;
+        }
+
+        return Ok((response, current));
+    }
+    Err(ProxyError::new(
+        format!("web_fetch: too many redirects starting from '{current}'"),
+        502,
+    ))
+}
+
+/// Reject a target whose host resolves to a non-public address (SSRF guard).
+/// Resolves the host (so a public name pointing at a private IP is still caught)
+/// and rejects loopback/private/link-local/ULA/etc.
+async fn validate_public_host(url: &Url) -> Result<(), ProxyError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| ProxyError::bad_request("web_fetch: url has no host"))?;
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    let addrs = tokio::net::lookup_host((host, port)).await.map_err(|e| {
+        ProxyError::new(
+            format!("web_fetch: DNS lookup for '{host}' failed: {e}"),
+            502,
+        )
+    })?;
+
+    let mut resolved = false;
+    for addr in addrs {
+        resolved = true;
+        if is_blocked_ip(addr.ip()) {
+            return Err(ProxyError::bad_request(&format!(
+                "web_fetch: refusing to fetch non-public address {} (host '{host}'); set --allow-private-fetch to override",
+                addr.ip()
+            )));
+        }
+    }
+    if !resolved {
+        return Err(ProxyError::new(
+            format!("web_fetch: host '{host}' did not resolve"),
+            502,
+        ));
+    }
+    Ok(())
+}
+
+/// Is `ip` a non-public address that must not be reachable via web_fetch?
+fn is_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_blocked_ip(IpAddr::V4(mapped));
+            }
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+        }
+    }
 }
 
 /// Read the response body into a `String`, aborting if it exceeds
