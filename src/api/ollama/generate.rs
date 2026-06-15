@@ -117,9 +117,23 @@ pub async fn handle_ollama_generate(
                 )
                 .await;
 
-                let mut prompt_for_estimation = current_prompt;
-                let mut prompt_override_storage: Option<String> = None;
+                let prompt_for_estimation = current_prompt;
                 let chat_messages_payload: Option<Value>;
+
+                // A non-empty `system` on a non-raw text request must frame a real
+                // system turn — so route through /api/v0/chat/completions where the
+                // model's chat template applies, mirroring the vision path. Splicing
+                // `system\n\nprompt` into a /completions body never frames system.
+                // `raw` always stays on the raw /completions path (no template).
+                let system_for_chat = if has_images || raw {
+                    None
+                } else {
+                    resolution_ctx
+                        .system_prompt
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                };
 
                 let (lm_studio_endpoint, lm_request_type) = if has_images {
                     let system_for_vision = if raw {
@@ -141,41 +155,49 @@ pub async fn handle_ollama_generate(
                             stream,
                         },
                     )
+                } else if let Some(system_text) = system_for_chat {
+                    // images=None → plain string user content; the [system, user]
+                    // turn lets LM Studio's chat template frame the system prompt.
+                    chat_messages_payload = Some(build_vision_chat_messages(
+                        Some(system_text),
+                        current_prompt,
+                        None,
+                    ));
+                    let messages_ref = chat_messages_payload.as_ref().unwrap();
+
+                    (
+                        LM_STUDIO_NATIVE_CHAT,
+                        LMStudioRequestType::Chat {
+                            messages: messages_ref,
+                            stream,
+                        },
+                    )
                 } else {
-                    if !raw && let Some(system_text) = resolution_ctx.system_prompt.as_deref() {
-                        let trimmed = system_text.trim();
-                        if !trimmed.is_empty() {
-                            let combined = if current_prompt.is_empty() {
-                                trimmed.to_string()
-                            } else {
-                                format!("{trimmed}\n\n{current_prompt}")
-                            };
-                            prompt_override_storage = Some(combined);
-                        }
-                    }
-
-                    if let Some(override_str) = prompt_override_storage.as_deref() {
-                        prompt_for_estimation = override_str;
-                    }
-
-                    let effective_prompt =
-                        prompt_override_storage.as_deref().unwrap_or(current_prompt);
-
+                    // No chat payload on the raw / no-system text path.
                     (
                         LM_STUDIO_NATIVE_COMPLETIONS,
                         LMStudioRequestType::Completion {
-                            prompt: Cow::Borrowed(effective_prompt),
+                            prompt: Cow::Borrowed(current_prompt),
                             stream,
                         },
                     )
                 };
 
+                // Invariant: `raw` requests must never reach the chat template.
+                debug_assert!(
+                    !(raw && lm_studio_endpoint == LM_STUDIO_NATIVE_CHAT),
+                    "raw generate must stay on /api/v0/completions, never chat-templated"
+                );
+
+                let routed_to_chat = lm_studio_endpoint == LM_STUDIO_NATIVE_CHAT;
                 let top_level_params = make_top_level_params(&body);
                 let suffix_val = body.get("suffix");
 
-                if has_images && suffix_val.is_some() {
+                // `suffix` (fill-in-the-middle) is a /completions-only feature; drop
+                // it with a warning on any chat-routed path (vision or system turn).
+                if routed_to_chat && suffix_val.is_some() {
                     log::warn!(
-                        "Ollama options ignored (LM Studio does not support them on vision path): suffix"
+                        "Ollama options ignored (LM Studio does not support them on the chat path): suffix"
                     );
                 }
 
@@ -188,7 +210,7 @@ pub async fn handle_ollama_generate(
                     Some(&top_level_params),
                 );
 
-                if !has_images
+                if !routed_to_chat
                     && let Some(s) = suffix_val
                     && let Some(obj) = lm_request.as_object_mut()
                 {

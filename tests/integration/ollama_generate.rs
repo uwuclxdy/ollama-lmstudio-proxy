@@ -546,21 +546,20 @@ async fn options_stop_array_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 8. system prompt prepended to text prompt (non-raw)
+// 8. system prompt (non-raw) routes through /api/v0/chat/completions as a real
+// system turn — not spliced into the /completions prompt. This lets LM Studio's
+// chat template frame the system message the way a real Ollama server would.
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn system_prompt_prepended_to_text_prompt() {
+async fn system_prompt_routes_through_chat_completions() {
     let p = spawn_proxy().await;
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
-    // The proxy prepends the system prompt text to the prompt before sending
-    // to /api/v0/completions. We verify the request reaches LM Studio.
     Mock::given(method("POST"))
-        .and(path("/api/v0/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(lm_completion_response("Formal reply.", "stop")),
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Formal reply.", "stop")),
         )
         .mount(&p.mock)
         .await;
@@ -581,6 +580,90 @@ async fn system_prompt_prepended_to_text_prompt() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
     assert_eq!(body["done"], true);
+    // The reply maps to a generate-shaped response (top-level `response`), not a
+    // chat `message` object.
+    assert_eq!(body["response"], "Formal reply.");
+    assert!(
+        body.get("message").is_none(),
+        "generate response must not carry a chat `message` object: {body}"
+    );
+    assert_eq!(body["done_reason"], "stop");
+
+    // Upstream must see a [system, user] chat body, never /api/v0/completions.
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let completion_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/api/v0/completions")
+        .count();
+    assert_eq!(
+        completion_hits, 0,
+        "system prompt must NOT route to /api/v0/completions"
+    );
+
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
+        .expect("LM Studio chat/completions request captured");
+    let upstream_body: Value =
+        serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+    let messages = upstream_body["messages"]
+        .as_array()
+        .expect("chat body must carry a messages array");
+    assert_eq!(messages[0]["role"], "system");
+    assert_eq!(messages[0]["content"], "You are a formal assistant.");
+    assert_eq!(messages[1]["role"], "user");
+    assert_eq!(messages[1]["content"], "Hello");
+}
+
+// A generate request WITHOUT a system prompt keeps the plain /api/v0/completions
+// path — chat routing is gated strictly on a non-empty, non-raw system prompt.
+#[tokio::test]
+async fn generate_without_system_stays_on_completions() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_completion_response("Plain reply.", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Hello",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate no system");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON");
+    assert_eq!(body["response"], "Plain reply.");
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let chat_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/api/v0/chat/completions")
+        .count();
+    assert_eq!(
+        chat_hits, 0,
+        "a no-system request must NOT route to /api/v0/chat/completions"
+    );
+    let completion_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/api/v0/completions")
+        .count();
+    assert_eq!(
+        completion_hits, 1,
+        "no-system request must hit /completions"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -617,6 +700,74 @@ async fn raw_mode_skips_system_prompt_injection() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON");
     assert_eq!(body["response"], "Raw reply.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9b. raw:true + system stays on /api/v0/completions — never chat-templated.
+// `raw` means "send my prompt verbatim, no template", so even with a `system`
+// present the request must hit /completions with a raw `prompt` and NO injected
+// system / `messages`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn raw_true_with_system_stays_on_completions_no_template() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("Raw reply.", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let raw_prompt = "[INST] Hello [/INST]";
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": raw_prompt,
+            "system": "This must never frame the prompt in raw mode.",
+            "raw": true,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate raw + system");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let chat_hits = received
+        .iter()
+        .filter(|r| r.url.path() == "/api/v0/chat/completions")
+        .count();
+    assert_eq!(
+        chat_hits, 0,
+        "raw + system must NEVER hit the chat-templated path"
+    );
+
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v0/completions")
+        .expect("LM Studio completions request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+
+    assert!(
+        body.get("messages").is_none(),
+        "raw mode must not build a chat `messages` array: {body}"
+    );
+    assert!(
+        body.get("system").is_none(),
+        "raw mode must not inject a top-level system key: {body}"
+    );
+    // The prompt is forwarded verbatim — no system text fused in.
+    assert_eq!(
+        body["prompt"], raw_prompt,
+        "raw prompt must reach LM Studio unchanged"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1433,8 +1584,8 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // options.system must not leak as a top-level LM Studio key on /api/generate.
-// On the text path the system prompt is prepended to the completion prompt;
-// the mapper must not double-forward it as `"system": ...`.
+// A resolved system prompt routes through /api/v0/chat/completions as a real
+// system turn; the mapper must not double-forward it as a top-level `"system"`.
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -1443,10 +1594,8 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v0/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(lm_completion_response("ok", "stop")),
-        )
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("ok", "stop")))
         .mount(&p.mock)
         .await;
 
@@ -1468,21 +1617,23 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let upstream = received
         .iter()
-        .find(|r| r.url.path() == "/api/v0/completions")
-        .expect("LM Studio completions request captured");
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
+        .expect("LM Studio chat/completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
     assert!(
         body.get("system").is_none(),
-        "options.system must not appear as a top-level key on completions: {body}"
+        "options.system must not appear as a top-level key: {body}"
     );
 
-    // The system text is fused into the prompt by the generate handler.
-    let prompt = body["prompt"].as_str().expect("prompt string");
-    assert!(
-        prompt.contains("Sx"),
-        "system prompt should be prepended to the completion prompt, got {prompt:?}"
-    );
+    // The system text becomes a real system message on the chat path.
+    let messages = body["messages"]
+        .as_array()
+        .expect("chat body must carry a messages array");
+    assert_eq!(messages[0]["role"], "system");
+    assert_eq!(messages[0]["content"], "Sx");
+    assert_eq!(messages[1]["role"], "user");
+    assert_eq!(messages[1]["content"], "hi");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
