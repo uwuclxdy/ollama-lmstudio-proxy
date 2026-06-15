@@ -26,6 +26,7 @@ It translates their requests and hands them to LM Studio.
 - **Reasoning:** thinking/reasoning is detected per model; `think` / `reasoning_effort` are honored and the model's reasoning is surfaced in the `thinking` field. Thinking-capable models default to reasoning on when `think` is omitted, matching real Ollama.
 - **Real token metrics:** chat/generate report LM Studio's actual `eval_count` / `eval_duration` / `prompt_eval_*` from the `/api/v0` stats block (non-streaming); streaming still uses wall-clock estimates, which LM Studio's SSE can't yet replace.
 - **Context window:** per-request `options.num_ctx` reloads the model at that context length before inference (LM Studio treats context as a load-time setting); an already-correct instance is reused, so repeated requests don't pile up duplicates. A server-wide default (`--default-context-length` / `OLLAMA_CONTEXT_LENGTH`) applies when requests omit `num_ctx`.
+- **Embeddings:** `/api/embed` and `/api/embeddings` auto-load an unloaded embedding model on demand (JIT), the same way chat/generate do, and honor `num_ctx`.
 - **Downloads:** `/api/pull` streams catalog downloads straight from LM Studio.
 - **Passthrough:** Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) work out of the box.
 - **Web fetch:** `/api/web_fetch` retrieves a URL and returns `{title, content, links}` (HTML rendered to markdown) — no cloud account needed.

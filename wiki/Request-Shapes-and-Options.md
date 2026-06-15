@@ -22,11 +22,11 @@ enforcement.
 | `frequency_penalty` | `frequency_penalty` | Direct passthrough |
 | `repeat_penalty` | `repeat_penalty` / `frequency_penalty` | Mapped depending on what is already set |
 | `max_tokens` / `num_predict` | `max_tokens` | Picks whichever you set; `max_tokens` takes priority |
-| `num_ctx` | `context_length` | Reloads the model at the requested context length before inference (LM Studio treats this as a load-time setting). No-op when absent/zero or already loaded at that size. Clamped to the model's max. Two concurrent requests with different `num_ctx` to the same model can race |
+| `num_ctx` | `context_length` | Reloads the model at the requested context length before inference (LM Studio treats this as a load-time setting). No-op when absent/zero or already loaded at that size. Clamped to the model's max. Two concurrent requests with different `num_ctx` to the same model can race. When absent, falls back to `--default-context-length` / `OLLAMA_CONTEXT_LENGTH` if set. Also honored on `/api/embed` |
 | `logit_bias` | `logit_bias` | Accepts JSON object or map notation |
 | `system` (in `options`) | `system` | Injected as LM Studio system prompt |
 | `stop`, `seed` | Same name | Direct passthrough |
-| `truncate` | `truncate` | Direct passthrough |
+| `truncate` | `truncate` | Direct passthrough; defaults to `true` on `/api/embed` when omitted (matches Ollama) so overlong inputs truncate instead of erroring |
 | `dimensions` | `dimensions` | Direct passthrough (embeddings) |
 
 ### Accepted but ignored
@@ -45,7 +45,7 @@ model is loaded.
 
 | Ollama field | LM Studio parameter | Notes |
 |--------------|---------------------|-------|
-| `think` / `reasoning_effort` | `reasoning` | `true`→`"on"`, `false`→`"off"`, `"none"`→`"off"`; levels `low\|medium\|high\|on\|off` pass through; `reasoning_effort` is an alias used only when `think` is absent |
+| `think` / `reasoning_effort` | `reasoning` | `true`→`"on"`, `false`→`"off"`, `"none"`→`"off"`; levels `low\|medium\|high\|on\|off` pass through; `reasoning_effort` is an alias used only when `think` is absent. When `think` is omitted and the model is reasoning-capable (LM Studio reports a `reasoning` capability), defaults to `"on"` to match Ollama; explicit `think:false` always wins |
 | `logprobs`, `top_logprobs` | Same name | Direct passthrough |
 | `suffix` | `suffix` | Forwarded on non-vision generate requests only |
 | `raw` | _none_ | Disables system-prompt injection in generate requests |

@@ -21,6 +21,7 @@ environment variable. Other flags that read env vars are noted in the table belo
 | `--flash-attention` | `false` | Experimental: enable flash attention when loading models via `/api/v1/models/load` |
 | `--offload-kv-cache` | `false` | Experimental: offload KV cache to GPU when loading models via `/api/v1/models/load` |
 | `--eval-batch-size` | _none_ | Experimental: set eval batch size when loading models via `/api/v1/models/load` |
+| `--default-context-length` | _none_ | Server-wide `num_ctx` fallback applied when a request omits it (`OLLAMA_CONTEXT_LENGTH` env); a per-request `num_ctx` still wins |
 | `--ollama-version` | `0.30.0` | Version string reported by `GET /api/version` (`OLLAMA_VERSION` env) |
 | `--allow-private-fetch` | `false` | Allow `/api/web_fetch` to reach loopback/private/link-local addresses; when off, SSRF guard rejects those targets with 400 |
 | `--search-url` | _none_ | Search provider endpoint for `/api/web_search`; unset returns 501 (`SEARCH_URL` env) |
