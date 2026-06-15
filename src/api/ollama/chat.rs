@@ -188,9 +188,15 @@ pub async fn handle_ollama_chat(
                     Some(&top_level_params),
                 );
 
-                // Forward OpenAI-compat `tool_choice` alongside `tools`; LM
-                // Studio accepts it on /api/v0/chat/completions.
-                if let Some(tool_choice) = body.get("tool_choice")
+                // Forward OpenAI-compat `tool_choice`, but only alongside a
+                // non-empty `tools` array (matching how `tools` itself is
+                // gated) — `tool_choice` without tools is meaningless and some
+                // backends reject it. LM Studio accepts it on /api/v0 otherwise.
+                let tools_present = ollama_tools
+                    .and_then(|t| t.as_array())
+                    .is_some_and(|arr| !arr.is_empty());
+                if tools_present
+                    && let Some(tool_choice) = body.get("tool_choice")
                     && let Some(obj) = lm_request.as_object_mut()
                 {
                     obj.insert("tool_choice".to_string(), tool_choice.clone());

@@ -588,6 +588,79 @@ async fn tool_choice_forwarded() {
     p.mock.verify().await;
 }
 
+// Object-form tool_choice ({"type":"function",...}) is forwarded verbatim.
+#[tokio::test]
+async fn tool_choice_object_form_forwarded() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .and(body_partial_json(json!({
+            "tool_choice": { "type": "function", "function": { "name": "f" } }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false,
+            "tools": [{ "type": "function", "function": { "name": "f", "parameters": {} } }],
+            "tool_choice": { "type": "function", "function": { "name": "f" } }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat tool_choice object");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// tool_choice WITHOUT tools is meaningless and must NOT be forwarded. Inspect
+// the actual body that reached the backend to assert its absence.
+#[tokio::test]
+async fn tool_choice_without_tools_not_forwarded() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false,
+            "tool_choice": "required"
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat tool_choice no tools");
+    assert_eq!(resp.status(), 200);
+
+    let requests = p.mock.received_requests().await.expect("recorded requests");
+    let chat = requests
+        .iter()
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
+        .expect("a chat completion request");
+    let sent: Value = serde_json::from_slice(&chat.body).expect("chat body json");
+    assert!(
+        sent.get("tool_choice").is_none(),
+        "tool_choice must not be forwarded without tools; got {sent}"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 7. options.stop as array forwarded
 // ═══════════════════════════════════════════════════════════════════════════
