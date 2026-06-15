@@ -41,19 +41,9 @@ pub async fn handle_ollama_pull(
         .map(|s| s.to_string());
     let source_override = body.get("source").and_then(|s| s.as_str());
 
-    // LM Studio's /api/v1/models/download has no TLS-bypass parameter, so
-    // honouring insecure=true is impossible. Reject rather than silently
-    // continuing — pretending success while ignoring a security-sensitive
-    // flag would mislead the caller.
-    if body
-        .get("insecure")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return Err(ProxyError::bad_request(
-            "insecure=true is not supported: LM Studio does not expose a TLS-bypass option",
-        ));
-    }
+    // `insecure` requests a TLS-bypass that LM Studio's
+    // /api/v1/models/download cannot map. Real Ollama never rejects the flag,
+    // so accept and ignore it rather than 400 — the download proceeds normally.
 
     log_request("POST", "/api/pull", Some(requested_model));
 
@@ -166,14 +156,14 @@ pub async fn handle_ollama_create(
         };
         if has_content {
             return Err(ProxyError::bad_request(
-                "lm studio does not support model creation from files; proxy aliases only",
+                "creating from raw files is unsupported by the LM Studio backend (no GGUF-blob import surface)",
             ));
         }
     }
 
     if body.get("quantize").is_some() {
         return Err(ProxyError::bad_request(
-            "lm studio does not support quantization; proxy aliases only",
+            "quantize is unsupported by the LM Studio backend (no quantization surface)",
         ));
     }
 
@@ -250,7 +240,7 @@ pub async fn handle_ollama_copy(
     if let Some(existing) = context.virtual_models.get(source).await {
         context
             .virtual_models
-            .create_alias(
+            .upsert_alias(
                 destination,
                 existing.source_model.clone(),
                 existing.target_model_id.clone(),
@@ -263,7 +253,7 @@ pub async fn handle_ollama_copy(
 
         context
             .virtual_models
-            .create_alias(
+            .upsert_alias(
                 destination,
                 source.to_string(),
                 resolved_id,
@@ -273,9 +263,13 @@ pub async fn handle_ollama_copy(
     }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama copy", start_time);
-    let response = json!({"status": "success"});
-    log_handler_io("copy", None, Some(&response));
-    Ok(json_response(&response))
+    // Ollama returns 200 with an empty body (no content block declared); the
+    // alias is upserted, so copying onto an existing destination overwrites.
+    log_handler_io("copy", None, None);
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .body(axum::body::Body::empty())
+        .map_err(|_| ProxyError::internal_server_error("failed to build copy response"))
 }
 
 pub async fn handle_ollama_delete(
@@ -291,7 +285,8 @@ pub async fn handle_ollama_delete(
     // are not writable through this proxy, so any unknown name returns 404.
     if context.virtual_models.get(model_name).await.is_none() {
         return Err(ProxyError::not_found(&format!(
-            "model '{}' not managed by this proxy",
+            "model '{}' cannot be deleted: only proxy-managed virtual aliases are deletable; \
+             LM Studio's REST API exposes no model-file delete",
             model_name
         )));
     }

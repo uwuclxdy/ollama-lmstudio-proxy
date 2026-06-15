@@ -510,16 +510,31 @@ async fn pull_model_name_forwarded_to_lmstudio() {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/pull — insecure flag is rejected (LM Studio can't honor it)
+// POST /api/pull — insecure flag is accepted and ignored (no TLS-skip surface)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn pull_insecure_flag_returns_400() {
-    // `insecure: true` requests TLS-bypass that LM Studio's
-    // /api/v1/models/download does not expose. Silently no-op'ing while
-    // returning 200 would mislead callers about a security-sensitive flag,
-    // so the proxy must reject it.
+async fn pull_insecure_true_is_accepted() {
+    // Real Ollama never 400s on `insecure`. LM Studio's download endpoint has
+    // no TLS-bypass parameter, so the proxy accepts and ignores the flag —
+    // the download proceeds normally.
     let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/download"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_download_completed("job-ins-true")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
 
     let resp = p
         .client
@@ -527,19 +542,19 @@ async fn pull_insecure_flag_returns_400() {
         .json(&json!({"model": "llama3.2:3b", "stream": false, "insecure": true}))
         .send()
         .await
-        .expect("POST /api/pull insecure");
+        .expect("POST /api/pull insecure=true");
     assert_eq!(
         resp.status(),
-        400,
-        "insecure=true must be rejected; got {}",
+        200,
+        "insecure=true must be accepted (not 400); got {}",
         resp.status()
     );
 
     let body: Value = resp.json().await.expect("json body");
-    let error = body["error"].as_str().expect("error string");
-    assert!(
-        error.to_lowercase().contains("insecure"),
-        "error message should mention insecure; got {error}"
+    assert_eq!(
+        body["status"].as_str(),
+        Some("success"),
+        "insecure=true pull should still succeed; got {body}"
     );
 }
 
@@ -667,6 +682,14 @@ async fn delete_unknown_model_returns_404() {
         "expected 404 for non-existent model; got {}",
         resp.status()
     );
+
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().expect("error string");
+    let lowered = error.to_lowercase();
+    assert!(
+        lowered.contains("virtual") || lowered.contains("cannot be deleted"),
+        "404 message should explain the virtual-alias-only limit; got {error}"
+    );
 }
 
 #[tokio::test]
@@ -789,11 +812,10 @@ async fn delete_success_returns_empty_body() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn copy_returns_bare_status_success() {
-    // The Ollama spec defines no body for the 200 response. The proxy emits
-    // {"status":"success"} and must not include proxy-internal fields such as
-    // `model`, `virtual`, `source_model`, `target_model_id`, `created_at`,
-    // or `updated_at`.
+async fn copy_returns_empty_body() {
+    // The Ollama spec declares no content block for the 200 response ("Model
+    // successfully copied"), so the proxy returns 200 with an EMPTY body —
+    // never a JSON envelope leaking proxy-internal fields.
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -818,27 +840,65 @@ async fn copy_returns_bare_status_success() {
         resp.status()
     );
 
-    let body: Value = resp.json().await.expect("json body");
+    let bytes = resp.bytes().await.expect("copy response bytes");
+    assert!(
+        bytes.is_empty(),
+        "copy 200 body must be empty per spec; got {bytes:?}"
+    );
+}
+
+#[tokio::test]
+async fn copy_onto_existing_destination_overwrites() {
+    // Ollama overwrites an existing destination on copy. The proxy upserts the
+    // alias, so a second copy onto the same destination must succeed (200, not
+    // 400) and the destination must still resolve.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let first = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "overwrite-me:v1"}))
+        .send()
+        .await
+        .expect("first POST /api/copy");
+    assert_eq!(first.status(), 200, "first copy should return 200");
+
+    let second = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "overwrite-me:v1"}))
+        .send()
+        .await
+        .expect("second POST /api/copy onto existing destination");
     assert_eq!(
-        body,
-        json!({"status": "success"}),
-        "copy response must be bare {{\"status\":\"success\"}}; got {body}"
+        second.status(),
+        200,
+        "copy onto an existing destination must overwrite (200, not 400); got {}",
+        second.status()
     );
 
-    // Proxy-internal fields must be absent.
-    for key in &[
-        "model",
-        "virtual",
-        "source_model",
-        "target_model_id",
-        "created_at",
-        "updated_at",
-    ] {
-        assert!(
-            body.get(key).is_none(),
-            "copy response must not contain proxy-internal field '{key}'; got {body}"
-        );
-    }
+    // The destination still resolves as a virtual alias.
+    let show = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "overwrite-me:v1"}))
+        .send()
+        .await
+        .expect("POST /api/show overwritten alias");
+    assert_eq!(
+        show.status(),
+        200,
+        "overwritten destination must still resolve; got {}",
+        show.status()
+    );
 }
 
 #[tokio::test]
@@ -973,5 +1033,72 @@ async fn copy_creates_virtual_model_showable_via_show() {
         200,
         "show on copied alias should succeed; got {}",
         show.status()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/create — unsupported backends explained clearly
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_from_files_returns_400_explaining_backend() {
+    // LM Studio has no GGUF-blob import surface, so creating from raw files is
+    // rejected with a message naming the backend limit.
+    let p = spawn_proxy().await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "from-files:v1",
+            "from": "llama3.2:3b",
+            "files": {"model.gguf": "sha256:abc123"}
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with files");
+    assert_eq!(
+        resp.status(),
+        400,
+        "create-from-files must 400; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().expect("error string");
+    assert!(
+        error.contains("unsupported by the LM Studio backend"),
+        "files rejection must explain the backend limit; got {error}"
+    );
+}
+
+#[tokio::test]
+async fn create_quantize_returns_400_explaining_backend() {
+    // LM Studio exposes no quantization surface; the proxy rejects `quantize`.
+    let p = spawn_proxy().await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "quant:v1",
+            "from": "llama3.2:3b",
+            "quantize": "q4_0"
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with quantize");
+    assert_eq!(
+        resp.status(),
+        400,
+        "create with quantize must 400; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().expect("error string");
+    assert!(
+        error.contains("unsupported by the LM Studio backend"),
+        "quantize rejection must explain the backend limit; got {error}"
     );
 }

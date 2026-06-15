@@ -45,7 +45,9 @@ pub struct LmStudioDownloadStatus {
     pub(crate) total_size_bytes: Option<u64>,
     #[serde(default)]
     pub(crate) downloaded_bytes: Option<u64>,
-    #[serde(default)]
+    // LM Studio sends the failure reason as `error_message`; accept the legacy
+    // `error` key too so both shapes deserialize.
+    #[serde(default, alias = "error_message")]
     pub(crate) error: Option<String>,
 }
 

@@ -173,6 +173,24 @@ fn download_status_failed_into_final_response_propagates_error_message() {
 }
 
 #[test]
+fn download_status_failed_error_message_alias_propagates() {
+    // LM Studio sends the failure reason under `error_message`, not `error`.
+    let s: LmStudioDownloadStatus = serde_json::from_value(json!({
+        "status": "failed",
+        "error_message": "disk full"
+    }))
+    .expect("error_message must deserialize via serde alias");
+    let err = s
+        .into_final_response("m")
+        .expect_err("failed status must produce Err");
+    assert!(
+        err.message.contains("disk full"),
+        "error_message reason must be preserved, got: {}",
+        err.message
+    );
+}
+
+#[test]
 fn download_status_failed_without_error_field_uses_fallback_message() {
     let s = lm_status_value(json!({ "status": "failed" }));
     let err = s
