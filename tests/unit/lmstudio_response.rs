@@ -368,6 +368,32 @@ fn timing_from_native_v1_responses_stats() {
     assert_eq!(timing.eval_count, 586);
 }
 
+/// When BOTH `time_to_first_token` (the v0 key, actually emitted by the called
+/// `/api/v0/*` endpoints) and `time_to_first_token_seconds` (the v1 fallback)
+/// are present, the v0 key must win.
+#[test]
+fn timing_prefers_v0_time_to_first_token_over_v1_seconds() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        "stats": {
+            "tokens_per_second": 50.0,
+            "time_to_first_token": 0.222,
+            "time_to_first_token_seconds": 0.999,
+            "generation_time": 0.5
+        }
+    });
+
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5);
+    assert_eq!(
+        timing.prompt_eval_duration, 222_000_000u64,
+        "v0 time_to_first_token must win over time_to_first_token_seconds"
+    );
+}
+
 // =========================================================================
 // Response shape (from translation_response_shape)
 // =========================================================================
@@ -508,18 +534,38 @@ fn chat_response_translates_tool_calls_to_stop() {
 }
 
 #[test]
-fn chat_response_omits_done_reason_for_unknown_finish_reason() {
+fn chat_response_passes_through_unknown_finish_reason() {
+    // An unmapped, non-empty finish_reason (e.g. LM Studio's `eosFound`) must
+    // reach the client verbatim on the non-stream path rather than being dropped.
     let lm = json!({
         "choices": [{
             "message": {"role": "assistant", "content": "x"},
-            "finish_reason": "some_unknown_reason"
+            "finish_reason": "eosFound"
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert_eq!(
+        result.get("done_reason").and_then(|v| v.as_str()),
+        Some("eosFound"),
+        "non-empty unmapped finish_reason must pass through verbatim"
+    );
+}
+
+#[test]
+fn chat_response_omits_done_reason_for_empty_finish_reason() {
+    // An empty finish_reason is still omitted — "omit instead of lie" precedent.
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "x"},
+            "finish_reason": ""
         }],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     });
     let result = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
     assert!(
         result.get("done_reason").is_none(),
-        "unknown finish_reason must be omitted, not propagated"
+        "empty finish_reason must be omitted, not propagated"
     );
 }
 
@@ -539,16 +585,31 @@ fn generate_response_translates_tool_calls_to_stop() {
 }
 
 #[test]
-fn generate_response_omits_done_reason_for_unknown_finish_reason() {
+fn generate_response_passes_through_unknown_finish_reason() {
     let lm = json!({
-        "choices": [{"text": "hi", "finish_reason": "garbage"}],
+        "choices": [{"text": "hi", "finish_reason": "eosFound"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "m", "prompt", Instant::now());
+    assert_eq!(
+        result.get("done_reason").and_then(|v| v.as_str()),
+        Some("eosFound"),
+        "non-empty unmapped finish_reason must pass through verbatim on generate path"
+    );
+}
+
+#[test]
+fn generate_response_omits_done_reason_for_empty_finish_reason() {
+    let lm = json!({
+        "choices": [{"text": "hi", "finish_reason": ""}],
         "usage": {"prompt_tokens": 4, "completion_tokens": 1}
     });
     let result =
         ResponseTransformer::convert_to_ollama_generate(&lm, "m", "prompt", Instant::now());
     assert!(
         result.get("done_reason").is_none(),
-        "unknown finish_reason must be omitted on generate path"
+        "empty finish_reason must be omitted on generate path"
     );
 }
 
@@ -750,8 +811,12 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
         ],
         "usage": {"prompt_tokens": 8}
     });
-    let result =
-        ResponseTransformer::convert_to_ollama_embeddings(&lm, "all-minilm", Instant::now());
+    let result = ResponseTransformer::convert_to_ollama_embeddings(
+        &lm,
+        "all-minilm",
+        &json!("hi"),
+        Instant::now(),
+    );
     assert_eq!(
         result.get("model").and_then(|v| v.as_str()),
         Some("all-minilm")
@@ -780,12 +845,71 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
 #[test]
 fn embeddings_response_empty_data_yields_empty_embeddings() {
     let lm = json!({"data": [], "usage": {"prompt_tokens": 0}});
-    let result = ResponseTransformer::convert_to_ollama_embeddings(&lm, "m", Instant::now());
+    let result =
+        ResponseTransformer::convert_to_ollama_embeddings(&lm, "m", &json!("x"), Instant::now());
     let embeds = result
         .get("embeddings")
         .and_then(|v| v.as_array())
         .expect("embeddings array must exist");
     assert!(embeds.is_empty());
+}
+
+#[test]
+fn embeddings_prompt_eval_count_scales_with_input_when_no_usage() {
+    // No `usage` block → the count comes from a length-proportional estimate of
+    // the input, NOT a flat constant. A longer input must report MORE tokens.
+    let lm_no_usage = json!({ "data": [{"embedding": [0.1, 0.2]}] });
+
+    let short = ResponseTransformer::convert_to_ollama_embeddings(
+        &lm_no_usage,
+        "m",
+        &json!("hi"),
+        Instant::now(),
+    );
+    let long_text = "word ".repeat(200);
+    let long = ResponseTransformer::convert_to_ollama_embeddings(
+        &lm_no_usage,
+        "m",
+        &json!(long_text),
+        Instant::now(),
+    );
+
+    let short_count = short.get("prompt_eval_count").and_then(|v| v.as_u64());
+    let long_count = long.get("prompt_eval_count").and_then(|v| v.as_u64());
+    assert!(
+        long_count > short_count,
+        "long input must yield a larger prompt_eval_count than short \
+         (short={short_count:?}, long={long_count:?}), not a flat constant"
+    );
+
+    // A batch sums each element, so a multi-string batch out-counts a single string.
+    let batch = ResponseTransformer::convert_to_ollama_embeddings(
+        &lm_no_usage,
+        "m",
+        &json!([long_text.clone(), long_text]),
+        Instant::now(),
+    );
+    assert!(
+        batch.get("prompt_eval_count").and_then(|v| v.as_u64()) > long_count,
+        "batch of two long inputs must out-count a single long input"
+    );
+}
+
+#[test]
+fn embeddings_prompt_eval_count_uses_usage_when_present() {
+    // When LM Studio reports usage.prompt_tokens it wins over the estimate, even
+    // for a tiny input. Regression guard for the integration assertion of 42.
+    let lm = json!({
+        "data": [{"embedding": [0.1, 0.2]}],
+        "usage": {"prompt_tokens": 42, "total_tokens": 42}
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_embeddings(&lm, "m", &json!("x"), Instant::now());
+    assert_eq!(
+        result.get("prompt_eval_count").and_then(|v| v.as_u64()),
+        Some(42),
+        "usage.prompt_tokens must win over the length estimate"
+    );
 }
 
 #[test]

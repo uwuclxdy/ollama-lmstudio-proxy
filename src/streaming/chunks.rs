@@ -128,6 +128,17 @@ pub fn map_done_reason(reason: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolve a `finish_reason` to a `done_reason` for the NON-STREAMING converters.
+///
+/// Known reasons map through `map_done_reason` (e.g. `tool_calls` → `stop`); an
+/// unmapped reason (e.g. `eosFound`) passes through verbatim so a real Ollama
+/// client can see the upstream signal rather than a dropped field. Streaming
+/// (`create_final_chunk`) deliberately keeps the stricter `map_done_reason` omit
+/// behaviour — do NOT use this there.
+pub fn resolve_done_reason(reason: &str) -> &str {
+    map_done_reason(reason).unwrap_or(reason)
+}
+
 pub fn extract_first_choice(chunk: &Value) -> Option<&Value> {
     chunk
         .get("choices")

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use crate::constants::{
     DEFAULT_LOAD_DURATION_NS, TIMING_EVAL_RATIO, TIMING_PROMPT_RATIO, TOKEN_TO_CHAR_RATIO,
 };
-use crate::streaming::chunks::map_done_reason;
+use crate::streaming::chunks::resolve_done_reason;
 
 /// Timing information for Ollama responses
 #[derive(Debug, Clone)]
@@ -43,9 +43,13 @@ impl TimingInfo {
             // generation_time (when present) is the post-TTFT eval phase, NOT total.
             // For v1 responses there is no generation_time; derive eval phase from
             // total_output_tokens / tokens_per_second.
+            //
+            // The endpoints actually called (`/api/v0/*`) emit `time_to_first_token`,
+            // so that v0 key is primary; `time_to_first_token_seconds` (the `/v1`
+            // shape) is the fallback.
             let time_to_first_token = stats
-                .get("time_to_first_token_seconds")
-                .or_else(|| stats.get("time_to_first_token"))
+                .get("time_to_first_token")
+                .or_else(|| stats.get("time_to_first_token_seconds"))
                 .and_then(|t| t.as_f64())
                 .unwrap_or(0.0);
 
@@ -207,7 +211,9 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response).and_then(map_done_reason);
+        let done_reason = extract_finish_reason(lm_response)
+            .filter(|reason| !reason.is_empty())
+            .map(resolve_done_reason);
         let mut ollama_message = json!({
             "role": "assistant",
             "content": content
@@ -289,7 +295,9 @@ impl ResponseTransformer {
             estimate_token_count(&content),
         );
 
-        let done_reason = extract_finish_reason(lm_response).and_then(map_done_reason);
+        let done_reason = extract_finish_reason(lm_response)
+            .filter(|reason| !reason.is_empty())
+            .map(resolve_done_reason);
         // `context` is absent from the Ollama OpenAPI schema for GenerateResponse.
         // LM Studio does not expose token IDs anyway, so the field is omitted.
         let mut response_obj = json!({
@@ -322,11 +330,15 @@ impl ResponseTransformer {
     pub fn convert_to_ollama_embeddings(
         lm_response: &Value,
         model_ollama_name: &str,
+        input: &Value,
         start_time: Instant,
     ) -> Value {
         let embeddings = Self::extract_embeddings(lm_response);
 
-        let estimated_input_tokens = 10;
+        // Embeddings carry no `usage` in the no-usage case, so when LM Studio omits
+        // `usage.prompt_tokens` (which still wins inside `from_native_stats`) fall
+        // back to a length-proportional estimate rather than a flat constant.
+        let estimated_input_tokens = estimate_embedding_input_tokens(input);
         let estimated_output_tokens = embeddings.len().max(1) as u64;
 
         let timing = TimingInfo::from_native_stats(
@@ -443,6 +455,23 @@ pub fn estimate_token_count(text: &str) -> u64 {
         return 0;
     }
     ((text.len() as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
+}
+
+/// Length-proportional token estimate for an embedding `input`.
+///
+/// A `String` is `chars / 4` (a rough char-per-token heuristic); an array sums
+/// the estimate of each element so a longer batch yields a larger count. Always
+/// at least 1 so the count stays monotonic in size and never reports zero tokens.
+fn estimate_embedding_input_tokens(input: &Value) -> u64 {
+    match input {
+        Value::String(s) => (s.chars().count() as u64 / 4).max(1),
+        Value::Array(items) => items
+            .iter()
+            .map(estimate_embedding_input_tokens)
+            .sum::<u64>()
+            .max(1),
+        _ => 1,
+    }
 }
 
 pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {

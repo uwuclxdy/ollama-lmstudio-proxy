@@ -1206,6 +1206,174 @@ async fn embed_jit_loads_model_on_no_models_loaded_then_retries() {
 }
 
 // ---------------------------------------------------------------------------
+// 35. /api/embed honors options.num_ctx (loads at the requested context)
+// ---------------------------------------------------------------------------
+//
+// `mount_models` reports the model with `loaded_instances: []`, so a request
+// carrying `num_ctx` must fire ONE `POST /api/v1/models/load` at that context
+// and NO unload (nothing is loaded yet to collapse).
+#[tokio::test]
+async fn embed_num_ctx_loads_model_at_requested_context() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "context_length": 2048 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "loaded", "instance_id": "all-minilm"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_response_single("all-minilm", vec![0.1])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": "context test",
+            "options": { "num_ctx": 2048 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed num_ctx");
+
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let load = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v1/models/load")
+        .expect("a models/load must fire to honor num_ctx");
+    let load_body: Value = serde_json::from_slice(&load.body).expect("load body is JSON");
+    assert_eq!(
+        load_body.get("context_length"),
+        Some(&json!(2048)),
+        "load body must request the num_ctx context: {load_body}"
+    );
+    p.mock.verify().await;
+}
+
+// A request with a num_ctx DIFFERENT from a single loaded instance reloads:
+// unload that instance, then load once at the requested context.
+#[tokio::test]
+async fn embed_num_ctx_reloads_loaded_instance_at_new_context() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "all-minilm", "type": "llm", "publisher": "meta",
+                        "architecture": "bert", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192,
+                        "loaded_instances": [
+                            { "id": "inst-0", "config": { "context_length": 4096 } }
+                        ],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .and(body_partial_json(json!({ "instance_id": "inst-0" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "instance_id": "inst-0" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "context_length": 2048 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "loaded", "instance_id": "all-minilm"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_response_single("all-minilm", vec![0.1])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": "context reload test",
+            "options": { "num_ctx": 2048 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed num_ctx reload");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// No num_ctx → the proxy must never touch the model's load state.
+#[tokio::test]
+async fn embed_without_num_ctx_does_not_touch_model_load() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_response_single("all-minilm", vec![0.1])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": "no ctx" }))
+        .send()
+        .await
+        .expect("POST /api/embed no num_ctx");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// ---------------------------------------------------------------------------
 // 25. truncate + dimensions forwarded to /v1/embeddings body
 // ---------------------------------------------------------------------------
 

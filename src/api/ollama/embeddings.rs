@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
+use crate::config::get_runtime_config;
 use crate::constants::{
     ERROR_EMBED_INPUT_EMPTY, ERROR_EMBED_INPUT_REQUIRED, ERROR_EMBEDDINGS_PROMPT_EMPTY,
     ERROR_EMBEDDINGS_PROMPT_REQUIRED, LM_STUDIO_NATIVE_EMBEDDINGS,
@@ -13,6 +14,7 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::http::json_response;
+use crate::lmstudio::ensure_context_length;
 use crate::lmstudio::keep_alive::{apply_keep_alive_ttl, parse_keep_alive_seconds};
 use crate::lmstudio::request::{LMStudioRequestType, build_lm_studio_request};
 use crate::lmstudio::response::ResponseTransformer;
@@ -73,6 +75,18 @@ pub async fn handle_ollama_embeddings(
                 )
                 .await?;
 
+                // Honor Ollama `num_ctx`: reload the model at the requested
+                // context window before inference. No-op when unset or already
+                // satisfied; best-effort, never fails the request.
+                ensure_context_length(
+                    &context,
+                    &resolution_ctx.lm_studio_model_id,
+                    resolution_ctx.effective_options.as_ref(),
+                    get_runtime_config(),
+                    &cancellation_token,
+                )
+                .await;
+
                 let mut lm_request = build_lm_studio_request(
                     &resolution_ctx.lm_studio_model_id,
                     LMStudioRequestType::Embeddings {
@@ -98,6 +112,7 @@ pub async fn handle_ollama_embeddings(
                 let ollama_response = ResponseTransformer::convert_to_ollama_embeddings(
                     &lm_response_value,
                     &ollama_model_name,
+                    &input_value,
                     start_time,
                 );
                 let final_payload = finalize_embedding_response(ollama_response, response_mode);
