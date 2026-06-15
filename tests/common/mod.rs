@@ -30,9 +30,6 @@ fn ensure_runtime_initialized(enable_chunk_recovery: bool) {
             flash_attention: false,
             offload_kv_cache: false,
             eval_batch_size: None,
-            // web_fetch integration tests hit the loopback wiremock server, so
-            // the SSRF guard must allow private addresses under test.
-            allow_private_fetch: true,
         });
         LogConfig::init(false);
     });
@@ -57,26 +54,37 @@ pub async fn spawn_proxy() -> TestProxy {
 }
 
 pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy {
-    spawn_proxy_inner(enable_chunk_recovery, false, false).await
+    spawn_proxy_inner(enable_chunk_recovery, false, false, true).await
 }
 
 /// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
 /// `/api/chat` routes through LM Studio's native endpoint instead of the
 /// OpenAI-compat `/api/v0/chat/completions`.
 pub async fn spawn_proxy_with_native() -> TestProxy {
-    spawn_proxy_inner(true, true, false).await
+    spawn_proxy_inner(true, true, false, true).await
 }
 
 /// Boot a proxy with `/api/web_search` configured to forward to the mock
-/// server's `/search` endpoint (mount a POST `/search` mock to drive it).
+/// server's `/search` endpoint (with a bearer key). Mount a POST `/search`
+/// mock to drive it.
 pub async fn spawn_proxy_with_search() -> TestProxy {
-    spawn_proxy_inner(true, false, true).await
+    spawn_proxy_inner(true, false, true, true).await
 }
+
+/// Boot a proxy with the web_fetch SSRF guard ENABLED (private/loopback targets
+/// rejected) — i.e. `--allow-private-fetch` off.
+pub async fn spawn_proxy_strict_ssrf() -> TestProxy {
+    spawn_proxy_inner(true, false, false, false).await
+}
+
+/// Bearer key the search-configured test proxy sends to its provider.
+pub const TEST_SEARCH_API_KEY: &str = "test-search-key";
 
 async fn spawn_proxy_inner(
     enable_chunk_recovery: bool,
     use_native_chat: bool,
     configure_search: bool,
+    allow_private_fetch: bool,
 ) -> TestProxy {
     ensure_runtime_initialized(enable_chunk_recovery);
 
@@ -84,6 +92,7 @@ async fn spawn_proxy_inner(
     let state_dir = tempfile::tempdir().expect("create temp state dir");
 
     let search_url = configure_search.then(|| format!("{}/search", mock.uri()));
+    let search_api_key = configure_search.then(|| TEST_SEARCH_API_KEY.to_string());
 
     let config = Config {
         listen: "127.0.0.1:0".to_string(),
@@ -98,9 +107,9 @@ async fn spawn_proxy_inner(
         flash_attention: false,
         offload_kv_cache: false,
         eval_batch_size: None,
-        allow_private_fetch: true,
+        allow_private_fetch,
         search_url,
-        search_api_key: None,
+        search_api_key,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

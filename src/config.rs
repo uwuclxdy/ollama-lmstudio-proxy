@@ -107,9 +107,6 @@ pub struct RuntimeConfig {
     pub flash_attention: bool,
     pub offload_kv_cache: bool,
     pub eval_batch_size: Option<u32>,
-    /// When false (default), `/api/web_fetch` refuses private/loopback/link-local
-    /// targets to prevent SSRF.
-    pub allow_private_fetch: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -120,7 +117,6 @@ impl Default for RuntimeConfig {
             flash_attention: false,
             offload_kv_cache: false,
             eval_batch_size: None,
-            allow_private_fetch: false,
         }
     }
 }

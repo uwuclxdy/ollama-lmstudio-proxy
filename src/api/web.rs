@@ -17,7 +17,6 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use url::Url;
 
-use crate::config::get_runtime_config;
 use crate::error::ProxyError;
 use crate::http::json_response;
 
@@ -46,7 +45,13 @@ fn web_client() -> &'static reqwest::Client {
 }
 
 /// Fetch `body.url`, returning `{title, content (markdown), links}`.
-pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
+///
+/// `allow_private_fetch` comes from the per-proxy `Config`; when false (default)
+/// the SSRF guard rejects private/loopback/link-local targets.
+pub async fn handle_web_fetch(
+    body: Value,
+    allow_private_fetch: bool,
+) -> Result<Response, ProxyError> {
     let raw_url = body
         .get("url")
         .and_then(|v| v.as_str())
@@ -58,7 +63,7 @@ pub async fn handle_web_fetch(body: Value) -> Result<Response, ProxyError> {
 
     // Follow redirects manually so every hop is SSRF-checked (the guard is
     // skipped only when `--allow-private-fetch` is set).
-    let guard_ssrf = !get_runtime_config().allow_private_fetch;
+    let guard_ssrf = !allow_private_fetch;
     let (response, final_url) = fetch_following_redirects(url, guard_ssrf).await?;
 
     let status = response.status();

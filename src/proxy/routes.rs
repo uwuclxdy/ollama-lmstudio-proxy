@@ -275,8 +275,11 @@ async fn web_search_handler(
     .await
 }
 
-async fn web_fetch_handler(JsonBody(body): JsonBody<Value>) -> Result<Response, ProxyError> {
-    web::handle_web_fetch(body).await
+async fn web_fetch_handler(
+    State(s): State<AppState>,
+    JsonBody(body): JsonBody<Value>,
+) -> Result<Response, ProxyError> {
+    web::handle_web_fetch(body, s.config.allow_private_fetch).await
 }
 
 async fn show_handler(

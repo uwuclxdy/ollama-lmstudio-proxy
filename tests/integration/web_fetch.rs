@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
-use crate::common::spawn_proxy;
+use crate::common::{spawn_proxy, spawn_proxy_strict_ssrf};
 
 const PAGE_HTML: &str = r##"<html><head><title>Test &amp; Page</title></head>
 <body><h1>Heading</h1><p>Some text.</p>
@@ -113,6 +113,25 @@ async fn web_fetch_upstream_error_returns_502() {
         .await
         .expect("POST /api/web_fetch");
     assert_eq!(resp.status().as_u16(), 502);
+}
+
+// With the SSRF guard ON (default; `--allow-private-fetch` off), a loopback
+// target is rejected with 400 before any connection is attempted.
+#[tokio::test]
+async fn web_fetch_ssrf_guard_blocks_loopback() {
+    let p = spawn_proxy_strict_ssrf().await;
+    let resp = p
+        .client
+        .post(p.url("/api/web_fetch"))
+        .json(&json!({ "url": "http://127.0.0.1:9/" }))
+        .send()
+        .await
+        .expect("POST /api/web_fetch");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "loopback must be refused by the SSRF guard"
+    );
 }
 
 #[tokio::test]
