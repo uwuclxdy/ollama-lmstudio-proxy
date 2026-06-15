@@ -34,27 +34,35 @@ struct MinimalChatRequestPayload<'a> {
 pub async fn trigger_model_loading(
     context: &RequestContext<'_>,
     ollama_model_name: &str,
+    do_explicit_load: bool,
     cancellation_token: CancellationToken,
 ) -> Result<bool, ProxyError> {
     let model_for_lm_studio_trigger = ollama_model_name;
 
-    // Always issue a model-only explicit load: `build_load_config_body` returns
-    // None when no tuning flags are set, but a bare `{"model": ...}` load still
-    // brings up BOTH chat and embedding models. The chat-ping below is invalid
-    // for embedders (it returns a client-error, treated as ok), so the explicit
-    // load is the only thing that actually loads an embedding model.
-    let load_body = build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
-        .unwrap_or_else(|| serde_json::json!({ "model": model_for_lm_studio_trigger }));
-    let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
-    let load_request = CancellableRequest::new(context.client, cancellation_token.clone());
-    match load_request
-        .make_request(reqwest::Method::POST, &load_url, Some(load_body))
-        .await
-    {
-        Ok(_) => {}
-        Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
-        Err(e) => {
-            log::warn!("model load config: best-effort POST failed: {}", e.message);
+    // Issue a model-only explicit load ONLY when the caller knows the model is
+    // not resident (the JIT-on-error path). `build_load_config_body` returns None
+    // with no tuning flags, but a bare `{"model": ...}` load still brings up BOTH
+    // chat and embedding models — and it is the only thing that loads an embedder
+    // (the chat-ping below is invalid for embedders: a client-error, treated as
+    // ok). The unconditional warm path (e.g. /api/show) passes `false`: a
+    // `/api/v1/models/load` SPAWNS a new instance rather than reconfiguring, so
+    // force-loading an already-resident model would stack a duplicate (:2, :3…);
+    // the chat-ping JIT-loads chat models idempotently instead.
+    if do_explicit_load {
+        let load_body =
+            build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
+                .unwrap_or_else(|| serde_json::json!({ "model": model_for_lm_studio_trigger }));
+        let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
+        let load_request = CancellableRequest::new(context.client, cancellation_token.clone());
+        match load_request
+            .make_request(reqwest::Method::POST, &load_url, Some(load_body))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
+            Err(e) => {
+                log::warn!("model load config: best-effort POST failed: {}", e.message);
+            }
         }
     }
 
@@ -100,7 +108,9 @@ pub async fn trigger_model_loading_for_ollama(
     ollama_model_name: &str,
     cancellation_token: CancellationToken,
 ) -> Result<(), ProxyError> {
-    match trigger_model_loading(context, ollama_model_name, cancellation_token).await {
+    // Unconditional warm (e.g. /api/show): no explicit load — see the duplicate-
+    // instance note on `trigger_model_loading`. The chat-ping loads chat models.
+    match trigger_model_loading(context, ollama_model_name, false, cancellation_token).await {
         Ok(true) => Ok(()),
         Ok(false) => {
             log::warn!(
@@ -179,8 +189,15 @@ where
                     model_loading_start,
                 );
 
-                match trigger_model_loading(context, ollama_model_name, cancellation_token.clone())
-                    .await
+                // JIT-on-error: the model is genuinely not resident, so force an
+                // explicit load (required to bring up embedding models).
+                match trigger_model_loading(
+                    context,
+                    ollama_model_name,
+                    true,
+                    cancellation_token.clone(),
+                )
+                .await
                 {
                     Ok(true) => {
                         tokio::select! {

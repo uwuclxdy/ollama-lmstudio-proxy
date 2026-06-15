@@ -634,6 +634,17 @@ async fn show_keep_alive_in_body_does_not_skip_model_load() {
         "keep_alive in show body must not suppress model loading; \
          no POST to /api/v0/chat/completions was observed"
     );
+
+    // The unconditional warm must NOT force an explicit `/api/v1/models/load`:
+    // that endpoint spawns a NEW instance, so a repeated /api/show on a resident
+    // model would stack duplicates. The idempotent chat-ping loads it instead.
+    let forced_load = received
+        .iter()
+        .any(|r| r.url.path() == "/api/v1/models/load");
+    assert!(
+        !forced_load,
+        "/api/show must not POST /api/v1/models/load (would spawn a duplicate instance)"
+    );
 }
 
 // Drift B: ShowResponse schema defines no `digest` or `size` fields.
