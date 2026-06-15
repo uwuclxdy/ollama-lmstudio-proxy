@@ -63,6 +63,20 @@ fn lm_studio_unavailable_is_503() {
 }
 
 #[test]
+fn too_many_requests_is_429() {
+    let e = ProxyError::too_many_requests("slow down");
+    assert_eq!(e.status_code, 429);
+    assert_eq!(e.message, "slow down");
+}
+
+#[test]
+fn bad_gateway_is_502() {
+    let e = ProxyError::bad_gateway("upstream gone");
+    assert_eq!(e.status_code, 502);
+    assert_eq!(e.message, "upstream gone");
+}
+
+#[test]
 fn is_cancelled_false_for_non_499() {
     let e = ProxyError::internal_server_error("x");
     assert!(!e.is_cancelled());

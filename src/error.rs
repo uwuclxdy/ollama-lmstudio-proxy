@@ -65,6 +65,20 @@ impl ProxyError {
         }
     }
 
+    pub fn too_many_requests(message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+            status_code: 429,
+        }
+    }
+
+    pub fn bad_gateway(message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+            status_code: 502,
+        }
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.status_code == 499
     }

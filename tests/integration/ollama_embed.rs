@@ -1123,6 +1123,89 @@ async fn embed_accepts_mixed_array_with_one_non_empty_entry() {
 }
 
 // ---------------------------------------------------------------------------
+// 34. Embedding model JIT-loads on a "No models loaded" 400, then retries
+// ---------------------------------------------------------------------------
+//
+// LM Studio answers an embeddings request with a 400 "No models loaded" until
+// the model is loaded. The proxy must treat that 400 as a loading error, fire
+// an explicit `POST /api/v1/models/load` (the chat-ping is invalid for an
+// embedder, so the explicit model-only load is what actually loads it), then
+// retry the embeddings call and surface the 200.
+#[tokio::test]
+async fn embed_jit_loads_model_on_no_models_loaded_then_retries() {
+    use wiremock::matchers::body_partial_json;
+
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    // First /v1/embeddings hit fails with the LM Studio "No models loaded" 400…
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": { "message": "No models loaded" }
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // …and the explicit model-only load must fire in between.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "model": "all-minilm" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "status": "loaded" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // The retry then succeeds with a real vector.
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_response_single("all-minilm", vec![0.1, 0.2, 0.3])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    // The proxy sleeps `load_timeout_seconds` (15s in the test config) between the
+    // trigger and the retry, which exceeds the shared client's 10s timeout — use a
+    // local client with a longer timeout to observe the full retry round-trip.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("reqwest client");
+
+    let resp = client
+        .post(p.url("/api/embed"))
+        .json(&json!({ "model": "all-minilm", "input": "jit load test" }))
+        .send()
+        .await
+        .expect("POST /api/embed jit load");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "embed must succeed after JIT load + retry"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    let embeddings = body["embeddings"].as_array().expect("embeddings array");
+    assert_eq!(embeddings.len(), 1);
+    assert_eq!(embeddings[0].as_array().expect("vector").len(), 3);
+
+    // The explicit model load must have been received between the 400 and the 200.
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let load_posted = received
+        .iter()
+        .any(|r| r.url.path() == "/api/v1/models/load");
+    assert!(
+        load_posted,
+        "expected an explicit POST /api/v1/models/load to JIT-load the embedding model"
+    );
+    p.mock.verify().await;
+}
+
+// ---------------------------------------------------------------------------
 // 25. truncate + dimensions forwarded to /v1/embeddings body
 // ---------------------------------------------------------------------------
 

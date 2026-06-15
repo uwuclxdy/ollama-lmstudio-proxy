@@ -38,20 +38,23 @@ pub async fn trigger_model_loading(
 ) -> Result<bool, ProxyError> {
     let model_for_lm_studio_trigger = ollama_model_name;
 
-    if let Some(load_body) =
-        build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
+    // Always issue a model-only explicit load: `build_load_config_body` returns
+    // None when no tuning flags are set, but a bare `{"model": ...}` load still
+    // brings up BOTH chat and embedding models. The chat-ping below is invalid
+    // for embedders (it returns a client-error, treated as ok), so the explicit
+    // load is the only thing that actually loads an embedding model.
+    let load_body = build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
+        .unwrap_or_else(|| serde_json::json!({ "model": model_for_lm_studio_trigger }));
+    let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
+    let load_request = CancellableRequest::new(context.client, cancellation_token.clone());
+    match load_request
+        .make_request(reqwest::Method::POST, &load_url, Some(load_body))
+        .await
     {
-        let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
-        let load_request = CancellableRequest::new(context.client, cancellation_token.clone());
-        match load_request
-            .make_request(reqwest::Method::POST, &load_url, Some(load_body))
-            .await
-        {
-            Ok(_) => {}
-            Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
-            Err(e) => {
-                log::warn!("model load config: best-effort POST failed: {}", e.message);
-            }
+        Ok(_) => {}
+        Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
+        Err(e) => {
+            log::warn!("model load config: best-effort POST failed: {}", e.message);
         }
     }
 
@@ -110,6 +113,32 @@ pub async fn trigger_model_loading_for_ollama(
     }
 }
 
+/// LM Studio's literal "no models loaded" 400 — a model that exists in the
+/// catalog but has no resident instance yet. Matched narrowly (rather than via
+/// the loose `is_model_loading_error` classifier) so proxy-side validation 400s
+/// such as "raw cannot be combined with images ... vision models" don't get
+/// mistaken for a load-and-retry signal.
+fn is_no_models_loaded(message: &str) -> bool {
+    message.to_lowercase().contains("no models loaded")
+}
+
+/// Whether an upstream failure should trigger a best-effort model load and retry.
+///
+/// True for a 400 carrying LM Studio's "no models loaded" (a model that exists
+/// but isn't resident) or for a 5xx loading error (still spinning up). Other 4xx
+/// return verbatim: a 404 "model not found" means the model truly doesn't exist,
+/// so a load would be futile. 429/502 are forwarded by the caller and never
+/// reach here, so they are excluded outright.
+pub(crate) fn should_trigger_load(status: u16, message: &str) -> bool {
+    if status == 429 || status == 502 {
+        return false;
+    }
+    if (400..500).contains(&status) {
+        return is_no_models_loaded(message);
+    }
+    is_model_loading_error(message)
+}
+
 pub async fn with_retry_and_cancellation<F, Fut, T>(
     context: &RequestContext<'_>,
     ollama_model_name: &str,
@@ -130,9 +159,19 @@ where
             log::error!("request failed: LM Studio unavailable - failing fast");
             Err(e)
         }
-        Err(e) if (400..500).contains(&e.status_code) => Err(e),
+        // Most 4xx return immediately. The one exception is a 400 carrying LM
+        // Studio's literal "no models loaded" — a model that exists but isn't
+        // resident yet — which must fall through to the trigger-and-retry arm.
+        // A 404 ("model not found") still returns at once (the model genuinely
+        // doesn't exist), and proxy-side validation 400s (e.g. raw + images) are
+        // NOT loading errors even when the loose classifier would match them.
+        Err(e) if (400..500).contains(&e.status_code) && !is_no_models_loaded(&e.message) => Err(e),
+        // 429/502 are passed through verbatim (their messages can match the
+        // loading classifier — e.g. a 502 "model unreachable" — so guard them
+        // here to avoid a spurious load detour before returning).
+        Err(e) if e.status_code == 429 || e.status_code == 502 => Err(e),
         Err(e) => {
-            if is_model_loading_error(&e.message) {
+            if should_trigger_load(e.status_code, &e.message) {
                 let model_loading_start = Instant::now();
                 log_timed(
                     LOG_PREFIX_INFO,
