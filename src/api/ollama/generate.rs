@@ -8,12 +8,14 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::api::response::{ResponseContext, ResponseParams, handle_response};
+use crate::config::get_runtime_config;
 use crate::constants::{
     ERROR_MISSING_PROMPT, ERROR_RAW_WITH_IMAGES, LM_STUDIO_NATIVE_CHAT,
     LM_STUDIO_NATIVE_COMPLETIONS,
 };
 use crate::error::ProxyError;
 use crate::http::client::CancellableRequest;
+use crate::lmstudio::ensure_context_length;
 use crate::lmstudio::images::build_vision_chat_messages;
 use crate::lmstudio::keep_alive::{apply_keep_alive_ttl, parse_keep_alive_seconds};
 use crate::lmstudio::request::{LMStudioRequestType, build_lm_studio_request};
@@ -102,6 +104,18 @@ pub async fn handle_ollama_generate(
                     cancellation_token.clone(),
                 )
                 .await?;
+
+                // Honor Ollama `num_ctx`: reload the model at the requested
+                // context window before inference. No-op when unset or already
+                // satisfied; best-effort, never fails the request.
+                ensure_context_length(
+                    &context,
+                    &resolution_ctx.lm_studio_model_id,
+                    resolution_ctx.effective_options.as_ref(),
+                    get_runtime_config(),
+                    &cancellation_token,
+                )
+                .await;
 
                 let mut prompt_for_estimation = current_prompt;
                 let mut prompt_override_storage: Option<String> = None;

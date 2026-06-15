@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::api::response::{ResponseContext, ResponseParams, handle_response};
+use crate::config::get_runtime_config;
 use crate::constants::{
     DEFAULT_STREAM_TIMEOUT_SECONDS, ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT,
     LM_STUDIO_V1_CHAT,
@@ -14,6 +15,7 @@ use crate::constants::{
 use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::http::json_response;
+use crate::lmstudio::ensure_context_length;
 use crate::lmstudio::images::{convert_per_message_images, inject_images_into_messages};
 use crate::lmstudio::keep_alive::{apply_keep_alive_ttl, parse_keep_alive_seconds};
 use crate::lmstudio::native_chat::{
@@ -97,6 +99,18 @@ pub async fn handle_ollama_chat(
                     cancellation_token.clone(),
                 )
                 .await?;
+
+                // Honor Ollama `num_ctx`: reload the model at the requested
+                // context window before inference. No-op when unset or already
+                // satisfied; best-effort, never fails the request.
+                ensure_context_length(
+                    &context,
+                    &resolution_ctx.lm_studio_model_id,
+                    resolution_ctx.effective_options.as_ref(),
+                    get_runtime_config(),
+                    &cancellation_token,
+                )
+                .await;
 
                 let message_count = messages.len();
 

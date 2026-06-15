@@ -83,7 +83,7 @@ fn request_passes_through_full_data_url_unchanged() {
 }
 
 #[test]
-fn request_maps_sampling_and_context_length() {
+fn request_maps_sampling_and_drops_num_ctx() {
     let options = json!({
         "temperature": 0.2,
         "top_p": 0.9,
@@ -103,7 +103,12 @@ fn request_maps_sampling_and_context_length() {
     assert_eq!(body["repeat_penalty"], json!(1.1));
     // Native uses max_output_tokens, sourced from num_predict.
     assert_eq!(body["max_output_tokens"], json!(256));
-    assert_eq!(body["context_length"], json!(8000));
+    // `num_ctx` is load-time only (the chat body ignores `context_length`); it
+    // is honored out-of-band by `ensure_context_length`, never in the body.
+    assert!(
+        body.get("context_length").is_none(),
+        "num_ctx must not leak into the native chat body"
+    );
 }
 
 #[test]

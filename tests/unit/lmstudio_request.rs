@@ -34,6 +34,31 @@ fn num_ctx_is_not_treated_as_unsupported() {
 }
 
 #[test]
+fn num_ctx_is_not_emitted_as_context_length() {
+    let options = json!({ "num_ctx": 4096, "temperature": 0.5 });
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let request = build_lm_studio_request(
+        "mymodel",
+        LMStudioRequestType::Chat {
+            messages: &messages,
+            stream: false,
+        },
+        Some(&options),
+        None,
+        None,
+        None,
+    );
+    // `num_ctx` is honored out-of-band via model reload, never as a chat-body
+    // field — LM Studio ignores `context_length` in the chat body.
+    assert!(
+        request.get("context_length").is_none(),
+        "num_ctx must not leak into the chat body as context_length"
+    );
+    // sanity: a genuine sampling param still maps.
+    assert_eq!(request["temperature"], json!(0.5));
+}
+
+#[test]
 fn log_unsupported_options_does_not_panic() {
     let options = json!({ "num_ctx": 4096, "mirostat": 1 });
     log_unsupported_options(&options);

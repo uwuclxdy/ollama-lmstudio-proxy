@@ -169,9 +169,9 @@ fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map
         params.insert("max_tokens".to_string(), max_tokens.clone());
     }
 
-    if let Some(ctx) = options.get("num_ctx") {
-        params.insert("context_length".to_string(), ctx.clone());
-    }
+    // `num_ctx` is NOT emitted here: LM Studio's chat body ignores
+    // `context_length` (it is a load-time parameter). It is honored out-of-band
+    // by `ensure_context_length`, which reloads the model at the requested size.
 }
 
 fn map_format_params(

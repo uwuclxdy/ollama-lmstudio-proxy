@@ -9,7 +9,7 @@
 // and "llava-7b-v1.6" matches "llava-7b:latest".
 
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::spawn_proxy;
@@ -368,13 +368,34 @@ async fn options_temperature_and_num_predict_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 6. options.num_ctx forwarded as context_length
+// 6. options.num_ctx reloads the model at the requested context_length
 // ═══════════════════════════════════════════════════════════════════════════
 
+// `inst-0` is loaded at context_length 4096; a request with num_ctx 1024 must
+// unload it and reload at 1024 before inference (collapse to one instance at the
+// requested size — see the chat-side test for the rationale).
 #[tokio::test]
-async fn options_num_ctx_forwarded_as_context_length() {
+async fn options_num_ctx_reloads_model_at_context_length() {
     let p = spawn_proxy().await;
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .and(body_partial_json(json!({ "instance_id": "inst-0" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "instance_id": "inst-0" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "context_length": 1024 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "loaded", "instance_id": "llama3.2-3b-instruct", "load_time_seconds": 0.1
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/completions"))
@@ -396,6 +417,96 @@ async fn options_num_ctx_forwarded_as_context_length() {
         .send()
         .await
         .expect("POST /api/generate num_ctx");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// num_ctx matching the loaded instance's context → no unload, no reload.
+#[tokio::test]
+async fn options_num_ctx_matching_loaded_context_skips_reload() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Test",
+            "stream": false,
+            "options": { "num_ctx": 4096 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate num_ctx match");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// A request with NO num_ctx must never touch the model's load state.
+#[tokio::test]
+async fn options_num_ctx_absent_does_not_touch_model() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Test",
+            "stream": false,
+            "options": { "temperature": 0.5 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate no num_ctx");
 
     assert_eq!(resp.status(), 200);
     p.mock.verify().await;

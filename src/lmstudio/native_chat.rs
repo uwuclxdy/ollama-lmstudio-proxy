@@ -100,9 +100,8 @@ fn apply_native_sampling(ollama_options: Option<&Value>, body: &mut Map<String, 
         body.insert("max_output_tokens".to_string(), max_tokens.clone());
     }
 
-    if let Some(ctx) = options.get("num_ctx") {
-        body.insert("context_length".to_string(), ctx.clone());
-    }
+    // `num_ctx` is NOT emitted here: `context_length` is a load-time parameter
+    // the chat body ignores. It is honored out-of-band by `ensure_context_length`.
 }
 
 /// Build the native `input` array from Ollama `messages`.

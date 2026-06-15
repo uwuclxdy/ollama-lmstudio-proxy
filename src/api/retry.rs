@@ -39,7 +39,7 @@ pub async fn trigger_model_loading(
     let model_for_lm_studio_trigger = ollama_model_name;
 
     if let Some(load_body) =
-        build_load_config_body(model_for_lm_studio_trigger, get_runtime_config())
+        build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
     {
         let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
         let load_request = CancellableRequest::new(context.client, cancellation_token.clone());

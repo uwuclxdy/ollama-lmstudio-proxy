@@ -1,20 +1,42 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use serde_json::{Value, json};
+use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
+use crate::api::RequestContext;
 use crate::config::RuntimeConfig;
+use crate::constants::{LM_STUDIO_MODELS_LOAD, LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD};
+use crate::http::CancellableRequest;
+use crate::model::types::NativeModelsResponse;
 
-/// Build the body for `POST /api/v1/models/load` from the current runtime flags.
+/// Build the body for `POST /api/v1/models/load` from the current runtime flags
+/// and an optional per-request `context_length` (Ollama `num_ctx`).
 ///
-/// Returns `None` when none of the three load-tuning flags are set, so the
-/// caller can skip the load call entirely and preserve byte-for-byte identical
-/// behavior with the no-flags default.
-pub fn build_load_config_body(model: &str, rc: &RuntimeConfig) -> Option<Value> {
-    if !rc.flash_attention && !rc.offload_kv_cache && rc.eval_batch_size.is_none() {
+/// Returns `None` only when nothing would be sent — no `context_length` and none
+/// of the three load-tuning flags set — so the caller can skip the load call
+/// entirely and preserve byte-for-byte identical behavior with the no-flags
+/// default.
+pub fn build_load_config_body(
+    model: &str,
+    rc: &RuntimeConfig,
+    context_length: Option<u64>,
+) -> Option<Value> {
+    if context_length.is_none()
+        && !rc.flash_attention
+        && !rc.offload_kv_cache
+        && rc.eval_batch_size.is_none()
+    {
         return None;
     }
 
     let mut body = json!({ "model": model });
     let obj = body.as_object_mut().expect("json object");
 
+    if let Some(ctx) = context_length {
+        obj.insert("context_length".to_string(), json!(ctx));
+    }
     if rc.flash_attention {
         obj.insert("flash_attention".to_string(), json!(true));
     }
@@ -26,6 +48,146 @@ pub fn build_load_config_body(model: &str, rc: &RuntimeConfig) -> Option<Value> 
     }
 
     Some(body)
+}
+
+/// Pull a usable `num_ctx` (positive integer) out of merged Ollama options.
+/// Absent, non-integer, or non-positive values yield `None`.
+pub fn extract_num_ctx(options: Option<&Value>) -> Option<u64> {
+    options
+        .and_then(|o| o.get("num_ctx"))
+        .and_then(|v| v.as_u64())
+        .filter(|n| *n > 0)
+}
+
+/// Per-model async lock serializing `ensure_context_length` for one model key.
+///
+/// Without it, two concurrent requests carrying different `num_ctx` for the same
+/// model both observe the same instance list, both unload it, and both load —
+/// racing LM Studio's "chat routes to the first instance" rule and leaving
+/// duplicate instances. The lock makes the read→unload→load sequence atomic per
+/// model; different models still proceed concurrently.
+fn context_lock_for(model: &str) -> Arc<AsyncMutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard
+        .entry(model.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
+
+/// Best-effort: make `lm_studio_model_id` serve at the requested `num_ctx` by
+/// ensuring exactly one loaded instance at that `context_length`.
+///
+/// `context_length` is a load-time parameter in LM Studio: the chat body cannot
+/// change it. Worse, `POST /api/v1/models/load` spawns a *new* instance instead
+/// of reconfiguring an existing one, and chat requests route to the first loaded
+/// instance — so honoring Ollama's `num_ctx` (which reloads the model whenever
+/// the context changes) means collapsing to a single instance at the requested
+/// size. The request is clamped to the model's trained maximum, serialized per
+/// model (see `context_lock_for`), and skips the reload if any unload fails (so
+/// it never stacks a fresh instance on top of ones still loaded). No-op when
+/// `num_ctx` is absent/zero or already satisfied. Every failure is logged and
+/// swallowed so this can never fail the user's request.
+pub async fn ensure_context_length(
+    context: &RequestContext<'_>,
+    lm_studio_model_id: &str,
+    effective_options: Option<&Value>,
+    rc: &RuntimeConfig,
+    cancellation: &CancellationToken,
+) {
+    let Some(mut requested) = extract_num_ctx(effective_options) else {
+        return;
+    };
+    if cancellation.is_cancelled() {
+        return;
+    }
+
+    // Serialize read→unload→load for this model so concurrent differing-num_ctx
+    // requests can't both reload it and leave duplicate instances.
+    let lock = context_lock_for(lm_studio_model_id);
+    let _guard = lock.lock().await;
+
+    let models_url = context.endpoint_url(LM_STUDIO_NATIVE_MODELS);
+    let native: NativeModelsResponse = match context.client.get(&models_url).send().await {
+        Ok(resp) => match resp.json().await {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                log::warn!("num_ctx: parse models response failed: {e}");
+                return;
+            }
+        },
+        Err(e) => {
+            log::warn!("num_ctx: fetch models failed: {e}");
+            return;
+        }
+    };
+
+    let model = native.models.iter().find(|m| m.key == lm_studio_model_id);
+    let instances = model
+        .map(|m| m.loaded_instances.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    // Clamp to the model's trained maximum: loading above it fails, and since we
+    // unload first that would leave the model with NO instance at all.
+    if let Some(max) = model.map(|m| m.max_context_length).filter(|&m| m > 0)
+        && requested > max
+    {
+        log::warn!(
+            "num_ctx {requested} exceeds model max {max} for '{lm_studio_model_id}'; clamping to {max}"
+        );
+        requested = max;
+    }
+
+    // Already serving at the requested context as a single instance → nothing to do.
+    if instances.len() == 1
+        && instances[0].config.as_ref().and_then(|c| c.context_length) == Some(requested)
+    {
+        return;
+    }
+
+    // Collapse to one instance at the requested context: unload every existing
+    // instance, then load once. If an unload errors, skip the load so we never
+    // stack a fresh instance on top of ones that are still loaded.
+    let unload_url = context.endpoint_url(LM_STUDIO_NATIVE_UNLOAD);
+    let mut unloads_ok = true;
+    for instance in &instances {
+        if let Err(e) = context
+            .client
+            .post(&unload_url)
+            .json(&json!({ "instance_id": instance.id }))
+            .send()
+            .await
+        {
+            log::warn!("num_ctx: unload '{}' failed: {e}", instance.id);
+            unloads_ok = false;
+        }
+    }
+    if !unloads_ok {
+        log::warn!(
+            "num_ctx: unload incomplete for '{lm_studio_model_id}', skipping reload to avoid duplicate instances"
+        );
+        return;
+    }
+
+    let Some(load_body) = build_load_config_body(lm_studio_model_id, rc, Some(requested)) else {
+        return;
+    };
+    let load_url = context.endpoint_url(LM_STUDIO_MODELS_LOAD);
+    match CancellableRequest::new(context.client, cancellation.clone())
+        .make_request(reqwest::Method::POST, &load_url, Some(load_body))
+        .await
+    {
+        Ok(_) => {
+            log::debug!("num_ctx: loaded '{lm_studio_model_id}' at context_length={requested}")
+        }
+        Err(e) => log::warn!(
+            "num_ctx: load '{lm_studio_model_id}' at {requested} failed: {}",
+            e.message
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -42,8 +204,18 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_no_flags_set() {
-        assert!(build_load_config_body("some-model", &rc_none()).is_none());
+    fn returns_none_when_no_flags_and_no_context_length() {
+        assert!(build_load_config_body("some-model", &rc_none(), None).is_none());
+    }
+
+    #[test]
+    fn context_length_alone_yields_body() {
+        let body = build_load_config_body("m", &rc_none(), Some(4096)).expect("some");
+        assert_eq!(body["model"], "m");
+        assert_eq!(body["context_length"], 4096);
+        assert!(body.get("flash_attention").is_none());
+        assert!(body.get("offload_kv_cache_to_gpu").is_none());
+        assert!(body.get("eval_batch_size").is_none());
     }
 
     #[test]
@@ -52,9 +224,10 @@ mod tests {
             flash_attention: true,
             ..rc_none()
         };
-        let body = build_load_config_body("m", &rc).expect("some");
+        let body = build_load_config_body("m", &rc, None).expect("some");
         assert_eq!(body["model"], "m");
         assert_eq!(body["flash_attention"], true);
+        assert!(body.get("context_length").is_none());
         assert!(body.get("offload_kv_cache_to_gpu").is_none());
         assert!(body.get("eval_batch_size").is_none());
     }
@@ -65,7 +238,7 @@ mod tests {
             offload_kv_cache: true,
             ..rc_none()
         };
-        let body = build_load_config_body("m", &rc).expect("some");
+        let body = build_load_config_body("m", &rc, None).expect("some");
         assert_eq!(body["offload_kv_cache_to_gpu"], true);
         assert!(body.get("flash_attention").is_none());
         assert!(body.get("eval_batch_size").is_none());
@@ -77,22 +250,23 @@ mod tests {
             eval_batch_size: Some(512),
             ..rc_none()
         };
-        let body = build_load_config_body("m", &rc).expect("some");
+        let body = build_load_config_body("m", &rc, None).expect("some");
         assert_eq!(body["eval_batch_size"], 512);
         assert!(body.get("flash_attention").is_none());
         assert!(body.get("offload_kv_cache_to_gpu").is_none());
     }
 
     #[test]
-    fn all_flags_set() {
+    fn context_length_alongside_all_flags() {
         let rc = RuntimeConfig {
             flash_attention: true,
             offload_kv_cache: true,
             eval_batch_size: Some(256),
             ..rc_none()
         };
-        let body = build_load_config_body("mymodel", &rc).expect("some");
+        let body = build_load_config_body("mymodel", &rc, Some(8192)).expect("some");
         assert_eq!(body["model"], "mymodel");
+        assert_eq!(body["context_length"], 8192);
         assert_eq!(body["flash_attention"], true);
         assert_eq!(body["offload_kv_cache_to_gpu"], true);
         assert_eq!(body["eval_batch_size"], 256);
@@ -104,7 +278,26 @@ mod tests {
             flash_attention: true,
             ..rc_none()
         };
-        let body = build_load_config_body("lmstudio-community/some-model-q4", &rc).expect("some");
+        let body =
+            build_load_config_body("lmstudio-community/some-model-q4", &rc, None).expect("some");
         assert_eq!(body["model"], "lmstudio-community/some-model-q4");
+    }
+
+    #[test]
+    fn extract_num_ctx_reads_positive_integer() {
+        assert_eq!(
+            extract_num_ctx(Some(&json!({ "num_ctx": 4096 }))),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn extract_num_ctx_rejects_absent_zero_negative_and_non_integer() {
+        assert_eq!(extract_num_ctx(None), None);
+        assert_eq!(extract_num_ctx(Some(&json!({}))), None);
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 0 }))), None);
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": -1 }))), None);
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 1.5 }))), None);
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": "4096" }))), None);
     }
 }

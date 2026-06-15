@@ -348,13 +348,35 @@ async fn options_temperature_num_predict_seed_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 6. options.num_ctx forwarded as context_length
+// 6. options.num_ctx reloads the model at the requested context_length
 // ═══════════════════════════════════════════════════════════════════════════
 
+// The catalog reports `inst-0` loaded at context_length 4096. A request with a
+// DIFFERENT `num_ctx` must collapse to a single instance at the requested size:
+// unload `inst-0`, then load at the new context (LM Studio's load spawns a new
+// instance instead of reconfiguring, and chat routes to the first one).
 #[tokio::test]
-async fn options_num_ctx_forwarded_as_context_length() {
+async fn options_num_ctx_reloads_model_at_context_length() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .and(body_partial_json(json!({ "instance_id": "inst-0" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "instance_id": "inst-0" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "context_length": 2048 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "loaded", "instance_id": "llama3.1-8b-instruct", "load_time_seconds": 0.1
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
 
     Mock::given(method("POST"))
         .and(path("/api/v0/chat/completions"))
@@ -374,6 +396,161 @@ async fn options_num_ctx_forwarded_as_context_length() {
         .send()
         .await
         .expect("POST /api/chat num_ctx");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// When `num_ctx` already matches the single loaded instance's context, the proxy
+// must NOT unload or reload — the request flows straight to inference.
+#[tokio::test]
+async fn options_num_ctx_matching_loaded_context_skips_reload() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Test" }],
+            "stream": false,
+            "options": { "num_ctx": 4096 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat num_ctx match");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// A request with NO num_ctx must never touch the model's load state.
+#[tokio::test]
+async fn options_num_ctx_absent_does_not_touch_model() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Test" }],
+            "stream": false,
+            "options": { "temperature": 0.5 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat no num_ctx");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
+// Multiple stale instances of the same model must collapse to ONE at the
+// requested context: every instance unloaded, then a single load.
+#[tokio::test]
+async fn options_num_ctx_collapses_multiple_instances() {
+    let p = spawn_proxy().await;
+
+    // Catalog with two loaded instances at different contexts.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{
+                "key": "llama3.1-8b-instruct",
+                "type": "llm",
+                "publisher": "meta",
+                "architecture": "llama",
+                "format": "gguf",
+                "quantization": { "name": "Q4_K_M", "bits_per_weight": 4.5 },
+                "max_context_length": 8192,
+                "loaded_instances": [
+                    { "id": "inst-0", "config": { "context_length": 4096 } },
+                    { "id": "inst-1", "config": { "context_length": 2048 } }
+                ],
+                "capabilities": { "vision": false, "trained_for_tool_use": true }
+            }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(2)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .and(body_partial_json(json!({ "context_length": 8192 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "loaded", "instance_id": "llama3.1-8b-instruct", "load_time_seconds": 0.1
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Test" }],
+            "stream": false,
+            "options": { "num_ctx": 8192 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat multi-instance num_ctx");
 
     assert_eq!(resp.status(), 200);
     p.mock.verify().await;

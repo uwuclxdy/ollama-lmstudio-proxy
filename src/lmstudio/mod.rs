@@ -7,5 +7,5 @@ pub mod native_chat;
 pub mod request;
 pub mod response;
 
-pub use load_config::build_load_config_body;
+pub use load_config::{build_load_config_body, ensure_context_length};
 pub use loading_error::is_model_loading_error;
