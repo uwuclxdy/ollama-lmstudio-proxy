@@ -470,7 +470,8 @@ fn ps_model_includes_tags_fields_plus_expires_and_vram() {
     ] {
         assert!(v.get(key).is_some(), "missing key {key}");
     }
-    assert_eq!(v["size_vram"], json!(0));
+    // size_vram mirrors the loaded size (LM Studio gives no GPU/CPU split).
+    assert_eq!(v["size_vram"], v["size"]);
     assert_eq!(v["context_length"], json!(info.context_length));
 }
 

@@ -110,6 +110,7 @@ async fn spawn_proxy_inner(
         allow_private_fetch,
         search_url,
         search_api_key,
+        ollama_version: "0.30.0".to_string(),
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

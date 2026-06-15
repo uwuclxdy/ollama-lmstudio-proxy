@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 
+use crate::constants::OLLAMA_SERVER_VERSION;
+
 #[derive(Parser, Debug, Clone)]
 #[command(name = "ollama-lmstudio-proxy")]
 #[command(about = "high-performance proxy server bridging ollama API and lm studio")]
@@ -98,6 +100,14 @@ pub struct Config {
         help = "bearer token sent to the search provider (--search-url) for /api/web_search"
     )]
     pub search_api_key: Option<String>,
+
+    #[arg(
+        long,
+        env = "OLLAMA_VERSION",
+        default_value = OLLAMA_SERVER_VERSION,
+        help = "version string reported by GET /api/version (Ollama-compat); raise it if a client gates features on the server version"
+    )]
+    pub ollama_version: String,
 }
 
 #[derive(Debug, Clone)]

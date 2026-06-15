@@ -556,6 +556,38 @@ async fn options_num_ctx_collapses_multiple_instances() {
     p.mock.verify().await;
 }
 
+// Top-level `tool_choice` (OpenAI-compat) is forwarded into the chat body.
+#[tokio::test]
+async fn tool_choice_forwarded() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .and(body_partial_json(json!({ "tool_choice": "required" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false,
+            "tools": [{ "type": "function", "function": { "name": "f", "parameters": {} } }],
+            "tool_choice": "required"
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat tool_choice");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 7. options.stop as array forwarded
 // ═══════════════════════════════════════════════════════════════════════════

@@ -7,7 +7,6 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::constants::{
     ERROR_LM_STUDIO_UNAVAILABLE, LM_STUDIO_NATIVE_MODELS, LOG_PREFIX_ERROR, LOG_PREFIX_SUCCESS,
-    OLLAMA_SERVER_VERSION,
 };
 use crate::error::ProxyError;
 use crate::http::CancellableRequest;
@@ -27,12 +26,12 @@ pub async fn handle_ollama_root() -> Result<axum::response::Response, ProxyError
         }))
 }
 
-pub async fn handle_ollama_version() -> Result<axum::response::Response, ProxyError> {
+pub async fn handle_ollama_version(version: &str) -> Result<axum::response::Response, ProxyError> {
     if LogConfig::get().debug_enabled {
         log::debug!("version request");
     }
     let response = json!({
-        "version": OLLAMA_SERVER_VERSION
+        "version": version
     });
     if LogConfig::get().debug_enabled {
         log::debug!(

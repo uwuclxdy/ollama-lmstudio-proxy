@@ -188,6 +188,14 @@ pub async fn handle_ollama_chat(
                     Some(&top_level_params),
                 );
 
+                // Forward OpenAI-compat `tool_choice` alongside `tools`; LM
+                // Studio accepts it on /api/v0/chat/completions.
+                if let Some(tool_choice) = body.get("tool_choice")
+                    && let Some(obj) = lm_request.as_object_mut()
+                {
+                    obj.insert("tool_choice".to_string(), tool_choice.clone());
+                }
+
                 apply_keep_alive_ttl(&mut lm_request, keep_alive_seconds);
 
                 let response = CancellableRequest::new(context.client, cancellation_token.clone())

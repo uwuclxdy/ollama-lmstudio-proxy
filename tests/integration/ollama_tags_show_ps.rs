@@ -708,7 +708,7 @@ async fn ps_no_loaded_models_returns_empty() {
 }
 
 #[tokio::test]
-async fn ps_loaded_model_has_expires_at_and_zero_size_vram_without_gpu_signal() {
+async fn ps_loaded_model_has_expires_at_and_size_vram_mirrors_size() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -741,12 +741,16 @@ async fn ps_loaded_model_has_expires_at_and_zero_size_vram_without_gpu_signal() 
     // expose both `name` (display) and `model` (canonical identifier).
     assert!(m["model"].is_string(), "missing model; {m}");
     assert!(m["expires_at"].is_string(), "missing expires_at; {m}");
-    assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
+    // size_vram mirrors the loaded size (LM Studio gives no GPU/CPU split).
+    assert_eq!(
+        m["size_vram"], m["size"],
+        "size_vram should mirror size; {m}"
+    );
     assert_eq!(m["context_length"], json!(4096), "unexpected context; {m}");
 }
 
 #[tokio::test]
-async fn ps_loaded_model_with_kv_cache_gpu_flag_still_reports_zero_size_vram() {
+async fn ps_loaded_model_size_vram_mirrors_size() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -779,7 +783,12 @@ async fn ps_loaded_model_with_kv_cache_gpu_flag_still_reports_zero_size_vram() {
 
     let m = &models[0];
     assert_eq!(m["size"], json!(4_500_000_000u64));
-    assert_eq!(m["size_vram"], json!(0), "unexpected VRAM usage; {m}");
+    // A loaded model is assumed resident → size_vram mirrors size.
+    assert_eq!(
+        m["size_vram"],
+        json!(4_500_000_000u64),
+        "size_vram should mirror size; {m}"
+    );
     assert_eq!(m["context_length"], json!(4096), "unexpected context; {m}");
 }
 

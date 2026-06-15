@@ -379,14 +379,20 @@ impl ModelInfo {
         let mut base = self.base_ollama_representation();
 
         if let Some(obj) = base.as_object_mut() {
+            // LM Studio's loaded-instance list exposes no TTL, so `expires_at`
+            // is a best-effort placeholder (now + the default keep-alive), not
+            // an authoritative deadline.
             obj.insert(
                 "expires_at".to_string(),
                 (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
                     .to_rfc3339()
                     .into(),
             );
-            // LM Studio exposes KV-cache GPU offload only, not model-weight VRAM usage.
-            obj.insert("size_vram".to_string(), json!(0));
+            // LM Studio doesn't report the GPU/CPU memory split. A loaded model
+            // is resident, so mirror its `size` into `size_vram` (assumes GPU
+            // residency, the common LM Studio case) instead of reporting 0.
+            let size = obj.get("size").cloned().unwrap_or_else(|| json!(0));
+            obj.insert("size_vram".to_string(), size);
         }
 
         base

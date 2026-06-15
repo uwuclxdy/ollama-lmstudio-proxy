@@ -130,8 +130,8 @@ async fn root_handler(State(_): State<AppState>) -> Result<Response, ProxyError>
     ollama::handle_ollama_root().await
 }
 
-async fn version_handler(State(_): State<AppState>) -> Result<Response, ProxyError> {
-    ollama::handle_ollama_version().await
+async fn version_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
+    ollama::handle_ollama_version(&s.config.ollama_version).await
 }
 
 async fn health_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
