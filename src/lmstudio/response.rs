@@ -438,10 +438,20 @@ fn extract_completion_thinking(lm_response: &Value) -> Option<String> {
     let choice = lm_response
         .get("choices")
         .and_then(|c| c.as_array()?.first())?;
+    // `/api/v0/completions` carries reasoning at the choice level; a generate
+    // with a system prompt routes through `/api/v0/chat/completions`, which
+    // nests it under `message` — try both shapes (mirrors extract_completion_content).
     let s = choice
         .get("reasoning_content")
         .or_else(|| choice.get("reasoning"))
         .or_else(|| choice.get("thinking"))
+        .or_else(|| {
+            choice
+                .get("message")
+                .and_then(|m| m.get("reasoning_content"))
+        })
+        .or_else(|| choice.get("message").and_then(|m| m.get("reasoning")))
+        .or_else(|| choice.get("message").and_then(|m| m.get("thinking")))
         .and_then(|v| v.as_str())?;
     if s.is_empty() {
         None

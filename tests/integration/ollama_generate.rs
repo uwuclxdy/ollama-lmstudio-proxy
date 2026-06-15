@@ -615,6 +615,55 @@ async fn system_prompt_routes_through_chat_completions() {
     assert_eq!(messages[1]["content"], "Hello");
 }
 
+// Regression: a non-streaming generate WITH a system prompt routes through
+// /api/v0/chat/completions, where reasoning lives under `message.reasoning_content`
+// (the completion endpoint puts it at the choice level). The `thinking` field must
+// still surface — the extractor reads both shapes.
+#[tokio::test]
+async fn generate_system_surfaces_thinking_from_chat_message() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "The answer.",
+                    "reasoning_content": "Let me think step by step."
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Hello",
+            "system": "You are a careful assistant.",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate system+thinking");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON");
+    assert_eq!(body["response"], "The answer.");
+    assert_eq!(
+        body["thinking"], "Let me think step by step.",
+        "reasoning under message.reasoning_content must surface as `thinking`: {body}"
+    );
+}
+
 // A generate request WITHOUT a system prompt keeps the plain /api/v0/completions
 // path — chat routing is gated strictly on a non-empty, non-raw system prompt.
 #[tokio::test]
