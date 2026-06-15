@@ -10,7 +10,7 @@ use http::HeaderMap;
 use serde_json::Value;
 
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
-use crate::api::{RequestContext, lmstudio, ollama};
+use crate::api::{RequestContext, lmstudio, ollama, web};
 use crate::constants::MAX_JSON_BODY_SIZE_BYTES;
 use crate::error::ProxyError;
 use crate::http::json_response;
@@ -269,10 +269,8 @@ async fn web_search_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, Pr
     ))
 }
 
-async fn web_fetch_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
-    Err(ProxyError::not_implemented(
-        "web_fetch is not supported: cloud-only Ollama feature with no LM Studio backend",
-    ))
+async fn web_fetch_handler(JsonBody(body): JsonBody<Value>) -> Result<Response, ProxyError> {
+    web::handle_web_fetch(body).await
 }
 
 async fn show_handler(

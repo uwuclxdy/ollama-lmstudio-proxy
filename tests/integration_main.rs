@@ -40,3 +40,6 @@ mod server_routes;
 
 #[path = "integration/ollama_errors.rs"]
 mod ollama_errors;
+
+#[path = "integration/web_fetch.rs"]
+mod web_fetch;

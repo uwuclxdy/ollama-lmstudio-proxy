@@ -334,12 +334,20 @@ async fn route_web_search_is_present_and_returns_501() {
 }
 
 #[tokio::test]
-async fn route_web_fetch_is_present_and_returns_501() {
+async fn route_web_fetch_is_present_and_fetches() {
     let p = spawn_proxy().await;
+    // web_fetch hits an arbitrary URL with its own client; point it at the mock
+    // server so the smoke test stays hermetic (no real network).
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><title>Hi</title></html>"))
+        .mount(&p.mock)
+        .await;
+
     let resp = p
         .client
         .post(p.url("/api/web_fetch"))
-        .json(&json!({"url": "https://example.com"}))
+        .json(&json!({"url": p.mock.uri()}))
         .send()
         .await
         .expect("POST /api/web_fetch");
@@ -350,8 +358,8 @@ async fn route_web_fetch_is_present_and_returns_501() {
     );
     assert_eq!(
         resp.status().as_u16(),
-        501,
-        "/api/web_fetch must return 501 (cloud-only Ollama feature)"
+        200,
+        "/api/web_fetch is implemented and must fetch successfully"
     );
 }
 

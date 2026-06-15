@@ -28,6 +28,7 @@ It translates their requests and hands them to LM Studio.
 - **Context window:** per-request `options.num_ctx` reloads the model at that context length before inference (LM Studio treats context as a load-time setting); an already-correct instance is reused, so repeated requests don't pile up duplicates.
 - **Downloads:** `/api/pull` streams catalog downloads straight from LM Studio.
 - **Passthrough:** Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) work out of the box.
+- **Web fetch:** `/api/web_fetch` retrieves a URL and returns `{title, content, links}` (HTML rendered to markdown) — no cloud account needed.
 - **Native mode:** optional `/api/v1/chat` backend for richer per-event reasoning/tool-call streaming and MCP tools.
 
 ## 🔁 How it works
