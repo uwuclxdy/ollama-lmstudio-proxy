@@ -32,6 +32,27 @@ fn loaded_instance(ctx: Option<u64>) -> NativeLoadedInstance {
         id: "inst-1".to_string(),
         config: Some(NativeLoadedInstanceConfig {
             context_length: ctx,
+            flash_attention: None,
+            eval_batch_size: None,
+            parallel: None,
+        }),
+    }
+}
+
+/// A loaded instance carrying the full tuning config from /api/v1/models.
+fn loaded_instance_full(
+    ctx: Option<u64>,
+    flash_attention: Option<bool>,
+    eval_batch_size: Option<u64>,
+    parallel: Option<u64>,
+) -> NativeLoadedInstance {
+    NativeLoadedInstance {
+        id: "inst-1".to_string(),
+        config: Some(NativeLoadedInstanceConfig {
+            context_length: ctx,
+            flash_attention,
+            eval_batch_size,
+            parallel,
         }),
     }
 }
@@ -78,6 +99,14 @@ fn make_native_with_caps(
     }
 }
 
+/// Build a NativeModelData with NO `capabilities` object, so the proxy must
+/// fall back to the id-keyword heuristic for the `thinking` capability.
+fn make_native_no_caps(key: &str, model_type: &str) -> NativeModelData {
+    let mut n = make_native_with_caps(key, model_type, false, false);
+    n.capabilities = None;
+    n
+}
+
 fn caps(info: &ModelInfo) -> Vec<&'static str> {
     info.determine_capabilities()
 }
@@ -95,7 +124,8 @@ fn llm_without_instruct_in_name_still_gets_chat() {
 
 #[test]
 fn reasoning_model_gets_thinking_capability() {
-    let native = make_native_with_caps("qwen3.5-9b-opus-reasoning-distilled", "llm", false, false);
+    // No capabilities object → id-keyword fallback drives `thinking`.
+    let native = make_native_no_caps("qwen3.5-9b-opus-reasoning-distilled", "llm");
     let info = ModelInfo::from_native_data(&native);
     assert!(
         caps(&info).contains(&"thinking"),
@@ -106,7 +136,8 @@ fn reasoning_model_gets_thinking_capability() {
 
 #[test]
 fn r1_model_gets_thinking_capability() {
-    let native = make_native_with_caps("deepseek-r1-7b", "llm", false, false);
+    // No capabilities object → id-keyword fallback drives `thinking`.
+    let native = make_native_no_caps("deepseek-r1-7b", "llm");
     let info = ModelInfo::from_native_data(&native);
     assert!(
         caps(&info).contains(&"thinking"),
@@ -128,7 +159,9 @@ fn vision_llm_gets_vision_capability() {
 
 #[test]
 fn reasoning_vision_model_gets_both() {
-    let native = make_native_with_caps("qvq-72b-preview", "llm", true, false);
+    // No capabilities object: the `vlm` type guarantees `vision`, while the
+    // "qvq" id keyword drives `thinking` via the heuristic fallback.
+    let native = make_native_no_caps("qvq-72b-preview", "vlm");
     let info = ModelInfo::from_native_data(&native);
     let c = caps(&info);
     assert!(
@@ -914,5 +947,210 @@ fn show_response_details_context_length_is_stable_across_load_states() {
     assert_eq!(
         v_unloaded["details"]["context_length"], v_loaded["details"]["context_length"],
         "details.context_length must not flip with load state"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Item 11 — `thinking` capability is sourced from the backend capabilities
+//           object when present; the id-keyword heuristic only fires when
+//           LM Studio returned NO capabilities object.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn backend_capabilities_drive_thinking_vision_tools() {
+    // {vision:true, trained_for_tool_use:true, reasoning.allowed_options:["off","high"]}
+    let mut n = native("publisher/model");
+    n.capabilities = Some(NativeCapabilities {
+        vision: Some(true),
+        trained_for_tool_use: Some(true),
+        reasoning: Some(NativeReasoningCapability {
+            allowed_options: vec!["off".into(), "high".into()],
+            default: Some("high".into()),
+        }),
+    });
+    let info = ModelInfo::from_native_data(&n);
+    let c = caps(&info);
+    assert!(
+        c.contains(&"vision"),
+        "expected vision via field; got {c:?}"
+    );
+    assert!(c.contains(&"tools"), "expected tools via field; got {c:?}");
+    assert!(
+        c.contains(&"thinking"),
+        "expected thinking via field; got {c:?}"
+    );
+}
+
+#[test]
+fn backend_capabilities_field_wins_over_id_keyword() {
+    // id contains "reasoning" but the present capabilities object only allows
+    // "off" → the field is authoritative, so NO thinking capability.
+    let mut n = native("some-reasoning-model");
+    n.capabilities = Some(NativeCapabilities {
+        vision: Some(false),
+        trained_for_tool_use: Some(false),
+        reasoning: Some(NativeReasoningCapability {
+            allowed_options: vec!["off".into()],
+            default: Some("off".into()),
+        }),
+    });
+    let info = ModelInfo::from_native_data(&n);
+    assert!(info.has_backend_capabilities);
+    assert!(!info.supports_reasoning);
+    assert!(
+        !caps(&info).contains(&"thinking"),
+        "field-present model with reasoning=off must not get thinking via keyword; got {:?}",
+        caps(&info)
+    );
+}
+
+#[test]
+fn is_thinking_model_skips_keyword_when_backend_capabilities_present() {
+    // The pub helper must honour the same gate: capabilities present + no
+    // reasoning means not-thinking, regardless of an "r1" id keyword.
+    let mut n = native("deepseek-r1-7b");
+    n.capabilities = Some(NativeCapabilities {
+        vision: Some(false),
+        trained_for_tool_use: Some(false),
+        reasoning: None,
+    });
+    let info = ModelInfo::from_native_data(&n);
+    assert!(info.has_backend_capabilities);
+    assert!(!info.is_thinking_model());
+}
+
+#[test]
+fn is_thinking_model_uses_keyword_when_no_backend_capabilities() {
+    // capabilities absent → fall back to the id-keyword heuristic.
+    let info = ModelInfo::from_native_data(&make_native_no_caps("deepseek-r1-7b", "llm"));
+    assert!(!info.has_backend_capabilities);
+    assert!(info.is_thinking_model());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Item 12 — null description in native JSON deserializes to None and is omitted
+//           (no fabrication).
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_response_omits_description_when_native_null() {
+    // A native model record with `"description": null` parses to None and must
+    // not surface a `description` field in /api/show.
+    let raw = json!({
+        "key": "publisher/model",
+        "type": "llm",
+        "publisher": "test",
+        "architecture": "llama",
+        "format": "gguf",
+        "max_context_length": 4096,
+        "loaded_instances": [],
+        "display_name": "Pretty Model",
+        "description": null
+    });
+    let n: NativeModelData = serde_json::from_value(raw).expect("native parse");
+    assert!(
+        n.description.is_none(),
+        "null description must parse to None"
+    );
+    let info = ModelInfo::from_native_data(&n);
+    let show = info.to_show_response(None, false);
+    assert!(
+        show.get("description").is_none(),
+        "null description must be omitted, not fabricated; got {show}"
+    );
+    // display_name still surfaces (it was present).
+    assert_eq!(
+        show.get("display_name").and_then(|v| v.as_str()),
+        Some("Pretty Model")
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Item 13 — /api/show verbose model_info surfaces real loaded tuning from the
+//           first loaded instance's config; omitted when unloaded/absent.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_verbose_model_info_includes_loaded_tuning() {
+    let mut n = native("publisher/model");
+    n.loaded_instances.push(loaded_instance_full(
+        Some(8192),
+        Some(true),
+        Some(512),
+        Some(4),
+    ));
+    let info = ModelInfo::from_native_data(&n);
+    let mi = &info.to_show_response(None, true)["model_info"];
+    assert_eq!(mi["lmstudio.flash_attention"], json!(true));
+    assert_eq!(mi["lmstudio.eval_batch_size"], json!(512));
+    assert_eq!(mi["lmstudio.parallel"], json!(4));
+    assert_eq!(mi["lmstudio.context_length"], json!(8192));
+}
+
+#[test]
+fn show_verbose_model_info_omits_tuning_when_unloaded() {
+    // No loaded instance → no tuning fields, even under verbose.
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let mi = &info.to_show_response(None, true)["model_info"];
+    assert!(mi.get("lmstudio.flash_attention").is_none());
+    assert!(mi.get("lmstudio.eval_batch_size").is_none());
+    assert!(mi.get("lmstudio.parallel").is_none());
+}
+
+#[test]
+fn show_verbose_model_info_omits_tuning_field_not_reported() {
+    // Loaded, but LM Studio reported only context_length (others absent) →
+    // only context_length surfaces, the rest stay omitted (never fabricated).
+    let mut n = native("publisher/model");
+    n.loaded_instances
+        .push(loaded_instance_full(Some(8192), None, None, None));
+    let info = ModelInfo::from_native_data(&n);
+    let mi = &info.to_show_response(None, true)["model_info"];
+    assert!(mi.get("lmstudio.flash_attention").is_none());
+    assert!(mi.get("lmstudio.eval_batch_size").is_none());
+    assert!(mi.get("lmstudio.parallel").is_none());
+    assert_eq!(mi["lmstudio.context_length"], json!(8192));
+}
+
+#[test]
+fn show_concise_model_info_never_includes_tuning() {
+    // Tuning is a verbose-only `lmstudio.*` extension.
+    let mut n = native("publisher/model");
+    n.loaded_instances.push(loaded_instance_full(
+        Some(8192),
+        Some(true),
+        Some(512),
+        Some(4),
+    ));
+    let info = ModelInfo::from_native_data(&n);
+    let mi = &info.to_show_response(None, false)["model_info"];
+    assert!(mi.get("lmstudio.flash_attention").is_none());
+    assert!(mi.get("lmstudio.eval_batch_size").is_none());
+    assert!(mi.get("lmstudio.parallel").is_none());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Item 14 — /api/ps details.parent_model = "" (kept out of /api/tags).
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn ps_model_details_include_empty_parent_model() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_ollama_ps_model();
+    assert_eq!(
+        v["details"]["parent_model"],
+        json!(""),
+        "ps details.parent_model must be an empty string; got {v}"
+    );
+}
+
+#[test]
+fn tags_model_still_omits_parent_model_after_ps_change() {
+    // The ps-only parent_model injection must not leak into /api/tags.
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_ollama_tags_model();
+    assert!(
+        v["details"].get("parent_model").is_none(),
+        "tags details must not include parent_model; got {v}"
     );
 }

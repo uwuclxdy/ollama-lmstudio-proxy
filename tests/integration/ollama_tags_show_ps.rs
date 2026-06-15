@@ -747,6 +747,12 @@ async fn ps_loaded_model_has_expires_at_and_size_vram_mirrors_size() {
         "size_vram should mirror size; {m}"
     );
     assert_eq!(m["context_length"], json!(4096), "unexpected context; {m}");
+    // Real Ollama /api/ps emits an empty details.parent_model.
+    assert_eq!(
+        m["details"]["parent_model"],
+        json!(""),
+        "ps details.parent_model must be empty string; {m}"
+    );
 }
 
 #[tokio::test]
@@ -857,6 +863,113 @@ async fn ps_only_loaded_models_in_response() {
         2,
         "expected exactly 2 loaded models; got {body}"
     );
+}
+
+#[tokio::test]
+async fn ps_loaded_model_details_have_empty_parent_model() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                true,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let details = &body["models"][0]["details"];
+    // Real Ollama /api/ps emits details.parent_model = "" (kept out of /api/tags).
+    assert_eq!(
+        details["parent_model"],
+        json!(""),
+        "ps details.parent_model must be empty string; got {details}"
+    );
+}
+
+#[tokio::test]
+async fn show_verbose_surfaces_loaded_tuning_from_instance_config() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![
+            native_model_with_config(
+                "llama3.2:3b",
+                "llama",
+                true,
+                json!({
+                    "context_length": 8192,
+                    "flash_attention": true,
+                    "eval_batch_size": 512,
+                    "parallel": 4
+                }),
+            ),
+        ])))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b", "verbose": true}))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let model_info = &body["model_info"];
+    // Real per-instance tuning surfaces only under verbose.
+    assert_eq!(model_info["lmstudio.flash_attention"], json!(true));
+    assert_eq!(model_info["lmstudio.eval_batch_size"], json!(512));
+    assert_eq!(model_info["lmstudio.parallel"], json!(4));
+    assert_eq!(model_info["lmstudio.context_length"], json!(8192));
+}
+
+#[tokio::test]
+async fn show_unloaded_model_omits_loaded_tuning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "llama3.2:3b", "verbose": true}))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let model_info = &body["model_info"];
+    // No loaded instance → tuning fields absent (never fabricated).
+    assert!(model_info.get("lmstudio.flash_attention").is_none());
+    assert!(model_info.get("lmstudio.eval_batch_size").is_none());
+    assert!(model_info.get("lmstudio.parallel").is_none());
 }
 
 // ---------------------------------------------------------------------------

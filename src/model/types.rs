@@ -65,6 +65,12 @@ pub struct NativeQuantization {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeLoadedInstanceConfig {
     pub context_length: Option<u64>,
+    #[serde(default)]
+    pub flash_attention: Option<bool>,
+    #[serde(default)]
+    pub eval_batch_size: Option<u64>,
+    #[serde(default)]
+    pub parallel: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,10 +101,20 @@ pub struct ModelInfo {
     pub supports_vision: bool,
     pub supports_tools: bool,
     pub supports_reasoning: bool,
+    /// Whether LM Studio returned a `capabilities` object for this model. When
+    /// true, the `thinking` capability is decided strictly by `supports_reasoning`
+    /// (the backend is authoritative); the id-keyword heuristic only runs when
+    /// the field is absent.
+    pub has_backend_capabilities: bool,
     pub size_bytes: Option<u64>,
     pub params_string: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
+    /// Tuning values read from the first loaded instance's `config` (only Some
+    /// when the model is loaded and LM Studio reported the field).
+    pub loaded_flash_attention: Option<bool>,
+    pub loaded_eval_batch_size: Option<u64>,
+    pub loaded_parallel: Option<u64>,
 }
 
 impl ModelInfo {
@@ -126,12 +142,18 @@ impl ModelInfo {
         let is_loaded = !native_data.loaded_instances.is_empty();
         let state = if is_loaded { "loaded" } else { "not-loaded" };
 
-        let context_length = native_data
+        let first_config = native_data
             .loaded_instances
             .first()
-            .and_then(|inst| inst.config.as_ref())
+            .and_then(|inst| inst.config.as_ref());
+
+        let context_length = first_config
             .and_then(|cfg| cfg.context_length)
             .unwrap_or(native_data.max_context_length);
+
+        let loaded_flash_attention = first_config.and_then(|cfg| cfg.flash_attention);
+        let loaded_eval_batch_size = first_config.and_then(|cfg| cfg.eval_batch_size);
+        let loaded_parallel = first_config.and_then(|cfg| cfg.parallel);
 
         let ollama_name = if native_data.key.contains(':') {
             native_data.key.clone()
@@ -189,10 +211,14 @@ impl ModelInfo {
             supports_vision,
             supports_tools,
             supports_reasoning,
+            has_backend_capabilities: native_data.capabilities.is_some(),
             size_bytes: native_data.size_bytes,
             params_string: native_data.params_string.clone(),
             display_name: native_data.display_name.clone(),
             description: native_data.description.clone(),
+            loaded_flash_attention,
+            loaded_eval_batch_size,
+            loaded_parallel,
         }
     }
 
@@ -202,9 +228,15 @@ impl ModelInfo {
         cloned
     }
 
-    fn is_thinking_model(&self) -> bool {
+    pub fn is_thinking_model(&self) -> bool {
         if self.supports_reasoning {
             return true;
+        }
+        // When LM Studio returned a `capabilities` object, it's authoritative:
+        // `supports_reasoning` above already reflects the backend's verdict, so
+        // a model without it does NOT think — skip the id-keyword heuristic.
+        if self.has_backend_capabilities {
+            return false;
         }
         let lower = self.id.to_lowercase();
         lower.contains("reasoning")
@@ -353,6 +385,10 @@ impl ModelInfo {
             // LM Studio exposes no blob hash; derive a deterministic SHA-256
             // from the model key (stable unique identifier in LM Studio's API).
             "digest": hex::encode(Sha256::digest(self.id.as_bytes())),
+            // `context_length`/`max_context_length` (top-level and mirrored in
+            // details) are intentional non-Ollama extensions surfacing LM Studio's
+            // context window — strict validators may flag them, but they're kept
+            // so clients can size context without a separate /api/show call.
             "context_length": self.context_length,
             "max_context_length": self.max_context_length,
             "details": {
@@ -377,6 +413,13 @@ impl ModelInfo {
 
     pub fn to_ollama_ps_model(&self) -> Value {
         let mut base = self.base_ollama_representation();
+
+        // Real Ollama /api/ps emits an empty `details.parent_model`. Inject it
+        // here (not in base_ollama_representation) so it never leaks into the
+        // /api/tags response, whose schema omits the field.
+        if let Some(details) = base.get_mut("details").and_then(|d| d.as_object_mut()) {
+            details.insert("parent_model".to_string(), json!(""));
+        }
 
         if let Some(obj) = base.as_object_mut() {
             // LM Studio's loaded-instance list exposes no TTL, so `expires_at`
@@ -449,6 +492,20 @@ impl ModelInfo {
                 json!(self.supports_reasoning),
             );
             map.insert("lmstudio.is_loaded".into(), json!(self.is_loaded));
+            // Real per-instance load tuning (from /api/v1/models loaded_instances
+            // config) — surfaced only while loaded and only when LM Studio
+            // actually reported the field, never fabricated for unloaded models.
+            if self.is_loaded {
+                if let Some(flash) = self.loaded_flash_attention {
+                    map.insert("lmstudio.flash_attention".into(), json!(flash));
+                }
+                if let Some(batch) = self.loaded_eval_batch_size {
+                    map.insert("lmstudio.eval_batch_size".into(), json!(batch));
+                }
+                if let Some(parallel) = self.loaded_parallel {
+                    map.insert("lmstudio.parallel".into(), json!(parallel));
+                }
+            }
             if let Some(ref ps) = self.params_string {
                 map.insert("lmstudio.params_string".into(), json!(ps));
             }
