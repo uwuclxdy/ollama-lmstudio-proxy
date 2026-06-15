@@ -8,7 +8,7 @@
 //! only allows `http`/`https`.
 
 use std::collections::HashSet;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -168,19 +168,13 @@ async fn fetch_following_redirects(
 ) -> Result<(reqwest::Response, Url), ProxyError> {
     let mut current = start;
     for _ in 0..=MAX_REDIRECTS {
-        if guard_ssrf {
-            validate_public_host(&current).await?;
-        }
-        let response = web_client()
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|e| {
-                ProxyError::new(
-                    format!("web_fetch: request to '{current}' failed: {e}"),
-                    502,
-                )
-            })?;
+        let client = client_for(&current, guard_ssrf).await?;
+        let response = client.get(current.clone()).send().await.map_err(|e| {
+            ProxyError::new(
+                format!("web_fetch: request to '{current}' failed: {e}"),
+                502,
+            )
+        })?;
 
         if response.status().is_redirection()
             && let Some(location) = response
@@ -212,10 +206,34 @@ async fn fetch_following_redirects(
     ))
 }
 
-/// Reject a target whose host resolves to a non-public address (SSRF guard).
-/// Resolves the host (so a public name pointing at a private IP is still caught)
-/// and rejects loopback/private/link-local/ULA/etc.
-async fn validate_public_host(url: &Url) -> Result<(), ProxyError> {
+/// Build the reqwest client for one fetch hop. With the SSRF guard on, resolve
+/// the host, reject if ANY address is non-public, and PIN the connection to a
+/// validated address via `ClientBuilder::resolve` — so reqwest cannot re-resolve
+/// at connect time and land on a DNS-rebinding attacker's private IP (closing
+/// the validate-then-connect TOCTOU). With the guard off (`--allow-private-fetch`)
+/// the shared client is reused.
+async fn client_for(url: &Url, guard_ssrf: bool) -> Result<reqwest::Client, ProxyError> {
+    if !guard_ssrf {
+        return Ok(web_client().clone());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| ProxyError::bad_request("web_fetch: url has no host"))?;
+    let addr = resolve_public_addr(url).await?;
+    reqwest::Client::builder()
+        .user_agent(concat!("ollama-lmstudio-proxy/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(WEB_FETCH_TIMEOUT_SECONDS))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(host, addr)
+        .build()
+        .map_err(|e| ProxyError::new(format!("web_fetch: client build failed: {e}"), 502))
+}
+
+/// Resolve `url`'s host and return a validated public `SocketAddr` to pin the
+/// connection to. Rejects if ANY resolved address is non-public (loopback/
+/// private/link-local/ULA/etc.), so a public name that also points at a private
+/// IP is still refused.
+async fn resolve_public_addr(url: &Url) -> Result<SocketAddr, ProxyError> {
     let host = url
         .host_str()
         .ok_or_else(|| ProxyError::bad_request("web_fetch: url has no host"))?;
@@ -228,23 +246,17 @@ async fn validate_public_host(url: &Url) -> Result<(), ProxyError> {
         )
     })?;
 
-    let mut resolved = false;
+    let mut pinned: Option<SocketAddr> = None;
     for addr in addrs {
-        resolved = true;
         if is_blocked_ip(addr.ip()) {
             return Err(ProxyError::bad_request(&format!(
                 "web_fetch: refusing to fetch non-public address {} (host '{host}'); set --allow-private-fetch to override",
                 addr.ip()
             )));
         }
+        pinned.get_or_insert(addr);
     }
-    if !resolved {
-        return Err(ProxyError::new(
-            format!("web_fetch: host '{host}' did not resolve"),
-            502,
-        ));
-    }
-    Ok(())
+    pinned.ok_or_else(|| ProxyError::new(format!("web_fetch: host '{host}' did not resolve"), 502))
 }
 
 /// Is `ip` a non-public address that must not be reachable via web_fetch?

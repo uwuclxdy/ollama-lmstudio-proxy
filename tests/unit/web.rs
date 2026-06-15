@@ -204,14 +204,14 @@ fn is_blocked_ip_allows_public() {
 }
 
 #[tokio::test]
-async fn validate_public_host_rejects_private_literals() {
+async fn resolve_public_addr_rejects_private_literals() {
     for u in [
         "http://127.0.0.1/x",
         "http://169.254.169.254/latest/meta-data",
         "http://10.1.2.3/admin",
     ] {
         assert!(
-            validate_public_host(&Url::parse(u).expect("url"))
+            resolve_public_addr(&Url::parse(u).expect("url"))
                 .await
                 .is_err(),
             "{u} must be rejected"
@@ -220,10 +220,9 @@ async fn validate_public_host_rejects_private_literals() {
 }
 
 #[tokio::test]
-async fn validate_public_host_allows_public_literal() {
-    assert!(
-        validate_public_host(&Url::parse("http://1.1.1.1/").expect("url"))
-            .await
-            .is_ok()
-    );
+async fn resolve_public_addr_allows_public_literal() {
+    let addr = resolve_public_addr(&Url::parse("http://1.1.1.1/").expect("url"))
+        .await
+        .expect("public literal must resolve");
+    assert_eq!(addr.ip().to_string(), "1.1.1.1");
 }
