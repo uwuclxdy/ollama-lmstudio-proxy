@@ -1,6 +1,6 @@
 //! `POST /api/web_fetch` — fetch a single URL and return it as
 //! `{title, content, links}`, matching Ollama's web-fetch shape
-//! (`api-docs/future/ollama/capabilities/web-search.md`).
+//! (`api-docs/ollama/capabilities/web-search.md`).
 //!
 //! Unlike the rest of the proxy this talks to an arbitrary, user-supplied URL —
 //! NOT LM Studio. It therefore uses its own client WITHOUT the LM Studio auth

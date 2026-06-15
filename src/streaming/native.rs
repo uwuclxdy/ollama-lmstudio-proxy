@@ -20,8 +20,8 @@ use crate::streaming::chunks::{ChoiceDeltaPayload, ChunkProcessingState};
 ///
 /// `Delta` carries content/thinking/tool-call fragments to emit as an
 /// intermediate Ollama chunk. `End` signals `chat.end` and hands the caller the
-/// final `result` block (for stats/response_id extraction). `Error` surfaces the
-/// native `error` payload so the caller can fail the stream. `Ignore` covers the
+/// final `result` block (for stats extraction). `Error` surfaces the native
+/// `error` payload so the caller can fail the stream. `Ignore` covers the
 /// boundary/progress events that produce no client-visible output.
 pub enum NativeEvent {
     Delta(ChoiceDeltaPayload),
@@ -33,13 +33,12 @@ pub enum NativeEvent {
 /// Data extracted from a `chat.end` event for building the final timing chunk.
 ///
 /// `result` is the aggregated response object (same shape as a non-streaming
-/// `/api/v1/chat` body); `stats` and `response_id` are pulled out for
-/// convenience. `done_reason` is the literal a caller should attach to the
-/// final Ollama chunk.
+/// `/api/v1/chat` body); `stats` is pulled out for convenience. `done_reason` is
+/// the literal a caller should attach to the final Ollama chunk. The native API
+/// exposes no finish-reason anywhere, so it is always `"stop"`.
 pub struct NativeChatEnd {
     pub result: Value,
     pub stats: Option<Value>,
-    pub response_id: Option<String>,
     pub done_reason: &'static str,
 }
 
@@ -150,22 +149,20 @@ fn parse_native_error(data: &Value) -> NativeStreamError {
     }
 }
 
-/// Extract `result.stats` and `response_id` from a `chat.end` event.
+/// Extract `result.stats` from a `chat.end` event.
 ///
 /// The `result` object is cloned out so a caller can run it through the
-/// non-streaming converter if it wants the full aggregated body.
+/// non-streaming converter if it wants the full aggregated body. `done_reason`
+/// is hardcoded to `"stop"`: the native API exposes no finish-reason (neither
+/// `chat.end` nor the stats block carry one), so `"stop"` is the only honest
+/// value.
 pub fn parse_chat_end(data: &Value) -> NativeChatEnd {
     let result = data.get("result").cloned().unwrap_or(Value::Null);
     let stats = result.get("stats").cloned();
-    let response_id = result
-        .get("response_id")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
 
     NativeChatEnd {
         result,
         stats,
-        response_id,
         done_reason: "stop",
     }
 }

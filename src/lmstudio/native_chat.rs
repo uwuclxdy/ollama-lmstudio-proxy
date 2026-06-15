@@ -5,9 +5,16 @@
 //! `system_prompt`, `max_output_tokens`, `reasoning`, `context_length`) and
 //! returns an `output` array of typed items plus a `stats` block.
 //!
-//! These functions are pure and additive: nothing here is wired into a handler
-//! yet. The request builder mirrors `build_lm_studio_request`'s conventions and
-//! the converter mirrors `convert_to_ollama_chat`'s output shape.
+//! The request builder mirrors `build_lm_studio_request`'s conventions and the
+//! converter mirrors `convert_to_ollama_chat`'s output shape.
+//!
+//! Backend limitation: the native request schema has NO `tools`, `tool_choice`
+//! or `response_format`/`format` field (only `integrations` for server-side MCP
+//! tools), so client-supplied tools/tool_choice/format are intentionally NOT
+//! forwarded on this path. Clients needing those must use the default
+//! OpenAI-compat `/api/v0/chat/completions` path; MCP tools go via
+//! `integrations`. The native API likewise exposes no finish-reason, so
+//! `done_reason` is always `"stop"`.
 //!
 //! Source of truth:
 //! - `api-docs/future/lmstudio/1_developer/2_rest/chat.md` (request + response)
@@ -50,6 +57,10 @@ pub struct NativeChatRequestParams<'a> {
 /// helper). Sampling params come from Ollama `options`; note the native field
 /// is `max_output_tokens` (not `max_tokens`) and `min_p`/`repeat_penalty` ARE
 /// supported here (unlike the OpenAI-compat path).
+///
+/// Client `tools`/`tool_choice`/`format` are intentionally NOT forwarded: the
+/// native request schema has no such field (use the OpenAI-compat path, or
+/// `integrations` for server-side MCP tools).
 pub fn build_native_chat_request(params: NativeChatRequestParams<'_>) -> Value {
     let mut body = Map::new();
     body.insert("model".to_string(), json!(params.model_lm_studio_id));
@@ -191,11 +202,12 @@ pub fn convert_native_to_ollama_chat(
         }
     }
 
-    // Native streams report finish via stream events, not a per-choice
-    // `finish_reason`; a completed non-streaming response always means `stop`.
+    // The native API exposes no finish-reason anywhere (the non-stream stats
+    // block carries only token/timing data), so `done_reason` is always `"stop"`
+    // by backend limitation.
     let done_reason = "stop";
 
-    let mut response = json!({
+    json!({
         "model": model_ollama_name,
         "created_at": chrono::Utc::now().to_rfc3339(),
         "message": ollama_message,
@@ -207,15 +219,7 @@ pub fn convert_native_to_ollama_chat(
         "prompt_eval_duration": timing.prompt_eval_duration,
         "eval_count": timing.eval_count,
         "eval_duration": timing.eval_duration,
-    });
-
-    if let Some(response_id) = native_response.get("response_id").and_then(|v| v.as_str())
-        && let Some(obj) = response.as_object_mut()
-    {
-        obj.insert("response_id".to_string(), json!(response_id));
-    }
-
-    response
+    })
 }
 
 /// Aggregated text/reasoning/tool_call data drawn from a native `output` array.

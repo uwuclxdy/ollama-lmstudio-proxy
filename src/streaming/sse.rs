@@ -463,9 +463,6 @@ fn build_native_final_chunk(
         );
         obj.insert("eval_count".to_string(), json!(timing.eval_count));
         obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
-        if let Some(response_id) = &end.response_id {
-            obj.insert("response_id".to_string(), json!(response_id));
-        }
     }
 
     chunk

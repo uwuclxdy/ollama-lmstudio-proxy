@@ -112,7 +112,7 @@ fn error_event_surfaces_payload() {
 }
 
 #[test]
-fn chat_end_extracts_stats_and_response_id() {
+fn chat_end_extracts_stats() {
     let data = json!({
         "type": "chat.end",
         "result": {
@@ -124,18 +124,13 @@ fn chat_end_extracts_stats_and_response_id() {
                 "reasoning_output_tokens": 5,
                 "tokens_per_second": 43.73,
                 "time_to_first_token_seconds": 0.781
-            },
-            "response_id": "resp_02b2017dbc06c12bfc353a2ed6c2b802f8cc682884bb5716"
+            }
         }
     });
     let (event, _) = map("chat.end", data);
     match event {
         NativeEvent::End(end) => {
             assert_eq!(end.done_reason, "stop");
-            assert_eq!(
-                end.response_id.as_deref(),
-                Some("resp_02b2017dbc06c12bfc353a2ed6c2b802f8cc682884bb5716")
-            );
             let stats = end.stats.expect("stats present");
             assert_eq!(stats["input_tokens"], json!(329));
             assert_eq!(stats["total_output_tokens"], json!(268));
@@ -147,11 +142,10 @@ fn chat_end_extracts_stats_and_response_id() {
 }
 
 #[test]
-fn chat_end_without_response_id() {
+fn chat_end_extracts_stats_without_response_id() {
     let end = parse_chat_end(&json!({
         "result": { "output": [], "stats": {} }
     }));
-    assert!(end.response_id.is_none());
     assert!(end.stats.is_some());
 }
 

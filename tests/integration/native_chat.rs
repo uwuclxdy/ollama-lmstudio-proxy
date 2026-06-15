@@ -106,7 +106,8 @@ async fn non_streaming_routes_to_native_and_converts_response() {
     assert_eq!(body["message"]["role"], "assistant");
     assert_eq!(body["message"]["content"], "Hello there!");
     assert_eq!(body["message"]["thinking"], "thinking about it");
-    assert_eq!(body["response_id"], "resp_abc123");
+    // The backend's non-Ollama `response_id` must be stripped from the response.
+    assert!(body.get("response_id").is_none());
     assert!(body["total_duration"].is_number());
     assert!(
         body["prompt_eval_count"].is_number(),
@@ -285,7 +286,8 @@ async fn streaming_native_sse_converts_to_ollama_ndjson() {
     let final_chunk = chunks.last().expect("at least one chunk");
     assert_eq!(final_chunk["done"], true);
     assert_eq!(final_chunk["done_reason"], "stop");
-    assert_eq!(final_chunk["response_id"], "resp_xyz");
+    // The backend's non-Ollama `response_id` must be stripped from the chunk.
+    assert!(final_chunk.get("response_id").is_none());
     assert!(final_chunk["total_duration"].is_number());
     assert!(final_chunk["eval_count"].is_number());
 

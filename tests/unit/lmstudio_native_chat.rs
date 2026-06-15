@@ -195,10 +195,8 @@ fn convert_maps_message_and_reasoning_output() {
     );
     assert_eq!(out["message"]["thinking"], json!("Need to call function."));
     assert_eq!(out["message"]["role"], json!("assistant"));
-    assert_eq!(
-        out["response_id"],
-        json!("resp_02b2017dbc06c12bfc353a2ed6c2b802f8cc682884bb5716")
-    );
+    // The non-Ollama `response_id` is dropped even when the backend sends one.
+    assert!(out.get("response_id").is_none());
     // Timing mapped from the native stats block.
     assert_eq!(out["prompt_eval_count"], json!(329));
     assert_eq!(out["eval_count"], json!(268));
@@ -274,6 +272,25 @@ fn native_tool_call_shape_matches_converter_input() {
 #[test]
 fn done_reason_is_stop() {
     assert_eq!(native_done_reason(), "stop");
+}
+
+#[test]
+fn request_drops_tools_format_tool_choice() {
+    // The native request schema has no tools/tool_choice/response_format field,
+    // so the builder must never emit them (guards against a future regression).
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let options = json!({
+        "temperature": 0.2,
+        "tools": [{ "type": "function", "function": { "name": "get_weather" } }],
+        "tool_choice": "auto",
+        "format": "json",
+    });
+    let body = build(&messages, Some(&options), None);
+
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert!(body.get("response_format").is_none());
+    assert!(body.get("format").is_none());
 }
 
 #[test]
