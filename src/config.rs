@@ -108,6 +108,13 @@ pub struct Config {
         help = "version string reported by GET /api/version (Ollama-compat); raise it if a client gates features on the server version"
     )]
     pub ollama_version: String,
+
+    #[arg(
+        long,
+        env = "OLLAMA_CONTEXT_LENGTH",
+        help = "default context window (num_ctx) applied when a request omits options.num_ctx; mirrors Ollama's OLLAMA_CONTEXT_LENGTH; unset → defer to LM Studio's per-model default"
+    )]
+    pub default_context_length: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +124,7 @@ pub struct RuntimeConfig {
     pub flash_attention: bool,
     pub offload_kv_cache: bool,
     pub eval_batch_size: Option<u32>,
+    pub default_context_length: Option<u64>,
 }
 
 impl Default for RuntimeConfig {
@@ -127,6 +135,7 @@ impl Default for RuntimeConfig {
             flash_attention: false,
             offload_kv_cache: false,
             eval_batch_size: None,
+            default_context_length: None,
         }
     }
 }

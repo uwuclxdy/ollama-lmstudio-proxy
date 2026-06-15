@@ -59,6 +59,13 @@ pub fn extract_num_ctx(options: Option<&Value>) -> Option<u64> {
         .filter(|n| *n > 0)
 }
 
+/// Resolve the context window to enforce: a per-request `num_ctx` wins, else the
+/// server-wide `default` (Ollama's `OLLAMA_CONTEXT_LENGTH`), else `None`. Zero or
+/// non-positive values from either source are discarded.
+fn resolve_requested_ctx(options: Option<&Value>, default: Option<u64>) -> Option<u64> {
+    extract_num_ctx(options).or(default).filter(|n| *n > 0)
+}
+
 /// Per-model async lock serializing `ensure_context_length` for one model key.
 ///
 /// Without it, two concurrent requests carrying different `num_ctx` for the same
@@ -98,7 +105,8 @@ pub async fn ensure_context_length(
     rc: &RuntimeConfig,
     cancellation: &CancellationToken,
 ) {
-    let Some(mut requested) = extract_num_ctx(effective_options) else {
+    let Some(mut requested) = resolve_requested_ctx(effective_options, rc.default_context_length)
+    else {
         return;
     };
     if cancellation.is_cancelled() {
@@ -141,9 +149,13 @@ pub async fn ensure_context_length(
         requested = max;
     }
 
-    // Already serving at the requested context as a single instance → nothing to do.
-    if instances.len() == 1
-        && instances[0].config.as_ref().and_then(|c| c.context_length) == Some(requested)
+    // All loaded instances already at requested context → nothing to do.
+    // (`!is_empty` guard: an empty `.all()` is vacuously true and would wrongly
+    // skip the initial load when no instance exists yet.)
+    if !instances.is_empty()
+        && instances
+            .iter()
+            .all(|i| i.config.as_ref().and_then(|c| c.context_length) == Some(requested))
     {
         return;
     }
@@ -299,5 +311,31 @@ mod tests {
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": -1 }))), None);
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 1.5 }))), None);
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": "4096" }))), None);
+    }
+
+    #[test]
+    fn resolve_requested_ctx_request_beats_default() {
+        assert_eq!(
+            resolve_requested_ctx(Some(&json!({ "num_ctx": 4096 })), Some(8192)),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn resolve_requested_ctx_falls_back_to_default() {
+        assert_eq!(
+            resolve_requested_ctx(Some(&json!({})), Some(8192)),
+            Some(8192)
+        );
+    }
+
+    #[test]
+    fn resolve_requested_ctx_none_when_neither_set() {
+        assert_eq!(resolve_requested_ctx(Some(&json!({})), None), None);
+    }
+
+    #[test]
+    fn resolve_requested_ctx_rejects_zero_default() {
+        assert_eq!(resolve_requested_ctx(Some(&json!({})), Some(0)), None);
     }
 }
