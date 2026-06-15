@@ -31,6 +31,17 @@ fn reasoning_goes_to_thinking_not_content() {
 }
 
 #[test]
+fn reasoning_content_delta_goes_to_thinking() {
+    // LM Studio's `/api/v0` chat streams reasoning deltas under
+    // `reasoning_content`; it must reach the Ollama thinking field.
+    let choice = json!({ "delta": { "reasoning_content": "v0 thought" } });
+    let mut state = ChunkProcessingState::default();
+    let payload = process_choice_delta(&choice, &mut state).unwrap();
+    assert_eq!(payload.thinking, "v0 thought");
+    assert!(payload.content.is_empty());
+}
+
+#[test]
 fn reasoning_only_chunk_is_not_dropped() {
     let choice = choice_with_delta(None, Some("reasoning only"));
     let mut state = ChunkProcessingState::default();

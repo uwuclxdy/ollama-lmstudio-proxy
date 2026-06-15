@@ -70,10 +70,11 @@ impl TimingInfo {
                 _ => 0.0,
             };
 
-            // The OpenAI-compat /v1/chat/completions path always sends `stats: {}`.
-            // With nothing usable in the block, returning all-1 floors would lie
-            // about the real elapsed time — fall back to wall-clock and preserve
-            // the load duration signal if `model_load_time_seconds` was reported.
+            // An empty `stats: {}` block (a `/v1` passthrough, or any upstream
+            // that omits timings) leaves these zeroed. With nothing usable in the
+            // block, returning all-1 floors would lie about the real elapsed time
+            // — fall back to wall-clock and preserve the load duration signal if
+            // `model_load_time_seconds` was reported.
             let model_load_ns = stats
                 .get("model_load_time_seconds")
                 .and_then(|t| t.as_f64())
@@ -404,10 +405,16 @@ fn extract_chat_content(lm_response: &Value) -> String {
 }
 
 fn extract_reasoning_content(lm_response: &Value) -> Option<String> {
-    let s = lm_response
+    let message = lm_response
         .get("choices")
         .and_then(|c| c.as_array()?.first())
-        .and_then(|choice| choice.get("message")?.get("reasoning")?.as_str())?;
+        .and_then(|choice| choice.get("message"))?;
+    // LM Studio's `/api/v0` chat returns reasoning under `reasoning_content`;
+    // `reasoning` is kept as a fallback for the OpenAI-compat `/v1` shape.
+    let s = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .and_then(|v| v.as_str())?;
     if s.is_empty() {
         None
     } else {
@@ -420,7 +427,8 @@ fn extract_completion_thinking(lm_response: &Value) -> Option<String> {
         .get("choices")
         .and_then(|c| c.as_array()?.first())?;
     let s = choice
-        .get("reasoning")
+        .get("reasoning_content")
+        .or_else(|| choice.get("reasoning"))
         .or_else(|| choice.get("thinking"))
         .and_then(|v| v.as_str())?;
     if s.is_empty() {

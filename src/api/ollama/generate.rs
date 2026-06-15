@@ -83,8 +83,8 @@ pub async fn handle_ollama_generate(
                 let current_images = body.get("images");
                 let raw = body.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                // LM Studio's /v1/completions does not accept multimodal
-                // input and /v1/chat/completions always applies a chat
+                // LM Studio's /api/v0/completions does not accept multimodal
+                // input and /api/v0/chat/completions always applies a chat
                 // template — so `raw + images` is unsatisfiable. Treat an
                 // empty `images` array as absent.
                 let has_images = current_images

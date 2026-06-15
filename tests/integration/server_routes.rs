@@ -91,7 +91,7 @@ async fn mount_chat_stub(p: &crate::common::TestProxy, backend_path: &str) {
 
 async fn mount_completions_stub(p: &crate::common::TestProxy) {
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "c1",
             "object": "text_completion",
@@ -151,7 +151,7 @@ async fn route_show_is_present() {
 async fn route_chat_is_present() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
-    mount_chat_stub(&p, "/v1/chat/completions").await;
+    mount_chat_stub(&p, "/api/v0/chat/completions").await;
     let resp = p
         .client
         .post(p.url("/api/chat"))

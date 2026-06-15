@@ -46,7 +46,7 @@ async fn stream_emits_error_line_on_upstream_parse_failure() {
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;

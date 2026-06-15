@@ -131,7 +131,7 @@ async fn non_streaming_chat_returns_ollama_shape() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
         )
@@ -178,7 +178,7 @@ async fn stream_absent_defaults_to_streaming() {
 
     let sse = sse_chat_body(&["Sure!"], "stop");
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -220,7 +220,7 @@ async fn streaming_chat_emits_ndjson_with_final_done_chunk() {
 
     let sse = sse_chat_body(&["Hello", " world"], "stop");
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -286,7 +286,7 @@ async fn stream_explicit_false_returns_single_object() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
@@ -320,7 +320,7 @@ async fn options_temperature_num_predict_seed_forwarded() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Fine.", "stop")))
         .mount(&p.mock)
         .await;
@@ -357,7 +357,7 @@ async fn options_num_ctx_forwarded_as_context_length() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
@@ -389,7 +389,7 @@ async fn options_stop_array_forwarded() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Done.", "stop")))
         .mount(&p.mock)
         .await;
@@ -420,7 +420,7 @@ async fn options_stop_scalar_forwarded() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Done.", "stop")))
         .mount(&p.mock)
         .await;
@@ -476,7 +476,7 @@ async fn tools_forwarded_and_tool_calls_translated_to_ollama() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_resp))
         .mount(&p.mock)
         .await;
@@ -536,7 +536,7 @@ async fn format_json_schema_object_forwarded() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("{\"answer\":42}", "stop")),
         )
@@ -577,7 +577,7 @@ async fn format_json_string_shorthand_forwarded() {
     // permissive json_schema envelope because LM Studio only advertises
     // json_schema as a supported response_format type.
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .and(body_partial_json(json!({
             "response_format": {
                 "type": "json_schema",
@@ -638,7 +638,7 @@ async fn think_flag_forwarded_and_reasoning_in_message() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_resp))
         .mount(&p.mock)
         .await;
@@ -675,7 +675,7 @@ async fn per_message_images_converted_to_multimodal_content() {
     mount_vision_catalog(&p, "llava-7b-v1.6").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("I see a cat.", "stop")),
         )
@@ -716,7 +716,7 @@ async fn keep_alive_duration_string_accepted() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
@@ -747,7 +747,7 @@ async fn keep_alive_zero_accepted() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
         .mount(&p.mock)
         .await;
@@ -878,7 +878,7 @@ async fn finish_reason_length_maps_to_done_reason_length() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("Truncated...", "length")),
         )
@@ -912,7 +912,7 @@ async fn penalty_options_forwarded_successfully() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("Penalized.", "stop")),
         )
@@ -949,7 +949,7 @@ async fn logprobs_and_top_logprobs_forwarded() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("Yes.", "stop")))
         .mount(&p.mock)
         .await;
@@ -982,7 +982,7 @@ async fn multi_turn_messages_forwarded_intact() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("I remember.", "stop")),
         )
@@ -1039,7 +1039,7 @@ async fn streaming_tool_calls_delta_arrives_in_chunks() {
     let sse = format!("data: {}\n\ndata: [DONE]\n\n", tc_chunk);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -1082,7 +1082,7 @@ async fn lm_studio_500_propagates_as_error() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
         .mount(&p.mock)
         .await;
@@ -1112,7 +1112,7 @@ async fn system_message_in_messages_forwarded_without_duplication() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("As instructed.", "stop")),
         )
@@ -1164,7 +1164,7 @@ async fn populated_stats_drives_timings_not_wall_clock() {
     );
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
         .mount(&p.mock)
         .await;
@@ -1217,7 +1217,7 @@ async fn no_stats_block_uses_wall_clock_fallback() {
 
     // Default lm_chat_response carries no `stats` block at all.
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("Hi back.", "stop")),
         )
@@ -1262,7 +1262,7 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
         .insert("stats".to_string(), json!({}));
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
         .mount(&p.mock)
         .await;
@@ -1317,7 +1317,7 @@ async fn chat_options_system_does_not_leak_as_top_level_field() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("ok", "stop")))
         .mount(&p.mock)
         .await;
@@ -1340,7 +1340,7 @@ async fn chat_options_system_does_not_leak_as_top_level_field() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let upstream = received
         .iter()
-        .find(|r| r.url.path() == "/v1/chat/completions")
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
         .expect("LM Studio chat completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
@@ -1379,7 +1379,7 @@ async fn chat_drops_min_p_truncate_and_dimensions_options() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("ok", "stop")))
         .mount(&p.mock)
         .await;
@@ -1402,7 +1402,7 @@ async fn chat_drops_min_p_truncate_and_dimensions_options() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let upstream = received
         .iter()
-        .find(|r| r.url.path() == "/v1/chat/completions")
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
         .expect("LM Studio chat completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
@@ -1428,13 +1428,13 @@ async fn assert_no_chat_inference_calls(p: &crate::common::TestProxy) {
     for r in &received {
         assert_ne!(
             r.url.path(),
-            "/v1/chat/completions",
-            "unload-only request must not POST /v1/chat/completions"
+            "/api/v0/chat/completions",
+            "unload-only request must not POST /api/v0/chat/completions"
         );
         assert_ne!(
             r.url.path(),
-            "/v1/completions",
-            "unload-only request must not POST /v1/completions"
+            "/api/v0/completions",
+            "unload-only request must not POST /api/v0/completions"
         );
     }
 }

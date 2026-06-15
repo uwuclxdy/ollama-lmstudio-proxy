@@ -73,7 +73,7 @@ async fn upstream_429_is_forwarded_on_chat() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(429).set_body_json(json!({"error": "rate limit exceeded"})),
         )
@@ -112,7 +112,7 @@ async fn upstream_502_is_forwarded_on_chat() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(502).set_body_json(json!({"error": "cloud model unreachable"})),
         )

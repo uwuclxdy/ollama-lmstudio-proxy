@@ -23,10 +23,11 @@ It translates their requests and hands them to LM Studio.
 - **Full translation:** Ollama endpoints map to LM Studio native (`/api/v1/*`) and OpenAI-compatible (`/v1/*`) equivalents.
 - **Model name mapping:** LM Studio ids are exposed under clean Ollama-style names automatically.
 - **Streaming:** SSE responses with optional chunk recovery and cancellation.
-- **Reasoning:** thinking/reasoning capability is detected per model and `think` / `reasoning_effort` are honored.
+- **Reasoning:** thinking/reasoning is detected per model; `think` / `reasoning_effort` are honored and the model's reasoning is surfaced in the `thinking` field.
+- **Real token metrics:** chat/generate report LM Studio's actual `eval_count` / `eval_duration` / `prompt_eval_*` from the `/api/v0` stats block (non-streaming); streaming still uses wall-clock estimates, which LM Studio's SSE can't yet replace.
 - **Downloads:** `/api/pull` streams catalog downloads straight from LM Studio.
 - **Passthrough:** Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) work out of the box.
-- **Native mode:** optional `/api/v1/chat` backend for richer reasoning events, accurate stats, and MCP tools.
+- **Native mode:** optional `/api/v1/chat` backend for richer per-event reasoning/tool-call streaming and MCP tools.
 
 ## 🔁 How it works
 

@@ -1,6 +1,6 @@
 //! Building blocks for LM Studio's native `/api/v1/chat` endpoint.
 //!
-//! This is the richer alternative to the OpenAI-compat `/v1/chat/completions`
+//! This is the richer alternative to the OpenAI-compat `/api/v0/chat/completions`
 //! path. The native endpoint takes its own request shape (`input` array,
 //! `system_prompt`, `max_output_tokens`, `reasoning`, `context_length`) and
 //! returns an `output` array of typed items plus a `stats` block.

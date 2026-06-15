@@ -605,7 +605,7 @@ async fn show_keep_alive_in_body_does_not_skip_model_load() {
     // Stand in for the model-loading trigger the proxy sends to LM Studio.
     // A 200 with a minimal body is enough; the proxy doesn't inspect it.
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -628,11 +628,11 @@ async fn show_keep_alive_in_body_does_not_skip_model_load() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let load_triggered = received
         .iter()
-        .any(|r| r.url.path() == "/v1/chat/completions");
+        .any(|r| r.url.path() == "/api/v0/chat/completions");
     assert!(
         load_triggered,
         "keep_alive in show body must not suppress model loading; \
-         no POST to /v1/chat/completions was observed"
+         no POST to /api/v0/chat/completions was observed"
     );
 }
 

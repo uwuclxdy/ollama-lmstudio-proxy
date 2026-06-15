@@ -1,7 +1,7 @@
 // Integration tests for the experimental `--use-native-chat` path.
 //
 // With the flag on, POST /api/chat routes through LM Studio's native
-// `/api/v1/chat` endpoint instead of the OpenAI-compat `/v1/chat/completions`.
+// `/api/v1/chat` endpoint instead of the OpenAI-compat `/api/v0/chat/completions`.
 // These tests boot a proxy via `spawn_proxy_with_native()` and assert:
 //   - the request reaches the backend as a native body (model remapped, `input`
 //     array) and the native `{output, stats}` response is converted to Ollama
@@ -9,7 +9,7 @@
 //   - a mocked native `event:`/`data:` SSE stream is converted to Ollama NDJSON
 //     chunks (content + thinking), ending with a `done:true` chunk.
 //
-// The default (flag-off) routing to /v1/chat/completions stays covered by the
+// The default (flag-off) routing to /api/v0/chat/completions stays covered by the
 // existing `ollama_chat` integration suite.
 
 use serde_json::{Value, json};

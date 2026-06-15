@@ -149,7 +149,12 @@ pub fn process_choice_delta(
         if let Some(content_value) = delta.get("content") {
             append_stream_content(content_value, &mut content);
         }
-        if let Some(reasoning_value) = delta.get("reasoning") {
+        // LM Studio's `/api/v0` chat streams reasoning deltas under
+        // `reasoning_content`; `reasoning` is the OpenAI-compat `/v1` fallback.
+        if let Some(reasoning_value) = delta
+            .get("reasoning_content")
+            .or_else(|| delta.get("reasoning"))
+        {
             append_stream_content(reasoning_value, &mut thinking);
         }
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())

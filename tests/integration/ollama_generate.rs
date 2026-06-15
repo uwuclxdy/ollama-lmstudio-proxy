@@ -1,8 +1,8 @@
 // Integration tests for POST /api/generate — Ollama generate surface.
 //
-// The generate handler routes to `/v1/completions` for plain text prompts and
-// to `/v1/chat/completions` for vision requests (images present). Both paths
-// are covered here.
+// The generate handler routes to `/api/v0/completions` for plain text prompts
+// and to `/api/v0/chat/completions` for vision requests (images present). Both
+// paths are covered here.
 //
 // Model resolution uses /api/v1/models (LM Studio native). The mock key
 // "llama3.2-3b-instruct" substring-matches the Ollama name "llama3.2:3b",
@@ -68,7 +68,7 @@ async fn mount_vlm_catalog(proxy: &crate::common::TestProxy, key: &str) {
         .await;
 }
 
-/// Minimal LM Studio /v1/completions response.
+/// Minimal LM Studio /api/v0/completions response.
 fn lm_completion_response(text: &str, finish_reason: &str) -> Value {
     json!({
         "id": "cmpl-test",
@@ -88,7 +88,7 @@ fn lm_completion_response(text: &str, finish_reason: &str) -> Value {
     })
 }
 
-/// Minimal LM Studio /v1/chat/completions response (used for vision path).
+/// Minimal LM Studio /api/v0/chat/completions response (used for vision path).
 fn lm_chat_response(content: &str, finish_reason: &str) -> Value {
     json!({
         "id": "chatcmpl-vision",
@@ -108,7 +108,7 @@ fn lm_chat_response(content: &str, finish_reason: &str) -> Value {
     })
 }
 
-/// SSE body for streaming /v1/completions (text chunks).
+/// SSE body for streaming /api/v0/completions (text chunks).
 fn sse_completion_body(tokens: &[&str], finish_reason: &str) -> String {
     let mut body = String::new();
     for (i, token) in tokens.iter().enumerate() {
@@ -153,7 +153,7 @@ async fn non_streaming_generate_returns_ollama_shape() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(lm_completion_response("The sky is blue.", "stop")),
@@ -200,7 +200,7 @@ async fn stream_absent_defaults_to_streaming() {
 
     let sse = sse_completion_body(&["OK"], "stop");
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -243,7 +243,7 @@ async fn streaming_generate_emits_ndjson_with_final_done_chunk() {
 
     let sse = sse_completion_body(&["The", " sky", " is", " blue."], "stop");
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -304,7 +304,7 @@ async fn stream_explicit_false_returns_single_object() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Done.", "stop")),
         )
@@ -339,7 +339,7 @@ async fn options_temperature_and_num_predict_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Counted.", "stop")),
         )
@@ -377,7 +377,7 @@ async fn options_num_ctx_forwarded_as_context_length() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
         )
@@ -411,7 +411,7 @@ async fn options_stop_array_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Stopped.", "stop")),
         )
@@ -444,9 +444,9 @@ async fn system_prompt_prepended_to_text_prompt() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     // The proxy prepends the system prompt text to the prompt before sending
-    // to /v1/completions. We verify the request reaches LM Studio.
+    // to /api/v0/completions. We verify the request reaches LM Studio.
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(lm_completion_response("Formal reply.", "stop")),
@@ -482,7 +482,7 @@ async fn raw_mode_skips_system_prompt_injection() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Raw reply.", "stop")),
         )
@@ -518,7 +518,7 @@ async fn suffix_forwarded_to_completions_endpoint() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("middle text", "stop")),
         )
@@ -552,7 +552,7 @@ async fn format_json_string_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(lm_completion_response("{\"ok\":true}", "stop")),
@@ -586,7 +586,7 @@ async fn format_json_schema_object_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(lm_completion_response("{\"count\":3}", "stop")),
@@ -638,7 +638,7 @@ async fn think_flag_forwarded_and_reasoning_in_response() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_resp))
         .mount(&p.mock)
         .await;
@@ -667,7 +667,7 @@ async fn think_flag_forwarded_and_reasoning_in_response() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 14. vision path — images present routes to /v1/chat/completions
+// 14. vision path — images present routes to /api/v0/chat/completions
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -675,9 +675,9 @@ async fn generate_with_images_routes_to_chat_completions() {
     let p = spawn_proxy().await;
     mount_vlm_catalog(&p, "llava-7b-v1.6").await;
 
-    // Must hit /v1/chat/completions, not /v1/completions
+    // Must hit /api/v0/chat/completions, not /api/v0/completions
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("A cat is shown.", "stop")),
         )
@@ -728,7 +728,7 @@ async fn generate_vision_streaming_emits_done_chunk() {
     };
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -765,7 +765,7 @@ async fn generate_vision_streaming_emits_done_chunk() {
 // 15b. vision + suffix — `suffix` is FIM-only and dropped on vision path
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// `/v1/chat/completions` has no fill-in-the-middle semantics, so the proxy
+// `/api/v0/chat/completions` has no fill-in-the-middle semantics, so the proxy
 // drops `suffix` rather than forwarding it. Behaviour: upstream chat body
 // must not contain a `suffix` key.
 
@@ -775,7 +775,7 @@ async fn generate_suffix_with_images_is_dropped_from_upstream_body() {
     mount_vlm_catalog(&p, "llava-7b-v1.6").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_chat_response("Described.", "stop")),
         )
@@ -803,7 +803,7 @@ async fn generate_suffix_with_images_is_dropped_from_upstream_body() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let upstream = received
         .iter()
-        .find(|r| r.url.path() == "/v1/chat/completions")
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
         .expect("LM Studio chat/completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
@@ -893,7 +893,7 @@ async fn finish_reason_length_maps_to_done_reason_length() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Truncated", "length")),
         )
@@ -927,7 +927,7 @@ async fn keep_alive_duration_string_accepted() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("OK", "stop")),
         )
@@ -960,7 +960,7 @@ async fn lm_studio_500_propagates_as_error() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(ResponseTemplate::new(500).set_body_string("Internal error"))
         .mount(&p.mock)
         .await;
@@ -990,7 +990,7 @@ async fn repeat_penalty_option_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("No repeats.", "stop")),
         )
@@ -1015,8 +1015,8 @@ async fn repeat_penalty_option_forwarded() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 23. raw:true + images → 400. LM Studio's /v1/completions does not accept
-// multimodal input and /v1/chat/completions always applies a chat template,
+// 23. raw:true + images → 400. LM Studio's /api/v0/completions does not accept
+// multimodal input and /api/v0/chat/completions always applies a chat template,
 // so `raw` cannot be honored on the vision path.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1059,19 +1059,19 @@ async fn generate_raw_true_with_images_returns_400() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let chat_hits = received
         .iter()
-        .filter(|r| r.url.path() == "/v1/chat/completions")
+        .filter(|r| r.url.path() == "/api/v0/chat/completions")
         .count();
     assert_eq!(
         chat_hits, 0,
-        "raw + images must not hit /v1/chat/completions"
+        "raw + images must not hit /api/v0/chat/completions"
     );
     let completion_hits = received
         .iter()
-        .filter(|r| r.url.path() == "/v1/completions")
+        .filter(|r| r.url.path() == "/api/v0/completions")
         .count();
     assert_eq!(
         completion_hits, 0,
-        "raw + images must not hit /v1/completions"
+        "raw + images must not hit /api/v0/completions"
     );
 }
 
@@ -1086,7 +1086,7 @@ async fn generate_raw_true_with_empty_images_array_does_not_reject() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Raw reply.", "stop")),
         )
@@ -1122,7 +1122,7 @@ async fn logprobs_forwarded() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Logged.", "stop")),
         )
@@ -1182,7 +1182,7 @@ async fn logprobs_data_present_in_generate_response() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(lm_completion_response_with_logprobs("Hello!", "stop")),
@@ -1228,7 +1228,7 @@ async fn context_array_in_request_accepted() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("Continued.", "stop")),
         )
@@ -1260,9 +1260,9 @@ async fn context_array_in_request_accepted() {
 // 27. Empty stats block — fall back to wall-clock, never report all-1 ns
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// LM Studio's OpenAI-compat /v1/completions path returns `stats: {}` on every
-// non-stream response. With no usable timing values, the proxy must fall back
-// to wall-clock measurement rather than emitting 1-ns floors.
+// An empty `stats: {}` response (as the mock returns here) forces wall-clock
+// estimation. With no usable timing values, the proxy must fall back to
+// wall-clock measurement rather than emitting 1-ns floors.
 
 #[tokio::test]
 async fn empty_stats_block_falls_back_to_wall_clock_timings() {
@@ -1276,7 +1276,7 @@ async fn empty_stats_block_falls_back_to_wall_clock_timings() {
         .insert("stats".to_string(), json!({}));
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(lm_body))
         .mount(&p.mock)
         .await;
@@ -1332,7 +1332,7 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(lm_completion_response("ok", "stop")),
         )
@@ -1357,7 +1357,7 @@ async fn generate_options_system_does_not_leak_as_top_level_field() {
     let received = p.mock.received_requests().await.unwrap_or_default();
     let upstream = received
         .iter()
-        .find(|r| r.url.path() == "/v1/completions")
+        .find(|r| r.url.path() == "/api/v0/completions")
         .expect("LM Studio completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
@@ -1388,13 +1388,13 @@ async fn assert_no_inference_calls(p: &crate::common::TestProxy) {
     for r in &received {
         assert_ne!(
             r.url.path(),
-            "/v1/completions",
-            "unload-only request must not POST /v1/completions"
+            "/api/v0/completions",
+            "unload-only request must not POST /api/v0/completions"
         );
         assert_ne!(
             r.url.path(),
-            "/v1/chat/completions",
-            "unload-only request must not POST /v1/chat/completions"
+            "/api/v0/chat/completions",
+            "unload-only request must not POST /api/v0/chat/completions"
         );
     }
 }

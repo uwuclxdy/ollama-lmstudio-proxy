@@ -128,6 +128,26 @@ fn chat_response_no_thinking_field_when_absent() {
 }
 
 #[test]
+fn chat_response_thinking_from_reasoning_content_field() {
+    // LM Studio's `/api/v0/chat/completions` puts reasoning under
+    // `reasoning_content`, not `reasoning`. The default chat path must surface it.
+    let lm = json!({
+        "choices": [{
+            "message": { "content": "ok", "reasoning_content": "thinking via v0" },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+    });
+    let result = ResponseTransformer::convert_to_ollama_chat(&lm, "mymodel", 2, Instant::now());
+    let msg = result.get("message").unwrap();
+    assert_eq!(
+        msg.get("thinking").and_then(|v| v.as_str()),
+        Some("thinking via v0"),
+        "reasoning_content must map to the Ollama thinking field"
+    );
+}
+
+#[test]
 fn generate_response_thinking_top_level() {
     let lm = lm_completion_response("42", Some("Let me reason"));
     let result = ResponseTransformer::convert_to_ollama_generate(

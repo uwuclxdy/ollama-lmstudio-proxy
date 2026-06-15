@@ -63,7 +63,7 @@ async fn chat_stream_emits_ndjson_chunks_with_done() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -146,7 +146,7 @@ async fn generate_stream_emits_ndjson_chunks_with_done() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -262,7 +262,7 @@ async fn chat_stream_mid_error_yields_error_chunk() {
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -317,7 +317,7 @@ async fn chat_stream_backend_disconnect_without_done_terminates() {
     );
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -376,7 +376,7 @@ async fn chat_stream_reasoning_delta_maps_to_thinking() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -449,7 +449,7 @@ async fn chat_stream_mixed_reasoning_and_content_chunk() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -513,7 +513,7 @@ async fn chat_stream_tool_calls_present_in_output() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -574,7 +574,7 @@ async fn chat_stream_translates_tool_calls_finish_reason_to_stop() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -636,7 +636,7 @@ async fn chat_stream_empty_backend_emits_terminal_done() {
     let body = "data: [DONE]\n\n".to_string();
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -696,7 +696,7 @@ async fn chat_stream_sse_comments_are_ignored() {
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -885,7 +885,7 @@ async fn chat_stream_split_sse_data_reassembled() {
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -947,7 +947,7 @@ async fn generate_stream_reasoning_goes_to_thinking_not_response() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -1001,7 +1001,7 @@ async fn chat_stream_one_to_one_chunk_mapping() {
     let body = sse_body(&data_chunks);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -1049,7 +1049,7 @@ async fn chat_non_stream_returns_single_object() {
     let p = spawn_proxy().await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "chatcmpl-1",
             "object": "chat.completion",
@@ -1113,7 +1113,7 @@ async fn generate_non_stream_returns_single_object() {
     let p = spawn_proxy().await;
 
     Mock::given(method("POST"))
-        .and(path("/v1/completions"))
+        .and(path("/api/v0/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "cmpl-1",
             "object": "text_completion",
@@ -1171,7 +1171,7 @@ async fn chat_stream_client_drop_does_not_hang() {
     body.push_str("data: [DONE]\n\n");
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -1229,7 +1229,7 @@ async fn chat_stream_all_lines_are_valid_json() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;
@@ -1293,7 +1293,7 @@ async fn chat_stream_tool_calls_emit_intermediate_chunks() {
     ]);
 
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/api/v0/chat/completions"))
         .respond_with(sse_response(body))
         .mount(&p.mock)
         .await;

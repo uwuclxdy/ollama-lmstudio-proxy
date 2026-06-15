@@ -1,8 +1,12 @@
 /// Native LM Studio API endpoints
 pub const LM_STUDIO_NATIVE_MODELS: &str = "/api/v1/models";
-pub const LM_STUDIO_NATIVE_CHAT: &str = "/v1/chat/completions";
+/// Chat + text completions use LM Studio's `/api/v0` namespace rather than the
+/// plain OpenAI-compat `/v1`: v0 returns a real `stats` block (tokens/sec, TTFT,
+/// generation_time) and per-token `usage`, which feeds genuine Ollama timing
+/// instead of the wall-clock estimates `/v1` forces (it sends `stats: {}`).
+pub const LM_STUDIO_NATIVE_CHAT: &str = "/api/v0/chat/completions";
 pub const LM_STUDIO_V1_CHAT: &str = "/api/v1/chat";
-pub const LM_STUDIO_NATIVE_COMPLETIONS: &str = "/v1/completions";
+pub const LM_STUDIO_NATIVE_COMPLETIONS: &str = "/api/v0/completions";
 pub const LM_STUDIO_NATIVE_EMBEDDINGS: &str = "/v1/embeddings";
 pub const LM_STUDIO_NATIVE_DOWNLOAD: &str = "/api/v1/models/download";
 pub const LM_STUDIO_NATIVE_DOWNLOAD_STATUS: &str = "/api/v1/models/download/status";
