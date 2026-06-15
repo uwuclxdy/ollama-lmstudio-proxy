@@ -70,6 +70,7 @@ pub async fn resolve_model_with_context<'a>(
     model_resolver: &Arc<ModelResolver>,
     requested_model: &str,
     request_body: &Value,
+    wants_thinking_default: bool,
     cancellation_token: CancellationToken,
 ) -> Result<ModelResolutionContext, ProxyError> {
     let (lm_studio_model_id, virtual_entry) = resolve_model_target(
@@ -106,16 +107,15 @@ pub async fn resolve_model_with_context<'a>(
     // Resolve the model's reasoning capability so the inference path can default
     // `reasoning:on` for thinking models when the caller omitted `think`
     // (matching real Ollama). The lookup costs a `GET /api/v1/models`, so skip it
-    // unless it can change the outcome: only when an inference body (`messages`
-    // or `prompt`) carries NO explicit `think`/`reasoning_effort`. An explicit
-    // value always wins downstream, and embeddings (which send `input`, never
-    // `messages`/`prompt`) never reason — both paths stay zero-extra-call.
-    // Best-effort: an unknown / unfetchable model is treated as non-thinking.
+    // unless it can change the outcome: only the chat/generate paths
+    // (`wants_thinking_default = true`) reason, and only when no explicit
+    // `think`/`reasoning_effort` is set (an explicit value always wins
+    // downstream). Embeddings pass `false` — they never reason, and the legacy
+    // `/api/embeddings` shape carries a `prompt` that must NOT be mistaken for an
+    // inference body. Best-effort: an unknown / unfetchable model is non-thinking.
     let think_absent =
         request_body.get("think").is_none() && request_body.get("reasoning_effort").is_none();
-    let is_inference_body =
-        request_body.get("messages").is_some() || request_body.get("prompt").is_some();
-    let model_supports_thinking = if think_absent && is_inference_body {
+    let model_supports_thinking = if wants_thinking_default && think_absent {
         let model_info = fetch_model_info_for_id(
             context,
             model_resolver,

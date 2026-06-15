@@ -96,6 +96,7 @@ pub async fn handle_ollama_chat(
                     &model_resolver,
                     &ollama_model_name,
                     &body,
+                    true,
                     cancellation_token.clone(),
                 )
                 .await?;

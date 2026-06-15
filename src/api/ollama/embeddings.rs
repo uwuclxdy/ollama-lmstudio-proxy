@@ -71,6 +71,7 @@ pub async fn handle_ollama_embeddings(
                     &model_resolver,
                     &ollama_model_name,
                     &body,
+                    false,
                     cancellation_token.clone(),
                 )
                 .await?;
