@@ -1713,15 +1713,14 @@ async fn chat_options_system_does_not_leak_as_top_level_field() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LM Studio's chat-completions accepts a fixed key set
-// (api-docs/lmstudio/.../chat-completions.md). The Ollama spec
+// LM Studio's v0 chat-completions accepts `min_p` (verified live), so the proxy
+// forwards it as a direct sampling key. The Ollama spec
 // (api-docs/ollama/api/embed.md) lists `truncate` and `dimensions` as
-// embedding-only fields, and Ollama's `ModelOptions.min_p` has no LM Studio
-// equivalent. None of these may leak into the chat request body.
+// embedding-only fields, which must NOT leak into the chat request body.
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn chat_drops_min_p_truncate_and_dimensions_options() {
+async fn chat_forwards_min_p_drops_truncate_and_dimensions_options() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
@@ -1753,10 +1752,15 @@ async fn chat_drops_min_p_truncate_and_dimensions_options() {
         .expect("LM Studio chat completions request captured");
     let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
 
-    for key in ["min_p", "truncate", "dimensions"] {
+    assert_eq!(
+        body.get("min_p"),
+        Some(&json!(0.1)),
+        "min_p must be forwarded to the LM Studio chat body: {body}"
+    );
+    for key in ["truncate", "dimensions"] {
         assert!(
             body.get(key).is_none(),
-            "{key} must not appear in LM Studio chat body: {body}"
+            "{key} (embedding-only) must not appear in LM Studio chat body: {body}"
         );
     }
 }

@@ -30,6 +30,7 @@ fn ensure_runtime_initialized(enable_chunk_recovery: bool) {
             flash_attention: false,
             offload_kv_cache: false,
             eval_batch_size: None,
+            default_context_length: None,
         });
         LogConfig::init(false);
     });
@@ -111,6 +112,7 @@ async fn spawn_proxy_inner(
         search_url,
         search_api_key,
         ollama_version: "0.30.0".to_string(),
+        default_context_length: None,
     };
 
     let server = ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())

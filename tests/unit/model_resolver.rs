@@ -21,6 +21,10 @@ fn mi(id: &str, loaded: bool) -> ModelInfo {
         params_string: None,
         display_name: None,
         description: None,
+        has_backend_capabilities: false,
+        loaded_flash_attention: None,
+        loaded_eval_batch_size: None,
+        loaded_parallel: None,
     }
 }
 
