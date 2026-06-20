@@ -38,6 +38,7 @@ pub async fn handle_ollama_chat(
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
     use_native_chat: bool,
+    native_chat_streaming: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
@@ -88,6 +89,12 @@ pub async fn handle_ollama_chat(
 
                 let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
 
+                // Route to the native /api/v1/chat path when explicitly opted in
+                // (`--use-native-chat`) or when `--native-chat-streaming` is set
+                // and this is a streaming request. Non-streaming stays on the v0
+                // path under `--native-chat-streaming`, matching the flag's help.
+                let use_native = use_native_chat || (native_chat_streaming && stream);
+
                 let ollama_tools = body.get("tools");
                 let ollama_images = body.get("images");
 
@@ -118,7 +125,7 @@ pub async fn handle_ollama_chat(
                 // Native /api/v1/chat path: build the request from the raw Ollama
                 // messages (the native builder owns its own `input`/image shaping)
                 // and dispatch to the native converter / streaming driver.
-                if use_native_chat {
+                if use_native {
                     // Only forward `integrations` on the native path; the default
                     // OpenAI-compat path never reads this field.
                     let integrations = body.get("integrations").filter(|v| v.is_array());

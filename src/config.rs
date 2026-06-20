@@ -66,9 +66,15 @@ pub struct Config {
 
     #[arg(
         long,
-        help = "experimental: route /api/chat through LM Studio native /api/v1/chat for richer reasoning events and accurate stats"
+        help = "route /api/chat through LM Studio native /api/v1/chat for richer reasoning events and accurate stats"
     )]
     pub use_native_chat: bool,
+
+    #[arg(
+        long,
+        help = "route streaming /api/chat through LM Studio native /api/v1/chat for accurate stream stats and reasoning events (non-streaming stays on the v0 path)"
+    )]
+    pub native_chat_streaming: bool,
 
     #[arg(
         long,
