@@ -4,6 +4,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use subtle::ConstantTimeEq;
 
 const UNAUTHORIZED_BODY: &str = r#"{"error":"unauthorized"}"#;
 
@@ -26,8 +27,18 @@ pub async fn api_key_gate(
     }
 
     match extract_bearer(req.headers().get(header::AUTHORIZATION)) {
-        Some(token) if token == expected => next.run(req).await,
-        _ => unauthorized(),
+        // Constant-time compare so the bearer check can't be timed into a
+        // byte-at-a-time oracle. ct_eq returns unequal (0) without panicking on
+        // differing token lengths.
+        Some(token) if expected.as_bytes().ct_eq(token.as_bytes()).into() => next.run(req).await,
+        _ => {
+            log::warn!(
+                "auth: rejected {} {} (missing or invalid bearer token)",
+                req.method(),
+                req.uri().path()
+            );
+            unauthorized()
+        }
     }
 }
 
