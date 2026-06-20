@@ -236,3 +236,67 @@ fn model_supports_thinking_false_for_non_reasoning_model() {
     let info = model_info("some-model", false);
     assert!(!info.is_thinking_model());
 }
+
+// ── Modelfile PARAMs as defaults: merge_option_maps ─────────────────────────
+//
+// A virtual model's `metadata.parameters` (Modelfile PARAM block) feeds the
+// `base` slot of `merge_option_maps`; per-request `options` feed `overrides`.
+// The merge yields the PARAMs as defaults, with caller-supplied keys winning
+// per-key (mirrors real Ollama: PARAMs are the floor, `options` override).
+
+#[test]
+fn merge_parameters_applied_as_defaults_when_options_absent() {
+    let base = json!({ "temperature": 0.5, "num_ctx": 4096 });
+    let merged = merge_option_maps(Some(&base), None).expect("base present");
+    assert_eq!(merged["temperature"], 0.5);
+    assert_eq!(merged["num_ctx"], 4096);
+}
+
+#[test]
+fn merge_parameters_caller_options_override_defaults_per_key() {
+    let base = json!({ "temperature": 0.5, "num_ctx": 4096 });
+    let overrides = json!({ "temperature": 0.9, "seed": 42 });
+    let merged = merge_option_maps(Some(&base), Some(&overrides)).expect("both present");
+
+    // Override wins on the shared key...
+    assert_eq!(
+        merged["temperature"], 0.9,
+        "caller option must override the PARAM default"
+    );
+    // ...base-only key is preserved (the default survives)...
+    assert_eq!(
+        merged["num_ctx"], 4096,
+        "un-overridden PARAM default must carry through"
+    );
+    // ...and override-only key is added.
+    assert_eq!(
+        merged["seed"], 42,
+        "caller-only key must appear in the merged map"
+    );
+}
+
+#[test]
+fn merge_options_without_parameters_passes_options_through() {
+    let overrides = json!({ "temperature": 0.7 });
+    let merged = merge_option_maps(None, Some(&overrides)).expect("override only");
+    assert_eq!(merged["temperature"], 0.7);
+    assert_eq!(merged.as_object().unwrap().len(), 1);
+}
+
+#[test]
+fn merge_both_absent_returns_none() {
+    assert!(merge_option_maps(None, None).is_none());
+}
+
+/// A non-object base (e.g. an array or scalar) must not crash the merge: the
+/// helper falls back to the override verbatim, so the request still works.
+#[test]
+fn merge_non_object_base_falls_back_to_overrides() {
+    let base = json!([1, 2, 3]);
+    let overrides = json!({ "temperature": 0.2 });
+    let merged = merge_option_maps(Some(&base), Some(&overrides)).expect("fallback merged");
+    assert_eq!(
+        merged["temperature"], 0.2,
+        "non-object base must defer to the override"
+    );
+}

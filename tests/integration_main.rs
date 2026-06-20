@@ -8,8 +8,17 @@ mod common;
 #[path = "integration/ollama_chat.rs"]
 mod ollama_chat;
 
+#[path = "integration/auth_gate.rs"]
+mod auth_gate;
+
 #[path = "integration/native_chat.rs"]
 mod native_chat;
+
+#[path = "integration/native_chat_streaming.rs"]
+mod native_chat_streaming;
+
+#[path = "integration/lmstudio_extensions.rs"]
+mod lmstudio_extensions;
 
 #[path = "integration/ollama_generate.rs"]
 mod ollama_generate;
