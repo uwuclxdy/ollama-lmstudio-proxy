@@ -31,6 +31,7 @@ fn ensure_runtime_initialized(enable_chunk_recovery: bool) {
             offload_kv_cache: false,
             eval_batch_size: None,
             default_context_length: None,
+            auto_evict: false,
         });
         LogConfig::init(false);
     });
@@ -104,10 +105,13 @@ async fn spawn_proxy_inner(
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
         lmstudio_token: None,
+        api_key: None,
         use_native_chat,
+        native_chat_streaming: false,
         flash_attention: false,
         offload_kv_cache: false,
         eval_batch_size: None,
+        auto_evict: false,
         allow_private_fetch,
         search_url,
         search_api_key,
