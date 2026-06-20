@@ -24,14 +24,16 @@ It translates their requests and hands them to LM Studio.
 - **Model name mapping:** LM Studio ids are exposed under clean Ollama-style names automatically.
 - **Streaming:** SSE responses with optional chunk recovery and cancellation.
 - **Reasoning:** thinking/reasoning is detected per model; `think` / `reasoning_effort` are honored and the model's reasoning is surfaced in the `thinking` field. Thinking-capable models default to reasoning on when `think` is omitted, matching real Ollama.
-- **Real token metrics:** chat/generate report LM Studio's actual `eval_count` / `eval_duration` / `prompt_eval_*` from the `/api/v0` stats block (non-streaming); streaming still uses wall-clock estimates, which LM Studio's SSE can't yet replace.
+- **Real token metrics:** chat/generate report LM Studio's actual `eval_count` / `eval_duration` / `prompt_eval_*`. Non-streaming reads them from the `/api/v0` stats block; streaming reports real stats when routed through the native `/api/v1/chat` path (`--native-chat-streaming` or `--use-native-chat`), and falls back to wall-clock estimates on the default v0 stream (LM Studio's v0 SSE has no final stats chunk).
 - **Context window:** per-request `options.num_ctx` reloads the model at that context length before inference (LM Studio treats context as a load-time setting); an already-correct instance is reused, so repeated requests don't pile up duplicates. A server-wide default (`--default-context-length` / `OLLAMA_CONTEXT_LENGTH`) applies when requests omit `num_ctx`.
 - **Embeddings:** `/api/embed` and `/api/embeddings` auto-load an unloaded embedding model on demand (JIT), the same way chat/generate do, and honor `num_ctx`.
 - **Downloads:** `/api/pull` streams catalog downloads straight from LM Studio.
 - **Passthrough:** Anthropic Messages (`/v1/messages`) and OpenAI Responses (`/v1/responses`) work out of the box.
 - **Web fetch:** `/api/web_fetch` retrieves a URL and returns `{title, content, links}` (HTML rendered to markdown) — no cloud account needed.
 - **Web search:** `/api/web_search` forwards to a search provider you configure with `--search-url` (optional `--search-api-key`); returns `{results}` (501 until configured).
-- **Native mode:** optional `/api/v1/chat` backend for richer per-event reasoning/tool-call streaming and MCP tools.
+- **Auth:** optional inbound Bearer gate via `--api-key` / `OLLAMA_API_KEY`; when unset the proxy is fully open (default). Requires `Authorization: Bearer <key>` on every request when set.
+- **Auto-evict:** `--auto-evict` unloads other models' instances before loading a requested model (mirrors Ollama's single-model default). Aimed at single-tenant setups; in a multi-client deployment one client's load evicts another's.
+- **Native mode:** route chat through LM Studio's `/api/v1/chat` backend with `--use-native-chat` (all requests) or `--native-chat-streaming` (streaming only) for richer per-event reasoning/tool-call streaming and MCP tools.
 
 ## 🔁 How it works
 
