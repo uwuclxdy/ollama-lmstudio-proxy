@@ -96,6 +96,15 @@ impl ProxyServer {
         }
         log::info!("LM Studio backend: {}", server.config.lmstudio_url);
 
+        // --auto-evict unloads other models on load; in a multi-client setup one
+        // client's load evicts another's, so surface it loudly at startup.
+        if server.config.auto_evict {
+            log::warn!(
+                "--auto-evict enabled: loading a model unloads all other models' \
+                 loaded instances, affecting every client in multi-client setups"
+            );
+        }
+
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         let shutdown = server.shutdown.clone();
