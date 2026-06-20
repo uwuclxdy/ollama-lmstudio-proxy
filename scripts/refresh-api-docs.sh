@@ -44,6 +44,7 @@ FUTURE_LMS_DIR="$DOCS_DIR/future/lmstudio"
 OLLAMA_ACTIVE=(
     api-reference/get-version.md
     api-reference/show-model-details.md
+    api/anthropic-compatibility.md
     api/chat.md
     api/copy.md
     api/create.md
@@ -51,25 +52,33 @@ OLLAMA_ACTIVE=(
     api/embed.md
     api/errors.md
     api/generate.md
+    api/openai-compatibility.md
     api/ps.md
     api/pull.md
+    api/push.md
     api/streaming.md
     api/tags.md
     api/usage.md
     capabilities/embeddings.md
+    capabilities/streaming.md
     capabilities/structured-outputs.md
     capabilities/thinking.md
     capabilities/tool-calling.md
     capabilities/vision.md
     capabilities/web-search.md
     context-length.md
+    modelfile.md
+    openapi.yaml
 )
 
 # Ollama: irrelevant to a translation proxy. Never fetched.
 OLLAMA_DENY=(
+    api/authentication.md
     api/introduction.md
+    cli.md
     cloud.md
     docker.md
+    faq.md
     gpu.md
     import.md
     index.md
@@ -87,21 +96,42 @@ OLLAMA_DENY_PREFIXES=(
 
 # LM Studio: actually called as upstream by the proxy. Keep alphabetised.
 LMS_ACTIVE=(
+    1_developer/0_core/authentication.mdx
+    1_developer/0_core/mcp.mdx
+    1_developer/0_core/ttl-and-auto-evict.md
+    1_developer/2_rest/chat.md
     1_developer/2_rest/download-status.md
     1_developer/2_rest/download.md
     1_developer/2_rest/endpoints.mdx
     1_developer/2_rest/list.md
     1_developer/2_rest/load.md
+    1_developer/2_rest/streaming-events.md
     1_developer/2_rest/unload.md
     1_developer/3_openai-compat/chat-completions.md
+    1_developer/3_openai-compat/completions.mdx
+    1_developer/3_openai-compat/embeddings.md
     1_developer/3_openai-compat/models.md
+    1_developer/3_openai-compat/responses.md
     1_developer/3_openai-compat/structured-output.md
+    1_developer/3_openai-compat/tools.mdx
+    1_developer/4_anthropic-compat/messages.md
 )
 
 # LM Studio: pure noise. Never copied.
 LMS_DENY=(
+    1_developer/0_core/0_server/index.md
+    1_developer/0_core/0_server/serve-on-network.mdx
+    1_developer/0_core/0_server/settings.md
+    1_developer/0_core/headless.md
+    1_developer/0_core/headless_llmster.mdx
+    1_developer/0_core/lmlink.md
+    1_developer/2_rest/index.mdx
+    1_developer/2_rest/quickstart.md
+    1_developer/3_openai-compat/index.mdx
+    1_developer/4_anthropic-compat/index.mdx
     1_developer/_embeddings.md
     1_developer/api-changelog.md
+    1_developer/index.mdx
 )
 
 contains() {
