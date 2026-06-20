@@ -59,6 +59,13 @@ pub struct Config {
 
     #[arg(
         long,
+        env = "OLLAMA_API_KEY",
+        help = "if set, inbound requests must send Authorization: Bearer <this key>; unset = open, no auth"
+    )]
+    pub api_key: Option<String>,
+
+    #[arg(
+        long,
         help = "experimental: route /api/chat through LM Studio native /api/v1/chat for richer reasoning events and accurate stats"
     )]
     pub use_native_chat: bool,

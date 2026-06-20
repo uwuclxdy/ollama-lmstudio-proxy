@@ -76,8 +76,14 @@ impl ProxyServer {
         let addr: SocketAddr = self.config.listen.parse()?;
         let server = Arc::new(self);
 
+        let api_key = Arc::new(server.config.api_key.clone());
+
         let app = create_router(server.clone())
             .layer(axum::middleware::from_fn(access_log))
+            .layer(axum::middleware::from_fn_with_state(
+                api_key,
+                crate::proxy::auth::api_key_gate,
+            ))
             .layer(cors_layer());
 
         if LogConfig::get().debug_enabled {
