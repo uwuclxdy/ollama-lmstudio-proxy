@@ -112,8 +112,12 @@ pub async fn handle_ollama_ps(
         .filter(|entry| loaded_models.iter().any(|m| m.id == entry.target_model_id))
         .collect();
 
+    // Best-effort real `expires_at`: only models the proxy itself loaded/kept
+    // alive are tracked; others fall back to the placeholder inside
+    // `to_ollama_ps_model`. Virtual aliases resolve to their target's deadline.
+    let load_tracker = context.load_tracker.clone();
     let ollama_models = ModelInfo::merge_with_virtuals(&loaded_models, &loaded_virtuals, |m| {
-        m.to_ollama_ps_model()
+        m.to_ollama_ps_model(load_tracker.expires_at_unix(&m.id))
     });
 
     let response = json!({ "models": ollama_models });

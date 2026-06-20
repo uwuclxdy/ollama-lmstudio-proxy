@@ -9,7 +9,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::Config;
 use crate::logging::LogConfig;
-use crate::model::ModelResolver;
+use crate::model::{LoadTracker, ModelResolver};
 use crate::proxy::routes::create_router;
 use crate::storage::{BlobStore, VirtualModelStore};
 
@@ -19,6 +19,7 @@ pub struct ProxyServer {
     pub model_resolver: Arc<ModelResolver>,
     pub virtual_models: Arc<VirtualModelStore>,
     pub blob_store: Arc<BlobStore>,
+    pub load_tracker: Arc<LoadTracker>,
     pub shutdown: CancellationToken,
 }
 
@@ -61,6 +62,7 @@ impl ProxyServer {
 
         let virtual_models = Arc::new(VirtualModelStore::load(virtual_models_path)?);
         let blob_store = Arc::new(BlobStore::new(blob_dir)?);
+        let load_tracker = LoadTracker::new();
 
         Ok(Self {
             client,
@@ -68,6 +70,7 @@ impl ProxyServer {
             model_resolver,
             virtual_models,
             blob_store,
+            load_tracker,
             shutdown: CancellationToken::new(),
         })
     }

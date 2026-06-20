@@ -123,6 +123,7 @@ fn create_context(s: &Arc<ProxyServer>) -> RequestContext<'_> {
         lmstudio_url: &s.config.lmstudio_url,
         virtual_models: s.virtual_models.clone(),
         blob_store: s.blob_store.clone(),
+        load_tracker: s.load_tracker.clone(),
     }
 }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::model::LoadTracker;
 use crate::storage::{BlobStore, VirtualModelStore};
 
 #[derive(Clone)]
@@ -8,6 +9,7 @@ pub struct RequestContext<'a> {
     pub lmstudio_url: &'a str,
     pub virtual_models: Arc<VirtualModelStore>,
     pub blob_store: Arc<BlobStore>,
+    pub load_tracker: Arc<LoadTracker>,
 }
 
 impl<'a> RequestContext<'a> {

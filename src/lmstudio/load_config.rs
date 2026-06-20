@@ -193,7 +193,12 @@ pub async fn ensure_context_length(
         .await
     {
         Ok(_) => {
-            log::debug!("num_ctx: loaded '{lm_studio_model_id}' at context_length={requested}")
+            log::debug!("num_ctx: loaded '{lm_studio_model_id}' at context_length={requested}");
+            // Record the reload so /api/ps can report a real expires_at. Keyed
+            // on the LM Studio model id (= ModelInfo.id). ttl is None here: the
+            // reload path carries no keep_alive, so the deadline is "forever"
+            // until a keep-alive refresh updates it.
+            context.load_tracker.record(lm_studio_model_id, None);
         }
         Err(e) => log::warn!(
             "num_ctx: load '{lm_studio_model_id}' at {requested} failed: {}",

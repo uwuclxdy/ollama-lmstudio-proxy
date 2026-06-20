@@ -92,7 +92,19 @@ pub async fn trigger_model_loading(
             .make_request(reqwest::Method::POST, &load_url, Some(load_body))
             .await
         {
-            Ok(_) => {}
+            Ok(_) => {
+                // Record the load so /api/ps can report a best-effort expires_at.
+                // Keyed on the LM Studio model key (= ModelInfo.id); resolve the
+                // Ollama name first so the ps lookup matches. ttl is unknown on
+                // the load path (keep_alive lives on the inference request, not
+                // here), so None = loaded forever until a keep-alive refresh.
+                record_loaded_key(
+                    context,
+                    model_for_lm_studio_trigger,
+                    cancellation_token.clone(),
+                )
+                .await;
+            }
             Err(e) if e.is_cancelled() => return Err(ProxyError::request_cancelled()),
             Err(e) => {
                 log::warn!("model load config: best-effort POST failed: {}", e.message);
@@ -121,6 +133,12 @@ pub async fn trigger_model_loading(
             let status = response.status();
             let trigger_considered_successful = status.is_success() || status.is_client_error();
 
+            // A successful chat-ping is the actual load for chat models (the
+            // explicit-load branch above only runs on the JIT-on-error path).
+            // Record it so /api/ps has a real expires_at to report.
+            if trigger_considered_successful {
+                record_loaded_key(context, ollama_model_name, cancellation_token.clone()).await;
+            }
             if !trigger_considered_successful {
                 log::warn!("model trigger: status: {}", status);
             }
@@ -164,6 +182,37 @@ pub async fn trigger_model_loading_for_ollama(
 /// mistaken for a load-and-retry signal.
 fn is_no_models_loaded(message: &str) -> bool {
     message.to_lowercase().contains("no models loaded")
+}
+
+/// Best-effort: resolve `ollama_model_name` to its LM Studio key (= `ModelInfo.id`)
+/// and record the load in the proxy's tracker so `/api/ps` can report a real
+/// `expires_at`. Resolution uses a transient resolver (no shared cache) — the
+/// recorded deadline is approximate anyway and any failure logs and continues,
+/// never affecting the load itself. ttl is None (loaded forever) because the
+/// load path carries no keep_alive; a subsequent inference request's keep_alive
+/// would refresh it if threaded, but that refresh is out of scope here.
+async fn record_loaded_key(
+    context: &RequestContext<'_>,
+    ollama_model_name: &str,
+    cancellation_token: CancellationToken,
+) {
+    let cache = moka::future::Cache::builder().max_capacity(64).build();
+    let resolver = ModelResolver::new(context.lmstudio_url.to_string(), cache);
+    match resolver
+        .resolve_model_name(
+            ollama_model_name,
+            context.client,
+            cancellation_token.clone(),
+        )
+        .await
+    {
+        Ok(lm_key) => context.load_tracker.record(&lm_key, None),
+        Err(e) => log::debug!(
+            "load-tracker: could not resolve key for '{}', skipping record: {}",
+            ollama_model_name,
+            e.message
+        ),
+    }
 }
 
 /// Whether an upstream failure should trigger a best-effort model load and retry.

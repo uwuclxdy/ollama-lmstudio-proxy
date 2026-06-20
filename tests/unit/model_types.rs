@@ -420,7 +420,7 @@ fn tags_model_digest_is_sha256_shaped() {
 #[test]
 fn ps_model_digest_is_sha256_shaped() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_ollama_ps_model();
+    let v = info.to_ollama_ps_model(None);
     let digest = v["digest"].as_str().expect("digest must be a string");
     assert_eq!(
         digest.len(),
@@ -490,7 +490,7 @@ fn tags_entry_omits_modified_at_when_unknown() {
 #[test]
 fn ps_model_includes_tags_fields_plus_expires_and_vram() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_ollama_ps_model();
+    let v = info.to_ollama_ps_model(None);
     for key in [
         "name",
         "model",
@@ -512,7 +512,7 @@ fn ps_model_includes_tags_fields_plus_expires_and_vram() {
 fn ps_model_expires_at_is_rfc3339_in_future() {
     use chrono::DateTime;
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_ollama_ps_model();
+    let v = info.to_ollama_ps_model(None);
     let s = v["expires_at"].as_str().expect("expires_at must be string");
     let ts = DateTime::parse_from_rfc3339(s).expect("must parse as RFC3339");
     assert!(ts > Utc::now(), "expires_at must be in the future, got {s}");
@@ -1136,7 +1136,7 @@ fn show_concise_model_info_never_includes_tuning() {
 #[test]
 fn ps_model_details_include_empty_parent_model() {
     let info = ModelInfo::from_native_data(&native("publisher/model"));
-    let v = info.to_ollama_ps_model();
+    let v = info.to_ollama_ps_model(None);
     assert_eq!(
         v["details"]["parent_model"],
         json!(""),

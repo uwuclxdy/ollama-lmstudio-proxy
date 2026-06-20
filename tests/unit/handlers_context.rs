@@ -29,6 +29,7 @@ macro_rules! with_ctx {
             lmstudio_url: $url,
             virtual_models: vms,
             blob_store: bs,
+            load_tracker: crate::model::LoadTracker::new(),
         };
         $body
     }};

@@ -411,7 +411,7 @@ impl ModelInfo {
         self.base_ollama_representation()
     }
 
-    pub fn to_ollama_ps_model(&self) -> Value {
+    pub fn to_ollama_ps_model(&self, expires_at: Option<i64>) -> Value {
         let mut base = self.base_ollama_representation();
 
         // Real Ollama /api/ps emits an empty `details.parent_model`. Inject it
@@ -422,15 +422,29 @@ impl ModelInfo {
         }
 
         if let Some(obj) = base.as_object_mut() {
-            // LM Studio's loaded-instance list exposes no TTL, so `expires_at`
-            // is a best-effort placeholder (now + the default keep-alive), not
-            // an authoritative deadline.
-            obj.insert(
-                "expires_at".to_string(),
-                (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
-                    .to_rfc3339()
-                    .into(),
-            );
+            // `expires_at` is best-effort: when the proxy tracked this model's
+            // load/keep-alive, `expires_at` is the tracked deadline (unix
+            // seconds → RFC3339). Tracked-but-forever (None ttl) and untracked
+            // models fall back to the legacy placeholder (now + default
+            // keep-alive), since LM Studio's loaded-instance list exposes no
+            // authoritative TTL.
+            let expires_at_value = match expires_at {
+                Some(secs) => chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0)
+                    .map(|t| t.to_rfc3339())
+                    .map(Value::from)
+                    .unwrap_or_else(|| {
+                        json!(
+                            (chrono::Utc::now()
+                                + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
+                            .to_rfc3339()
+                        )
+                    }),
+                None => json!(
+                    (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
+                        .to_rfc3339()
+                ),
+            };
+            obj.insert("expires_at".to_string(), expires_at_value);
             // LM Studio doesn't report the GPU/CPU memory split. A loaded model
             // is resident, so mirror its `size` into `size_vram` (assumes GPU
             // residency, the common LM Studio case) instead of reporting 0.
