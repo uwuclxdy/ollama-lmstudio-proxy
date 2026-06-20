@@ -122,6 +122,12 @@ pub struct Config {
         help = "default context window (num_ctx) applied when a request omits options.num_ctx; mirrors Ollama's OLLAMA_CONTEXT_LENGTH; unset → defer to LM Studio's per-model default"
     )]
     pub default_context_length: Option<u64>,
+
+    #[arg(
+        long,
+        help = "unload all other models' loaded instances before loading a model (mirrors Ollama single-model default + LM Studio JIT auto-evict)"
+    )]
+    pub auto_evict: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +138,7 @@ pub struct RuntimeConfig {
     pub offload_kv_cache: bool,
     pub eval_batch_size: Option<u32>,
     pub default_context_length: Option<u64>,
+    pub auto_evict: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -143,6 +150,7 @@ impl Default for RuntimeConfig {
             offload_kv_cache: false,
             eval_batch_size: None,
             default_context_length: None,
+            auto_evict: false,
         }
     }
 }

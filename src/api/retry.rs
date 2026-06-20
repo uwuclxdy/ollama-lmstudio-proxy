@@ -14,8 +14,10 @@ use crate::constants::{
 };
 use crate::error::ProxyError;
 use crate::http::CancellableRequest;
+use crate::lmstudio::keep_alive::unload_other_models;
 use crate::lmstudio::{build_load_config_body, is_model_loading_error};
 use crate::logging::log_timed;
+use crate::model::ModelResolver;
 
 #[derive(Serialize)]
 struct MinimalChatMessage<'a> {
@@ -49,6 +51,38 @@ pub async fn trigger_model_loading(
     // force-loading an already-resident model would stack a duplicate (:2, :3…);
     // the chat-ping JIT-loads chat models idempotently instead.
     if do_explicit_load {
+        if get_runtime_config().auto_evict {
+            // Best-effort: evict every other model's loaded instances before
+            // bringing up the target. Resolution uses a transient resolver (no
+            // shared cache) — fine here since the explicit-load path is cold and
+            // any failure logs and continues, never aborting the load below.
+            let cache = moka::future::Cache::builder().max_capacity(64).build();
+            let resolver = ModelResolver::new(context.lmstudio_url.to_string(), cache);
+            match resolver
+                .resolve_model_name(
+                    model_for_lm_studio_trigger,
+                    context.client,
+                    cancellation_token.clone(),
+                )
+                .await
+            {
+                Ok(keep_key) => {
+                    if let Err(e) =
+                        unload_other_models(context.client, context.lmstudio_url, &keep_key).await
+                    {
+                        log::warn!("auto-evict: unload failed, continuing: {}", e.message);
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "auto-evict: could not resolve keep key for '{}', skipping: {}",
+                        model_for_lm_studio_trigger,
+                        e.message
+                    );
+                }
+            }
+        }
+
         let load_body =
             build_load_config_body(model_for_lm_studio_trigger, get_runtime_config(), None)
                 .unwrap_or_else(|| serde_json::json!({ "model": model_for_lm_studio_trigger }));

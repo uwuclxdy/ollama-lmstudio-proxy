@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         offload_kv_cache: cfg.offload_kv_cache,
         eval_batch_size: cfg.eval_batch_size,
         default_context_length: cfg.default_context_length,
+        auto_evict: cfg.auto_evict,
     });
 
     let server = proxy::ProxyServer::new(cfg)?;

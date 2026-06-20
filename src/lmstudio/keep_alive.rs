@@ -191,6 +191,63 @@ async fn unload_model_instances(
     Ok(())
 }
 
+/// Best-effort: unload every OTHER model's loaded instances (those whose
+/// `key` != `keep_model_key`) before a fresh load, mirroring Ollama's
+/// single-model default + LM Studio's JIT auto-evict. Never propagates a
+/// failure that would abort the caller's load: each per-instance error is
+/// logged and skipped, and the function returns `Ok(())` after best-effort
+/// attempts.
+pub async fn unload_other_models(
+    client: &reqwest::Client,
+    base_url: &str,
+    keep_model_key: &str,
+) -> Result<(), ProxyError> {
+    let models_url = format!("{}{}", base_url, LM_STUDIO_NATIVE_MODELS);
+    let native: NativeModelsResponse = match client.get(&models_url).send().await {
+        Ok(response) => match response.json().await {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                log::warn!("auto-evict: parse models response failed, skipping: {}", e);
+                return Ok(());
+            }
+        },
+        Err(e) => {
+            log::warn!("auto-evict: fetch models failed, skipping: {}", e);
+            return Ok(());
+        }
+    };
+
+    let unload_url = format!("{}{}", base_url, LM_STUDIO_NATIVE_UNLOAD);
+    for model in native
+        .models
+        .iter()
+        .filter(|m| m.key != keep_model_key && !m.loaded_instances.is_empty())
+    {
+        for instance in &model.loaded_instances {
+            match client
+                .post(&unload_url)
+                .json(&json!({ "instance_id": instance.id }))
+                .send()
+                .await
+            {
+                Ok(_) => log::debug!(
+                    "auto-evict: unloaded instance '{}' of '{}'",
+                    instance.id,
+                    model.key
+                ),
+                Err(e) => log::warn!(
+                    "auto-evict: failed to unload instance '{}' of '{}': {}",
+                    instance.id,
+                    model.key,
+                    e
+                ),
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/lmstudio_keep_alive_spawn.rs"]
 mod tests_spawn;
