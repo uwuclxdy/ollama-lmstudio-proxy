@@ -29,13 +29,29 @@ impl LoadTracker {
     ///
     /// `ttl: None` and negative seconds both mean "loaded forever" (no expiry).
     pub fn record(&self, key: &str, ttl: Option<Duration>) {
-        // Negative seconds is LM Studio's "stay loaded" sentinel → forever.
+        // Negative/zero seconds is LM Studio's "stay loaded"/unload sentinel →
+        // "no known ttl" (None).
         let normalized = ttl.filter(|d| !d.is_zero() && d.as_secs_f64() >= 0.0);
         let mut guard = self
             .entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.insert(key.to_string(), (Instant::now(), normalized));
+        // Always refresh `loaded_at` (the model was just touched), but only
+        // replace `ttl` when this call actually knows it. Warm paths (e.g. the
+        // /api/show chat-ping) record `None`; they must NOT overwrite a real
+        // keep_alive ttl captured by the preceding inference request, or
+        // /api/ps would flip back to "no expiry" on every warm call.
+        match guard.get_mut(key) {
+            Some((loaded_at, existing_ttl)) => {
+                *loaded_at = Instant::now();
+                if normalized.is_some() {
+                    *existing_ttl = normalized;
+                }
+            }
+            None => {
+                guard.insert(key.to_string(), (Instant::now(), normalized));
+            }
+        }
     }
 
     /// Unix-seconds expiry for `key`, or `None` when untracked or loaded forever.
@@ -56,7 +72,7 @@ impl LoadTracker {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        Some(now_unix + remaining.as_secs() as i64)
+        Some(now_unix + i64::try_from(remaining.as_secs()).unwrap_or(i64::MAX))
     }
 }
 
@@ -75,6 +91,28 @@ mod tests {
         let t = LoadTracker::new();
         t.record("m", None);
         assert!(t.expires_at_unix("m").is_none());
+    }
+
+    #[test]
+    fn none_ttl_refresh_does_not_clobber_known_ttl() {
+        // Regression: a warm-path record(None) (e.g. the /api/show chat-ping)
+        // must not overwrite a real keep_alive ttl captured by the prior
+        // inference request — otherwise /api/ps flips back to "no expiry".
+        let t = LoadTracker::new();
+        t.record("m", Some(Duration::from_secs(300)));
+        t.record("m", None);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let exp = t
+            .expires_at_unix("m")
+            .expect("ttl must be retained after None refresh");
+        assert!(exp > now, "expiry must be in the future: {exp} <= {now}");
+        assert!(
+            exp <= now + 300,
+            "expiry must stay within the original ttl: {exp} > {now}+300"
+        );
     }
 
     #[test]
