@@ -66,6 +66,27 @@ impl ChatLikeCall<'_> {
         )
         .await?;
 
+        // Refresh the load tracker with this request's resolved keep_alive so
+        // /api/ps can report an accurate expires_at. Best-effort: resolution is
+        // cached on the shared resolver and any failure is ignored. Skipped for
+        // keep_alive:0 (the model is torn down by spawn_unload below).
+        if keep_alive_seconds != Some(0) {
+            let ttl = keep_alive_seconds
+                .filter(|&s| s > 0)
+                .map(|s| std::time::Duration::from_secs(s as u64));
+            match resolver
+                .resolve_model_name(&ollama_model_name, context.client, cancellation.clone())
+                .await
+            {
+                Ok(lm_key) => context.load_tracker.record(&lm_key, ttl),
+                Err(e) => log::debug!(
+                    "load-tracker: could not resolve key for '{}', skipping: {}",
+                    ollama_model_name,
+                    e.message
+                ),
+            }
+        }
+
         if spawn_unload {
             let unload_delay = if is_streaming_request(&body) {
                 DEFAULT_STREAM_TIMEOUT_SECONDS
