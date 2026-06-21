@@ -39,6 +39,7 @@ pub async fn handle_ollama_chat(
     load_timeout_seconds: u64,
     use_native_chat: bool,
     native_chat_streaming: bool,
+    auto_evict: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
@@ -255,6 +256,7 @@ pub async fn handle_ollama_chat(
         start_time,
         op_label: "Ollama chat",
         spawn_unload: true,
+        auto_evict,
     }
     .run(operation)
     .await

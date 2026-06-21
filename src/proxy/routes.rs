@@ -159,6 +159,7 @@ async fn chat_handler(
         s.config.load_timeout_seconds,
         s.config.use_native_chat,
         s.config.native_chat_streaming,
+        s.config.auto_evict,
     )
     .await
 }
@@ -174,6 +175,7 @@ async fn generate_handler(
         body,
         s.shutdown.child_token(),
         s.config.load_timeout_seconds,
+        s.config.auto_evict,
     )
     .await
 }
@@ -205,6 +207,7 @@ async fn embedding_handler_inner(
         mode,
         s.shutdown.child_token(),
         s.config.load_timeout_seconds,
+        s.config.auto_evict,
     )
     .await
 }

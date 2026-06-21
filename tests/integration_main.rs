@@ -55,3 +55,9 @@ mod web_fetch;
 
 #[path = "integration/web_search.rs"]
 mod web_search;
+
+#[path = "integration/auto_evict.rs"]
+mod auto_evict;
+
+#[path = "integration/cold_load_bare_key.rs"]
+mod cold_load_bare_key;

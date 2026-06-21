@@ -32,6 +32,7 @@ pub async fn handle_ollama_generate(
     body: Value,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    auto_evict: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
@@ -256,6 +257,7 @@ pub async fn handle_ollama_generate(
         start_time,
         op_label: "Ollama generate",
         spawn_unload: true,
+        auto_evict,
     }
     .run(operation)
     .await

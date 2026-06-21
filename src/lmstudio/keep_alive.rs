@@ -191,6 +191,44 @@ async fn unload_model_instances(
     Ok(())
 }
 
+/// Core eviction logic operating on an already-fetched models list.
+///
+/// Unloads every loaded instance of every model whose `key` != `keep_model_key`.
+/// Best-effort: per-instance unload failures are logged and skipped.
+pub async fn unload_instances_except(
+    client: &reqwest::Client,
+    models: &NativeModelsResponse,
+    keep_model_key: &str,
+    unload_url: &str,
+) {
+    for model in models
+        .models
+        .iter()
+        .filter(|m| m.key != keep_model_key && !m.loaded_instances.is_empty())
+    {
+        for instance in &model.loaded_instances {
+            match client
+                .post(unload_url)
+                .json(&json!({ "instance_id": instance.id }))
+                .send()
+                .await
+            {
+                Ok(_) => log::debug!(
+                    "auto-evict: unloaded instance '{}' of '{}'",
+                    instance.id,
+                    model.key
+                ),
+                Err(e) => log::warn!(
+                    "auto-evict: failed to unload instance '{}' of '{}': {}",
+                    instance.id,
+                    model.key,
+                    e
+                ),
+            }
+        }
+    }
+}
+
 /// Best-effort: unload every OTHER model's loaded instances (those whose
 /// `key` != `keep_model_key`) before a fresh load, mirroring Ollama's
 /// single-model default + LM Studio's JIT auto-evict. Never propagates a
@@ -218,34 +256,37 @@ pub async fn unload_other_models(
     };
 
     let unload_url = format!("{}{}", base_url, LM_STUDIO_NATIVE_UNLOAD);
-    for model in native
+    unload_instances_except(client, &native, keep_model_key, &unload_url).await;
+    Ok(())
+}
+
+/// Proactive eviction: if `keep_model_key` is NOT currently loaded (no
+/// `loaded_instances`), unload all other models' instances and return `true`
+/// (eviction ran). If the target is already loaded, return `false` (nothing to
+/// do). Always best-effort — any fetch/parse failure logs and returns `false`.
+///
+/// Takes ownership of an already-fetched `NativeModelsResponse` so the caller
+/// can share the single GET with its own logic (e.g. checking whether the
+/// target needs a context-length reload) without a redundant round trip.
+pub async fn proactive_evict_if_unloaded(
+    client: &reqwest::Client,
+    models: &NativeModelsResponse,
+    keep_model_key: &str,
+    unload_url: &str,
+) -> bool {
+    let target_loaded = models
         .models
         .iter()
-        .filter(|m| m.key != keep_model_key && !m.loaded_instances.is_empty())
-    {
-        for instance in &model.loaded_instances {
-            match client
-                .post(&unload_url)
-                .json(&json!({ "instance_id": instance.id }))
-                .send()
-                .await
-            {
-                Ok(_) => log::debug!(
-                    "auto-evict: unloaded instance '{}' of '{}'",
-                    instance.id,
-                    model.key
-                ),
-                Err(e) => log::warn!(
-                    "auto-evict: failed to unload instance '{}' of '{}': {}",
-                    instance.id,
-                    model.key,
-                    e
-                ),
-            }
-        }
+        .find(|m| m.key == keep_model_key)
+        .map(|m| !m.loaded_instances.is_empty())
+        .unwrap_or(false);
+
+    if target_loaded {
+        return false;
     }
 
-    Ok(())
+    unload_instances_except(client, models, keep_model_key, unload_url).await;
+    true
 }
 
 #[cfg(test)]

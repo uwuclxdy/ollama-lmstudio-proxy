@@ -56,41 +56,84 @@ pub async fn spawn_proxy() -> TestProxy {
 }
 
 pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy {
-    spawn_proxy_inner(enable_chunk_recovery, false, false, true, None, false).await
+    spawn_proxy_inner(
+        enable_chunk_recovery,
+        false,
+        false,
+        true,
+        None,
+        false,
+        false,
+        15,
+    )
+    .await
 }
 
 /// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
 /// `/api/chat` routes through LM Studio's native endpoint instead of the
 /// OpenAI-compat `/api/v0/chat/completions`.
 pub async fn spawn_proxy_with_native() -> TestProxy {
-    spawn_proxy_inner(true, true, false, true, None, false).await
+    spawn_proxy_inner(true, true, false, true, None, false, false, 15).await
 }
 
 /// Boot a proxy with the `/api/web_search` configured to forward to the mock
 /// server's `/search` endpoint (with a bearer key). Mount a POST `/search`
 /// mock to drive it.
 pub async fn spawn_proxy_with_search() -> TestProxy {
-    spawn_proxy_inner(true, false, true, true, None, false).await
+    spawn_proxy_inner(true, false, true, true, None, false, false, 15).await
 }
 
 /// Boot a proxy with the web_fetch SSRF guard ENABLED (private/loopback targets
 /// rejected) — i.e. `--allow-private-fetch` off.
 pub async fn spawn_proxy_strict_ssrf() -> TestProxy {
-    spawn_proxy_inner(true, false, false, false, None, false).await
+    spawn_proxy_inner(true, false, false, false, None, false, false, 15).await
 }
 
 /// Boot a proxy requiring an inbound `Authorization: Bearer <api_key>` on every
 /// request (the `--api-key` / `OLLAMA_API_KEY` gate). `None` for api_key leaves
 /// the proxy open, matching the default.
 pub async fn spawn_proxy_with_api_key(api_key: &str) -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, Some(api_key.to_string()), false).await
+    spawn_proxy_inner(
+        true,
+        false,
+        false,
+        true,
+        Some(api_key.to_string()),
+        false,
+        false,
+        15,
+    )
+    .await
 }
 
 /// Boot a proxy with `--native-chat-streaming` on: streaming `/api/chat`
 /// (`stream:true`) routes through native `/api/v1/chat`, non-streaming stays on
 /// the OpenAI-compat `/api/v0/chat/completions` path.
 pub async fn spawn_proxy_with_native_streaming() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, true).await
+    spawn_proxy_inner(true, false, false, true, None, true, false, 15).await
+}
+
+/// Boot a proxy with `--auto-evict` on: proactively evicts other loaded models
+/// before inference when the target model is not yet loaded.
+pub async fn spawn_proxy_with_auto_evict() -> TestProxy {
+    spawn_proxy_inner(true, false, false, true, None, false, true, 15).await
+}
+
+/// Boot a proxy with a custom `load_timeout_seconds` — useful for tests that
+/// exercise the cold-load retry path and need a short sleep between trigger and
+/// retry to keep the test fast.
+pub async fn spawn_proxy_with_load_timeout(load_timeout_seconds: u64) -> TestProxy {
+    spawn_proxy_inner(
+        true,
+        false,
+        false,
+        true,
+        None,
+        false,
+        false,
+        load_timeout_seconds,
+    )
+    .await
 }
 
 /// Bearer key the search-configured test proxy sends to its provider.
@@ -104,6 +147,8 @@ async fn spawn_proxy_inner(
     allow_private_fetch: bool,
     api_key: Option<String>,
     native_chat_streaming: bool,
+    auto_evict: bool,
+    load_timeout_seconds: u64,
 ) -> TestProxy {
     ensure_runtime_initialized(enable_chunk_recovery);
 
@@ -117,7 +162,7 @@ async fn spawn_proxy_inner(
         listen: "127.0.0.1:0".to_string(),
         lmstudio_url: mock.uri(),
         log_level: "off".to_string(),
-        load_timeout_seconds: 15,
+        load_timeout_seconds,
         max_buffer_size: 262_144,
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
@@ -128,7 +173,7 @@ async fn spawn_proxy_inner(
         flash_attention: false,
         offload_kv_cache: false,
         eval_batch_size: None,
-        auto_evict: false,
+        auto_evict,
         allow_private_fetch,
         search_url,
         search_api_key,

@@ -39,7 +39,26 @@ pub async fn trigger_model_loading(
     do_explicit_load: bool,
     cancellation_token: CancellationToken,
 ) -> Result<bool, ProxyError> {
-    let model_for_lm_studio_trigger = ollama_model_name;
+    // `/api/v1/models/load` and the v0 chat-ping below address LM Studio by its
+    // bare model key (e.g. "qwen3.5-0.8b"). The Ollama-facing name usually carries
+    // a ":latest" tag that LM Studio rejects (`model_not_found` / "no models
+    // loaded"), which silently broke every explicit load whenever LM Studio's own
+    // JIT was off (and embedders, which only load via this path). Resolve to the
+    // key first; best-effort, falling back to the raw name (a truly missing model
+    // 404s either way).
+    let resolved_key = {
+        let cache = moka::future::Cache::builder().max_capacity(64).build();
+        let resolver = ModelResolver::new(context.lmstudio_url.to_string(), cache);
+        resolver
+            .resolve_model_name(
+                ollama_model_name,
+                context.client,
+                cancellation_token.clone(),
+            )
+            .await
+            .unwrap_or_else(|_| ollama_model_name.to_string())
+    };
+    let model_for_lm_studio_trigger = resolved_key.as_str();
 
     // Issue a model-only explicit load ONLY when the caller knows the model is
     // not resident (the JIT-on-error path). `build_load_config_body` returns None
@@ -206,7 +225,9 @@ async fn record_loaded_key(
         )
         .await
     {
-        Ok(lm_key) => context.load_tracker.record(&lm_key, None),
+        Ok(lm_key) => context
+            .load_tracker
+            .record(&lm_key, crate::model::load_tracker::KeepAlive::Unknown),
         Err(e) => log::debug!(
             "load-tracker: could not resolve key for '{}', skipping record: {}",
             ollama_model_name,
