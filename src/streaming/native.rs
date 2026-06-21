@@ -9,7 +9,7 @@
 //! reuse one consistent parse.
 //!
 //! Source of truth:
-//! - `api-docs/future/lmstudio/1_developer/2_rest/streaming-events.md`
+//! - `api-docs/lmstudio/1_developer/2_rest/streaming-events.md`
 
 use serde_json::Value;
 
