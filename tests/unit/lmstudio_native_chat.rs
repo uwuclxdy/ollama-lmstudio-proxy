@@ -33,14 +33,10 @@ fn request_builds_text_input_and_system_prompt() {
 
     let input = body["input"].as_array().expect("input array");
     assert_eq!(input.len(), 2);
-    assert_eq!(
-        input[0],
-        json!({ "type": "message", "role": "user", "content": "hello" })
-    );
-    assert_eq!(
-        input[1],
-        json!({ "type": "message", "role": "assistant", "content": "hi" })
-    );
+    // Native /api/v1/chat input items are `{type:"text", content}` with no role
+    // key (LM Studio rejects `role` and `type:"message"`).
+    assert_eq!(input[0], json!({ "type": "text", "content": "hello" }));
+    assert_eq!(input[1], json!({ "type": "text", "content": "hi" }));
 }
 
 #[test]
@@ -56,7 +52,7 @@ fn request_emits_image_input_entries() {
     let input = body["input"].as_array().expect("input array");
 
     assert_eq!(input.len(), 2);
-    assert_eq!(input[0]["type"], json!("message"));
+    assert_eq!(input[0]["type"], json!("text"));
     assert_eq!(input[1]["type"], json!("image"));
     // PNG magic prefix sniffed into the data URL mime.
     assert_eq!(

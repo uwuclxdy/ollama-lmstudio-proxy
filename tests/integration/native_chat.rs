@@ -59,13 +59,14 @@ async fn non_streaming_routes_to_native_and_converts_response() {
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     // Backend must receive the NATIVE body: resolved model id + `input` array
-    // (NOT the OpenAI `messages` array).
+    // (NOT the OpenAI `messages` array). Native input items are `{type:"text",
+    // content}` with no role key — LM Studio rejects `role` and `type:"message"`.
     Mock::given(method("POST"))
         .and(path("/api/v1/chat"))
         .and(body_partial_json(json!({
             "model": "llama3.1-8b-instruct",
             "stream": false,
-            "input": [{ "type": "message", "role": "user", "content": "Hi" }]
+            "input": [{ "type": "text", "content": "Hi" }]
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "model_instance_id": "llama3.1-8b-instruct",

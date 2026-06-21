@@ -52,7 +52,7 @@ pub struct NativeChatRequestParams<'a> {
 /// Map an Ollama chat request to a native LM Studio `/api/v1/chat` JSON body.
 ///
 /// The `input` array is built from the Ollama `messages`: text turns become
-/// `{type:"message", role, content}` and any per-message `images` become
+/// `{type:"text", content}` and any per-message `images` become
 /// `{type:"image", data_url}` entries (data URLs sniffed via the shared image
 /// helper). Sampling params come from Ollama `options`; note the native field
 /// is `max_output_tokens` (not `max_tokens`) and `min_p`/`repeat_penalty` ARE
@@ -117,10 +117,13 @@ fn apply_native_sampling(ollama_options: Option<&Value>, body: &mut Map<String, 
 
 /// Build the native `input` array from Ollama `messages`.
 ///
-/// Each message yields a `{type:"message", role, content}` entry (when it has
-/// non-empty text content), followed by one `{type:"image", data_url}` entry
-/// per image in its `images` sibling array. Non-array `messages` yield an empty
-/// input array.
+/// Each message yields a `{type:"text", content}` entry (when it has non-empty
+/// text content), followed by one `{type:"image", data_url}` entry per image in
+/// its `images` sibling array. Non-array `messages` yield an empty input array.
+///
+/// The native `/api/v1/chat` input schema accepts only `text`/`image` items and
+/// rejects a `role` key, so per-turn roles are dropped here; the system turn is
+/// carried separately via `system_prompt`.
 fn build_native_input(messages: &Value) -> Value {
     let Some(msg_array) = messages.as_array() else {
         return Value::Array(Vec::new());
@@ -128,8 +131,6 @@ fn build_native_input(messages: &Value) -> Value {
 
     let mut input = Vec::with_capacity(msg_array.len());
     for msg in msg_array {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-
         if let Some(content) = msg.get("content") {
             let text = content
                 .as_str()
@@ -137,8 +138,7 @@ fn build_native_input(messages: &Value) -> Value {
                 .unwrap_or_else(|| content.to_string());
             if !text.is_empty() && content.as_str() != Some("") {
                 input.push(json!({
-                    "type": "message",
-                    "role": role,
+                    "type": "text",
                     "content": text,
                 }));
             }
