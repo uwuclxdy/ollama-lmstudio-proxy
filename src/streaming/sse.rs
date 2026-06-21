@@ -274,6 +274,23 @@ pub async fn handle_native_streaming_response(
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
+    let status = lm_studio_response.status();
+    if !status.is_success() {
+        let body_text = lm_studio_response.text().await.unwrap_or_default();
+        let message = serde_json::from_str::<serde_json::Value>(&body_text)
+            .ok()
+            .and_then(|v| match v.get("error") {
+                Some(serde_json::Value::Object(obj)) => obj
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string()),
+                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("LM Studio error: {}", status));
+        return Err(ProxyError::new(message, status.as_u16()));
+    }
+
     let runtime_config = get_runtime_config();
     let ollama_model_name = ollama_model_name.to_string();
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();

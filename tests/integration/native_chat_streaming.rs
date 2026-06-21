@@ -112,6 +112,48 @@ async fn streaming_routes_to_native_v1_chat() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// upstream non-2xx -> surfaces the error, never a silent done:true
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_streaming_upstream_error_surfaced() {
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // LM Studio returns 400 with a JSON error body — NOT SSE events.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_json(json!({ "error": "invalid request: model not loaded" })),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming");
+
+    // Must NOT be a silent 200 with done:true content.
+    assert_ne!(
+        resp.status().as_u16(),
+        200,
+        "proxy must not swallow a 400 upstream error as a silent 200"
+    );
+
+    p.mock.verify().await;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // stream:false -> stays on the default /api/v0/chat/completions
 // ═══════════════════════════════════════════════════════════════════════════
 
