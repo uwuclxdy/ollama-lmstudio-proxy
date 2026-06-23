@@ -10,7 +10,7 @@ pub mod status_stream;
 pub mod unload_only;
 
 pub use blobs::{handle_blob_head, handle_blob_upload};
-pub use chat::handle_ollama_chat;
+pub use chat::{ChatOptions, handle_ollama_chat};
 pub use embeddings::{EmbeddingResponseMode, handle_ollama_embeddings};
 pub use generate::handle_ollama_generate;
 pub use health::{handle_health_check, handle_ollama_root, handle_ollama_version};

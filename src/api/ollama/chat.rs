@@ -31,16 +31,28 @@ use crate::streaming::handle_native_streaming_response;
 use super::resolution::{make_top_level_params, resolve_model_with_context};
 use super::unload_only::{UnloadOnlyCall, is_chat_unload_only, respond_unload_only};
 
+/// Server-config knobs the chat handler reads, bundled so the entry point
+/// stays under clippy's argument limit.
+pub struct ChatOptions {
+    pub load_timeout_seconds: u64,
+    pub use_native_chat: bool,
+    pub native_chat_streaming: bool,
+    pub auto_evict: bool,
+}
+
 pub async fn handle_ollama_chat(
     context: RequestContext<'_>,
     model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-    load_timeout_seconds: u64,
-    use_native_chat: bool,
-    native_chat_streaming: bool,
-    auto_evict: bool,
+    options: ChatOptions,
 ) -> Result<axum::response::Response, ProxyError> {
+    let ChatOptions {
+        load_timeout_seconds,
+        use_native_chat,
+        native_chat_streaming,
+        auto_evict,
+    } = options;
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;
