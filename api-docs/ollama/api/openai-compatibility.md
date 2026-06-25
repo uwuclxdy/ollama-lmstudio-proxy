@@ -204,9 +204,9 @@ Ollama provides compatibility with parts of the [OpenAI API](https://platform.op
 * [x] `top_p`
 * [x] `max_tokens`
 * [x] `tools`
-* [x] `reasoning_effort` (`"high"`, `"medium"`, `"low"`, `"none"`)
+* [x] `reasoning_effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
 * [x] `reasoning`
-  * [x] `effort` (`"high"`, `"medium"`, `"low"`, `"none"`)
+  * [x] `effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
 * [ ] `tool_choice`
 * [ ] `logit_bias`
 * [ ] `user`

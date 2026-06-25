@@ -18,7 +18,7 @@ Use this capability to audit model steps, animate the model *thinking* in a UI, 
 
 ## Enable thinking in API calls
 
-Set the `think` field on chat or generate requests. Most models accept booleans (`true`/`false`).
+Set the `think` field on chat or generate requests. Most models accept booleans (`true`/`false`) or levels (`low`, `medium`, `high`, `max`), where `max` requests the highest thinking level.
 
 GPT-OSS instead expects one of `low`, `medium`, or `high` to tune the trace length.
 

@@ -180,10 +180,12 @@ components:
                 - high
                 - medium
                 - low
+                - max
           description: >-
             When true, returns separate thinking output in addition to content.
-            Can be a boolean (true/false) or a string ("high", "medium", "low")
-            for supported models.
+            Can be a boolean (true/false) or a string ("high", "medium", "low",
+            "max") for supported models, with "max" requesting the highest
+            thinking level.
         raw:
           type: boolean
           description: >-
