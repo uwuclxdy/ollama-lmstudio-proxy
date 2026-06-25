@@ -137,6 +137,31 @@ fn top_level_params_think_string_passes_through() {
 }
 
 #[test]
+fn top_level_params_think_max_clamps_to_high() {
+    // Ollama's `max` (highest thinking level) has no LM Studio equivalent — the
+    // backend rejects `max`, so it clamps to the top effort tier `high`.
+    let think_val = json!("max");
+    let top = TopLevelParams {
+        think: Some(&think_val),
+        logprobs: None,
+        top_logprobs: None,
+        model_is_thinking: false,
+    };
+    let request = build_lm_studio_request(
+        "mymodel",
+        LMStudioRequestType::Completion {
+            prompt: std::borrow::Cow::Borrowed("hello"),
+            stream: false,
+        },
+        None,
+        None,
+        None,
+        Some(&top),
+    );
+    assert_eq!(request.get("reasoning"), Some(&json!("high")));
+}
+
+#[test]
 fn top_level_params_absent_think_emits_no_reasoning() {
     // think absent + non-thinking model → no reasoning field at all.
     let top = TopLevelParams {

@@ -38,14 +38,18 @@ pub fn map_ollama_to_lmstudio_params(
 
 /// Normalise an Ollama `think` value to LM Studio's `reasoning` setting.
 ///
-/// LM Studio accepts: off | low | medium | high | on. Ollama/OpenAI use `"none"`
-/// for disabled, which we map to `"off"`. Bools collapse to `"on"`/`"off"`; any
-/// other string passes through; unexpected types are forwarded as-is.
+/// LM Studio accepts: off | low | medium | high | on — no `max`. Ollama/OpenAI
+/// use `"none"` for disabled (→ `"off"`) and `"max"` for the highest thinking
+/// level, which we clamp to LM Studio's top effort tier `"high"` (a bare `"max"`
+/// is rejected by the backend with an unsupported-reasoning-setting error).
+/// Bools collapse to `"on"`/`"off"`; any other string passes through; unexpected
+/// types are forwarded as-is.
 pub fn normalize_reasoning(think_val: &Value) -> Value {
     match think_val {
         Value::Bool(true) => json!("on"),
         Value::Bool(false) => json!("off"),
         Value::String(s) if s.eq_ignore_ascii_case("none") => json!("off"),
+        Value::String(s) if s.eq_ignore_ascii_case("max") => json!("high"),
         Value::String(s) => json!(s),
         other => {
             log::debug!("think: unexpected value type {:?}, forwarding as-is", other);

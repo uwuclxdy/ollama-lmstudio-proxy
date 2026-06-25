@@ -130,6 +130,10 @@ fn request_normalizes_reasoning_levels() {
 
     let high = build(&messages, None, Some(&json!("high")));
     assert_eq!(high["reasoning"], json!("high"));
+
+    // Ollama's `max` has no LM Studio equivalent; it clamps to the top tier.
+    let max = build(&messages, None, Some(&json!("max")));
+    assert_eq!(max["reasoning"], json!("high"));
 }
 
 #[test]
