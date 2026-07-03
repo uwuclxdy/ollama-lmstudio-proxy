@@ -8,7 +8,7 @@ VSCode Copilot, Claude Code, and any other Ollama client talk to this proxy.
 It translates their requests and hands them to LM Studio.
 
 [![Release](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/uwuclxdy/ollama-lmstudio-proxy/actions/workflows/release.yml)
-[![License: MIT](https://shields.uwuclxdy.dev/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT OR Apache-2.0](https://shields.uwuclxdy.dev/badge/license-MIT%20%7C%20Apache--2.0-green.svg)](#-license)
 [![Crates.io](https://shields.uwuclxdy.dev/crates/v/ollama-lmstudio-proxy?color=orange)](https://crates.io/crates/ollama-lmstudio-proxy)
 [![Downloads](https://shields.uwuclxdy.dev/crates/d/ollama-lmstudio-proxy?color=blue)](https://crates.io/crates/ollama-lmstudio-proxy)
 
@@ -158,4 +158,7 @@ requests are welcome.
 
 ## 📄 License
 
-[MIT](LICENSE)
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
+your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in this work shall be dual licensed as
+above, without any additional terms or conditions.
