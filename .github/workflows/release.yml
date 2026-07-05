@@ -10,7 +10,7 @@ env:
 
 jobs:
   # Release page exists the moment the tag lands; notes are NOT auto-generated
-  # (the release script writes them), assets attach when the builds finish.
+  # (the release script writes them), assets attach as each native build finishes.
   create-release:
     name: Create release
     runs-on: ubuntu-latest
@@ -23,7 +23,13 @@ jobs:
 
   build:
     name: Build ${{ matrix.artifact }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -32,11 +38,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: ollama-lmstudio-proxy-linux-x64
             binary: ollama-lmstudio-proxy
-          - os: ubuntu-latest
-            target: x86_64-pc-windows-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
             artifact: ollama-lmstudio-proxy-windows-x64.exe
             binary: ollama-lmstudio-proxy.exe
-            apt-packages: mingw-w64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: ollama-lmstudio-proxy-macos-arm64
@@ -50,17 +55,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install apt packages
-        if: matrix.apt-packages != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.apt-packages }}
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Stage artifact
-        shell: bash
         run: |
           mkdir -p release
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "release/${{ matrix.artifact }}"
@@ -68,31 +68,38 @@ jobs:
             chmod +x "release/${{ matrix.artifact }}"
           fi
 
-      - name: Upload artifact
+      - name: Upload to release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release/${{ matrix.artifact }}
+
+      - name: Upload artifact for checksum job
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: release/${{ matrix.artifact }}
           if-no-files-found: error
 
-  release:
-    name: Publish release
-    needs: [build, create-release]
+  checksums:
+    name: Checksums
+    needs: [build]
+    # Run even if one build leg failed so the sums file always matches exactly
+    # what shipped in a partial release.
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: release
+          path: artifacts
           merge-multiple: true
-
-      - name: Create Release
+      - name: Generate sha256sums.txt
+        run: |
+          cd artifacts
+          sha256sum ollama-lmstudio-proxy-* > ../sha256sums.txt
+      - name: Upload sha256sums.txt to release
         uses: softprops/action-gh-release@v3
         with:
-          files: release/*
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: sha256sums.txt
