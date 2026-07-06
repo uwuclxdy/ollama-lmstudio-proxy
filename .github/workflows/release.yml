@@ -1,22 +1,31 @@
-name: Release
+name: release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
+
+permissions:
+  contents: write      # softprops/action-gh-release creates the release
+  id-token: write      # GitHub OIDC — keyless build-provenance attestation (optional)
+  attestations: write  # actions/attest-build-provenance (optional)
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Release page exists the moment the tag lands; notes are NOT auto-generated
-  # (the release script writes them), assets attach as each native build finishes.
   create-release:
     name: Create release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - name: Validate tag is semver
+        # Tightens the `v*` trigger to strict vX.Y.Z — a malformed tag otherwise
+        # mints a broken Release page. Pre-release suffixes (`v1.2.3-rc1`) need
+        # the regex relaxed.
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '${GITHUB_REF_NAME}' is not vX.Y.Z"; exit 1
+          fi
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: false
@@ -25,11 +34,9 @@ jobs:
     name: Build ${{ matrix.artifact }}
     needs: create-release
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
     defaults:
       run:
-        shell: bash
+        shell: bash  # windows-latest ships Git Bash; keeps cp + forward-slash paths uniform across OSes
     strategy:
       fail-fast: false
       matrix:
@@ -46,20 +53,14 @@ jobs:
             target: aarch64-apple-darwin
             artifact: ollama-lmstudio-proxy-macos-arm64
             binary: ollama-lmstudio-proxy
-
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
       - uses: Swatinem/rust-cache@v2
-
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-
       - name: Stage artifact
         run: |
           mkdir -p release
@@ -67,12 +68,14 @@ jobs:
           if [ "${{ runner.os }}" != "Windows" ] && [[ "${{ matrix.artifact }}" != *.exe ]]; then
             chmod +x "release/${{ matrix.artifact }}"
           fi
-
       - name: Upload to release
         uses: softprops/action-gh-release@v3
         with:
           files: release/${{ matrix.artifact }}
-
+      - name: Attest build provenance   # optional supply-chain: keyless SLSA provenance for the asset
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/${{ matrix.artifact }}
       - name: Upload artifact for checksum job
         uses: actions/upload-artifact@v7
         with:
@@ -83,12 +86,10 @@ jobs:
   checksums:
     name: Checksums
     needs: [build]
-    # Run even if one build leg failed so the sums file always matches exactly
-    # what shipped in a partial release.
+    # Run even when a build leg fails so the binaries that DID ship always have a
+    # matching sums file covering exactly what was published.
     if: always()
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
@@ -96,6 +97,8 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Generate sha256sums.txt
+        # Glob whatever was actually built so a partial release still produces a
+        # sums file matching exactly what shipped.
         run: |
           cd artifacts
           sha256sum ollama-lmstudio-proxy-* > ../sha256sums.txt

@@ -3,7 +3,15 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - wiki/**
+      - docs/**
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - wiki/**
+      - docs/**
 
 # Least-privilege default: read-only token. A job that needs more (e.g. a docker
 # publish job) opts back up with its own `permissions:` block.
@@ -22,6 +30,13 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_INCREMENTAL: "0"  # incremental caching is dead weight in CI
+  # CI checks compile at release opt-level but WITHOUT the shipped binary's LTO:
+  # LTO + codegen-units=1 change nothing for clippy/test and roughly double the
+  # compile. release.yml is a separate workflow, so the shipped binary keeps full
+  # LTO; this override only touches CI's throwaway build.
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
 jobs:
   fmt:
@@ -34,8 +49,16 @@ jobs:
       - name: fmt --check
         run: cargo fmt --all -- --check
 
-  clippy:
-    name: ${{ matrix.os }} / clippy
+  # clippy → test → release build as sequential steps in ONE job so the dep
+  # compile happens once per OS: clippy builds deps + lints, test (nextest) reuses
+  # target/, the release binary falls out of it, then uploads as a 1-day artifact.
+  # Compile is release opt-level minus LTO (env block drops the LTO tax for CI).
+  # mold self-gates on linux. Trade: a clippy failure aborts before test/build, so
+  # fix clippy first.
+  # Native ×3 matrix: release.yml ships linux + macos + windows binaries, so check
+  # runs on each native OS to catch platform-specific behavior in the release build.
+  check:
+    name: check / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -46,23 +69,43 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # mold is the fast linker on linux; self-gates so a matrix mac/windows leg
+      # falls back to the platform default. Runs before rust-cache so RUSTFLAGS is
+      # part of the cache key.
+      - name: fast linker (mold on linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y mold
+          echo "RUSTFLAGS=${RUSTFLAGS} -C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - name: clippy (-D warnings)
         run: cargo clippy --all-targets --all-features --release -- -D warnings
-
-  test:
-    name: ${{ matrix.os }} / stable
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: test
-        run: cargo test --release --all-targets --all-features
+        run: cargo nextest run --release --all-targets --all-features
+      # nextest can't run doctests, so cover them with cargo test. Self-gates on
+      # a doctest target so a bin-only crate (no lib) skips instead of erroring
+      # with "no library targets found". shell: bash so the linux/mac/windows
+      # matrix legs all get grep (windows runners ship Git Bash).
+      - name: doctests
+        shell: bash
+        run: |
+          if cargo metadata --no-deps --format-version 1 | grep -q '"doctest":true'; then
+            cargo test --release --doc --all-features
+          else
+            echo "no doctest targets; skipping"
+          fi
+      - name: build release binary
+        run: cargo build --release
+      - name: upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ollama-lmstudio-proxy-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            target/release/ollama-lmstudio-proxy
+            target/release/ollama-lmstudio-proxy.exe
 
   deny:
     runs-on: ubuntu-latest
