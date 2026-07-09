@@ -21,8 +21,8 @@
 # Anything genuinely new added upstream auto-flows into future/ so it
 # surfaces for review on the next refresh.
 #
-# Local-only files under api-docs/ (e.g. lmstudio_ollama_openai.md,
-# lmstudio_vs_ollama.md) are never touched.
+# Any hand-authored file placed under api-docs/ outside those four trees
+# is never touched.
 #
 # Re-run safely: only the mirrored trees are wiped and rebuilt.
 
