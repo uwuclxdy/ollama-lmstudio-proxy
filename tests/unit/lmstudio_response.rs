@@ -42,7 +42,10 @@ fn tool_calls_arguments_string_becomes_object() {
     assert!(first.get("id").is_none(), "id should be stripped");
     assert!(first.get("type").is_none(), "type should be stripped");
     let function = first.get("function").unwrap();
-    assert_eq!(function.get("index"), Some(&json!(0)));
+    assert!(
+        function.get("index").is_none(),
+        "index should be stripped (not in Ollama's ToolCall schema)"
+    );
     let args = function.get("arguments").unwrap();
     assert!(
         args.is_object(),
@@ -90,7 +93,10 @@ fn tool_calls_end_to_end_in_chat_response() {
     let tc = msg.get("tool_calls").unwrap().as_array().unwrap();
     assert_eq!(tc.len(), 1);
     let function = tc[0].get("function").unwrap();
-    assert_eq!(function.get("index"), Some(&json!(0)));
+    assert!(
+        function.get("index").is_none(),
+        "index should be stripped (not in Ollama's ToolCall schema)"
+    );
     let args = function.get("arguments").unwrap();
     assert!(args.is_object(), "expected object, got {:?}", args);
     assert_eq!(args.get("x").and_then(|v| v.as_i64()), Some(1));

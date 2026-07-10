@@ -11,9 +11,11 @@ pub struct ChunkProcessingState {
     /// Accumulated tool_calls fragments across SSE deltas.
     ///
     /// OpenAI streams tool calls in pieces (name in one delta, arguments spread
-    /// across several more). Ollama clients expect ONE chunk containing the
-    /// complete `tool_calls` array once the assistant message is done. We merge
-    /// fragments by OpenAI call index before converting them to Ollama shape.
+    /// across several more). Real Ollama emits each call exactly once, complete,
+    /// in a `done:false` chunk — accumulating clients append `tool_calls` from
+    /// every chunk, so surfacing raw fragments or repeating the merged set in the
+    /// final chunk makes them execute duplicates. We merge fragments by OpenAI
+    /// call index and emit the full array once, right before the final chunk.
     accumulated_tool_calls: BTreeMap<u64, Value>,
 }
 
@@ -55,11 +57,6 @@ impl ChunkProcessingState {
 pub struct ChoiceDeltaPayload {
     pub content: String,
     pub thinking: String,
-    /// Partial tool_calls fragment from THIS delta only, in Ollama shape, for
-    /// emission as an intermediate `done:false` chunk. The accumulator in
-    /// `ChunkProcessingState` independently merges fragments for the final
-    /// `done:true` chunk — this field does not consume that state.
-    pub tool_calls_delta: Option<Value>,
 }
 
 fn tool_call_index(tool_call: &Value, position: usize) -> u64 {
@@ -154,7 +151,6 @@ pub fn process_choice_delta(
 
     let mut content = String::new();
     let mut thinking = String::new();
-    let mut tool_calls_delta: Option<Value> = None;
 
     if let Some(delta) = choice.get("delta") {
         if let Some(content_value) = delta.get("content") {
@@ -171,11 +167,11 @@ pub fn process_choice_delta(
         if let Some(new_tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array())
             && !new_tool_calls.is_empty()
         {
-            // Accumulate into state for the final done chunk, AND surface this
-            // delta's fragment to the caller for an intermediate chunk so
-            // clients see progressive tool_call data (per ChatStreamEvent spec).
+            // Fragments only accumulate here; the merged calls are emitted once
+            // by the stream driver right before the final chunk. Surfacing raw
+            // fragments (empty names, partial args) makes accumulating Ollama
+            // clients execute duplicates.
             state.accumulate_tool_calls(new_tool_calls);
-            tool_calls_delta = Some(convert_tool_calls_to_ollama(new_tool_calls));
         }
     }
 
@@ -190,14 +186,10 @@ pub fn process_choice_delta(
         }
     }
 
-    if content.is_empty() && thinking.is_empty() && tool_calls_delta.is_none() {
+    if content.is_empty() && thinking.is_empty() {
         None
     } else {
-        Some(ChoiceDeltaPayload {
-            content,
-            thinking,
-            tool_calls_delta,
-        })
+        Some(ChoiceDeltaPayload { content, thinking })
     }
 }
 
@@ -317,32 +309,21 @@ pub fn create_cancellation_chunk(
     model_ollama_name: &str,
     duration: Duration,
     tokens_generated_estimate: u64,
-    tool_calls: Option<Value>,
     is_chat_endpoint: bool,
 ) -> Value {
     // Ollama's spec only documents `done_reason: stop | length`; "cancelled" is not a value
     // real clients expect. Leave content empty and omit `done_reason` rather than fabricating one.
+    // Buffered tool-call fragments are dropped: at cancel time they may be
+    // half-assembled (empty name, truncated args) and emitting those is worse
+    // than emitting nothing.
     let timing = TimingInfo::from_stream_chunks(
         duration,
         tokens_generated_estimate,
         Some(tokens_generated_estimate),
     );
 
-    // tool_calls are a chat-only concept. Drop them defensively on the generate path.
-    let tool_calls_for_chunk = if is_chat_endpoint {
-        tool_calls.as_ref()
-    } else {
-        None
-    };
-
-    let mut chunk = create_ollama_streaming_chunk(
-        model_ollama_name,
-        "",
-        is_chat_endpoint,
-        true,
-        tool_calls_for_chunk,
-        "",
-    );
+    let mut chunk =
+        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
@@ -367,9 +348,6 @@ pub struct FinalChunkParams<'a> {
     pub chunk_count: u64,
     pub is_chat: bool,
     pub done_reason: Option<&'a str>,
-    /// Accumulated tool_calls to emit in this final chunk.
-    /// `None` when no tool calls were seen in the stream.
-    pub tool_calls: Option<Value>,
 }
 
 pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
@@ -378,14 +356,10 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     // on the streaming path. Wall-clock heuristics are the only option until upstream adds it.
     let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
 
-    let mut chunk = create_ollama_streaming_chunk(
-        params.model_name,
-        "",
-        params.is_chat,
-        true,
-        params.tool_calls.as_ref(),
-        "",
-    );
+    // Never carries tool_calls: real Ollama's final done:true chunk is empty and
+    // accumulating clients would double-execute anything repeated here.
+    let mut chunk =
+        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None, "");
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         if let Some(reason) = params.done_reason.and_then(map_done_reason) {

@@ -95,7 +95,6 @@ pub async fn handle_streaming_response(
                         &model_clone_for_task,
                         start_time.elapsed(),
                         chunk_count,
-                        chunk_state.take_tool_calls(),
                         is_chat_endpoint,
                     );
                     send_chunk_and_close_channel(&tx, cancellation_chunk).await;
@@ -134,22 +133,20 @@ pub async fn handle_streaming_response(
                                             Ok(lm_studio_json_chunk) => {
                                                 let mut content_to_send = String::new();
                                                 let mut thinking_to_send = String::new();
-                                                let mut tool_calls_to_send: Option<Value> = None;
 
                                                 if let Some(choice) = extract_first_choice(&lm_studio_json_chunk)
                                                     && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                                         content_to_send = delta_payload.content;
                                                         thinking_to_send = delta_payload.thinking;
-                                                        tool_calls_to_send = delta_payload.tool_calls_delta;
                                                     }
 
-                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
+                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
                                                     let ollama_chunk = create_ollama_streaming_chunk(
                                                         &model_clone_for_task,
                                                         &content_to_send,
                                                         is_chat_endpoint,
                                                         false,
-                                                        tool_calls_to_send.as_ref(),
+                                                        None,
                                                         &thinking_to_send,
                                                     );
                                                     chunk_count += 1;
@@ -165,22 +162,20 @@ pub async fn handle_streaming_response(
                                                         log::info!("Successfully recovered chunk data");
                                                         let mut content_to_send = String::new();
                                                         let mut thinking_to_send = String::new();
-                                                        let mut tool_calls_to_send: Option<Value> = None;
 
                                                         if let Some(choice) = extract_first_choice(&recovered_json)
                                                             && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                                                 content_to_send = delta_payload.content;
                                                                 thinking_to_send = delta_payload.thinking;
-                                                                tool_calls_to_send = delta_payload.tool_calls_delta;
                                                             }
 
-                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
+                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
                                                             let ollama_chunk = create_ollama_streaming_chunk(
                                                                 &model_clone_for_task,
                                                                 &content_to_send,
                                                                 is_chat_endpoint,
                                                                 false,
-                                                                tool_calls_to_send.as_ref(),
+                                                                None,
                                                                 &thinking_to_send,
                                                             );
                                                             chunk_count += 1;
@@ -228,22 +223,20 @@ pub async fn handle_streaming_response(
                                     log::info!("Successfully recovered data from remaining buffer");
                                     let mut content_to_send = String::new();
                                     let mut thinking_to_send = String::new();
-                                    let mut tool_calls_to_send: Option<Value> = None;
 
                                     if let Some(choice) = extract_first_choice(&recovered_json)
                                         && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
                                             content_to_send = delta_payload.content;
                                             thinking_to_send = delta_payload.thinking;
-                                            tool_calls_to_send = delta_payload.tool_calls_delta;
                                         }
 
-                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() || tool_calls_to_send.is_some() {
+                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
                                         let ollama_chunk = create_ollama_streaming_chunk(
                                             &model_clone_for_task,
                                             &content_to_send,
                                             is_chat_endpoint,
                                             false,
-                                            tool_calls_to_send.as_ref(),
+                                            None,
                                             &thinking_to_send,
                                         );
                                         chunk_count += 1;
@@ -265,14 +258,26 @@ pub async fn handle_streaming_response(
         };
 
         if stream_result.is_ok() && !token_clone.is_cancelled() {
-            let accumulated_tool_calls = chunk_state.take_tool_calls();
+            // Assembled tool calls go out once, in their own done:false chunk;
+            // the final chunk stays tool-free (matching real Ollama).
+            if is_chat_endpoint && let Some(tool_calls) = chunk_state.take_tool_calls() {
+                let tool_chunk = create_ollama_streaming_chunk(
+                    &model_clone_for_task,
+                    "",
+                    true,
+                    false,
+                    Some(&tool_calls),
+                    "",
+                );
+                chunk_count += 1;
+                send_chunk(&tx, &tool_chunk).await;
+            }
             let final_chunk = create_final_chunk(FinalChunkParams {
                 model_name: &model_clone_for_task,
                 duration: start_time.elapsed(),
                 chunk_count,
                 is_chat: is_chat_endpoint,
                 done_reason: chunk_state.finish_reason(),
-                tool_calls: accumulated_tool_calls,
             });
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
@@ -333,7 +338,6 @@ pub async fn handle_native_streaming_response(
                         &model_clone_for_task,
                         start_time.elapsed(),
                         chunk_count,
-                        chunk_state.take_tool_calls(),
                         true,
                     );
                     send_chunk_and_close_channel(&tx, cancellation_chunk).await;
@@ -370,10 +374,7 @@ pub async fn handle_native_streaming_response(
 
                                     match map_native_event(&event_type, &data, &mut chunk_state) {
                                         NativeEvent::Delta(payload) => {
-                                            if payload.content.is_empty()
-                                                && payload.thinking.is_empty()
-                                                && payload.tool_calls_delta.is_none()
-                                            {
+                                            if payload.content.is_empty() && payload.thinking.is_empty() {
                                                 continue;
                                             }
                                             let ollama_chunk = create_ollama_streaming_chunk(
@@ -381,7 +382,7 @@ pub async fn handle_native_streaming_response(
                                                 &payload.content,
                                                 true,
                                                 false,
-                                                payload.tool_calls_delta.as_ref(),
+                                                None,
                                                 &payload.thinking,
                                             );
                                             chunk_count += 1;
@@ -428,13 +429,25 @@ pub async fn handle_native_streaming_response(
         };
 
         if stream_result.is_ok() && !token_clone.is_cancelled() {
-            let accumulated_tool_calls = chunk_state.take_tool_calls();
+            // Same contract as the v0 path: assembled tool calls in one
+            // done:false chunk, final chunk tool-free.
+            if let Some(tool_calls) = chunk_state.take_tool_calls() {
+                let tool_chunk = create_ollama_streaming_chunk(
+                    &model_clone_for_task,
+                    "",
+                    true,
+                    false,
+                    Some(&tool_calls),
+                    "",
+                );
+                chunk_count += 1;
+                send_chunk(&tx, &tool_chunk).await;
+            }
             let final_chunk = build_native_final_chunk(
                 &model_clone_for_task,
                 chat_end.as_ref(),
                 start_time,
                 chunk_count,
-                accumulated_tool_calls,
             );
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
@@ -463,7 +476,6 @@ fn build_native_final_chunk(
     chat_end: Option<&NativeChatEnd>,
     start_time: Instant,
     chunk_count: u64,
-    tool_calls: Option<Value>,
 ) -> Value {
     let Some(end) = chat_end else {
         return create_final_chunk(FinalChunkParams {
@@ -472,14 +484,12 @@ fn build_native_final_chunk(
             chunk_count,
             is_chat: true,
             done_reason: None,
-            tool_calls,
         });
     };
 
     let timing = TimingInfo::from_native_stats(&end.result, start_time, 10, chunk_count.max(1));
 
-    let mut chunk =
-        create_ollama_streaming_chunk(model_name, "", true, true, tool_calls.as_ref(), "");
+    let mut chunk = create_ollama_streaming_chunk(model_name, "", true, true, None, "");
 
     if let Some(obj) = chunk.as_object_mut() {
         obj.insert("done_reason".to_string(), json!(end.done_reason));

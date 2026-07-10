@@ -543,21 +543,47 @@ async fn chat_stream_tool_calls_present_in_output() {
         .expect("POST /api/chat");
 
     let chunks = collect_ndjson(resp).await;
-    // The final done:true chunk carries the fully-accumulated tool_calls.
+    // Ollama contract: each tool call appears exactly once, complete, in a
+    // done:false chunk; the final done:true chunk carries no tool_calls.
+    let tool_chunks: Vec<&Value> = chunks
+        .iter()
+        .filter(|c| {
+            c.get("message")
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(
+        tool_chunks.len(),
+        1,
+        "tool_calls must appear in exactly one chunk: {chunks:#?}"
+    );
+    let carrier = tool_chunks[0];
+    assert_eq!(
+        carrier.get("done"),
+        Some(&json!(false)),
+        "tool_calls carrier must be done:false: {carrier}"
+    );
+    let tool_calls = carrier["message"]["tool_calls"].as_array().expect("array");
+    assert_eq!(tool_calls.len(), 1);
+    let function = &tool_calls[0]["function"];
+    assert_eq!(function["name"], "get_weather");
+    assert_eq!(function["arguments"], json!({"city": "London"}));
+    assert!(
+        function.get("index").is_none(),
+        "function must not carry an index key: {function}"
+    );
+
     let final_chunk = chunks
         .iter()
         .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
         .expect("expected a final done:true chunk");
-    let tool_calls = final_chunk
-        .get("message")
-        .and_then(|message| message.get("tool_calls"))
-        .and_then(|tool_calls| tool_calls.as_array())
-        .expect("expected tool_calls in final chunk");
-    assert_eq!(tool_calls.len(), 1);
-    let function = &tool_calls[0]["function"];
-    assert_eq!(function["index"], 0);
-    assert_eq!(function["name"], "get_weather");
-    assert_eq!(function["arguments"], json!({"city": "London"}));
+    assert!(
+        final_chunk["message"].get("tool_calls").is_none(),
+        "final chunk must not repeat tool_calls: {final_chunk}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -615,13 +641,24 @@ async fn chat_stream_translates_tool_calls_finish_reason_to_stop() {
         "tool_calls finish_reason must translate to Ollama stop: {final_chunk}"
     );
 
-    let tool_calls = final_chunk
-        .get("message")
-        .and_then(|message| message.get("tool_calls"))
-        .and_then(|tc| tc.as_array())
-        .expect("expected tool_calls in final chunk");
+    let carrier = chunks
+        .iter()
+        .find(|c| {
+            c.get("message")
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+        })
+        .expect("expected a done:false chunk carrying tool_calls");
+    assert_eq!(carrier.get("done"), Some(&json!(false)));
+    let tool_calls = carrier["message"]["tool_calls"].as_array().expect("array");
     assert_eq!(tool_calls.len(), 1);
     assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+    assert!(
+        final_chunk["message"].get("tool_calls").is_none(),
+        "final chunk must not repeat tool_calls: {final_chunk}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1457,11 +1494,11 @@ async fn generate_stream_pre_stream_400_returns_error_not_stream() {
 }
 
 // ---------------------------------------------------------------------------
-// T7. Tool-call-only deltas produce intermediate NDJSON lines
+// T7. Tool-call fragments are assembled, never surfaced raw
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn chat_stream_tool_calls_emit_intermediate_chunks() {
+async fn chat_stream_tool_call_fragments_never_surface_raw() {
     let p = spawn_proxy().await;
 
     let body = sse_body(&[
@@ -1504,31 +1541,117 @@ async fn chat_stream_tool_calls_emit_intermediate_chunks() {
     let chunks = collect_ndjson(resp).await;
     assert!(!chunks.is_empty(), "expected at least one chunk");
 
-    // The final chunk is done:true and carries the fully-accumulated tool_calls.
-    let final_chunk = chunks
+    // Fragments (empty name / partial args) must never reach the client; the
+    // assembled call appears exactly once.
+    let tool_chunks: Vec<&Value> = chunks
         .iter()
-        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
-        .expect("expected a final done:true chunk");
-    let final_calls = final_chunk
-        .get("message")
-        .and_then(|m| m.get("tool_calls"))
-        .and_then(|v| v.as_array())
-        .expect("final chunk must carry the accumulated tool_calls");
-    assert_eq!(final_calls.len(), 1);
-    assert_eq!(final_calls[0]["function"]["name"], json!("f"));
-    assert_eq!(final_calls[0]["function"]["arguments"], json!({"k": 1}));
-
-    // At least one intermediate chunk (done:false) must carry partial tool_calls.
-    let intermediate_with_tools = chunks.iter().any(|c| {
-        c.get("done").and_then(|d| d.as_bool()) == Some(false)
-            && c.get("message")
+        .filter(|c| {
+            c.get("message")
                 .and_then(|m| m.get("tool_calls"))
                 .and_then(|v| v.as_array())
                 .map(|a| !a.is_empty())
                 .unwrap_or(false)
-    });
+        })
+        .collect();
+    assert_eq!(
+        tool_chunks.len(),
+        1,
+        "tool_calls must appear in exactly one chunk: {chunks:#?}"
+    );
+    let calls = tool_chunks[0]["message"]["tool_calls"]
+        .as_array()
+        .expect("array");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["function"]["name"], json!("f"));
+    assert_eq!(calls[0]["function"]["arguments"], json!({"k": 1}));
+
+    let final_chunk = chunks
+        .iter()
+        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
+        .expect("expected a final done:true chunk");
     assert!(
-        intermediate_with_tools,
-        "expected at least one intermediate (done:false) chunk with tool_calls; got {chunks:#?}"
+        final_chunk["message"].get("tool_calls").is_none(),
+        "final chunk must not repeat tool_calls: {final_chunk}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T7b. Two parallel same-name calls: both complete, in order, emitted once
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_stream_parallel_same_name_tool_calls_emitted_once_in_order() {
+    let p = spawn_proxy().await;
+
+    let body = sse_body(&[
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"city\":\"London\"}"}}]},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "weather in Paris and London?"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    let chunks = collect_ndjson(resp).await;
+    let tool_chunks: Vec<&Value> = chunks
+        .iter()
+        .filter(|c| {
+            c.get("message")
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(
+        tool_chunks.len(),
+        1,
+        "both calls must arrive in exactly one chunk: {chunks:#?}"
+    );
+    let calls = tool_chunks[0]["message"]["tool_calls"]
+        .as_array()
+        .expect("array");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["function"]["name"], "get_weather");
+    assert_eq!(calls[0]["function"]["arguments"], json!({"city": "Paris"}));
+    assert_eq!(calls[1]["function"]["name"], "get_weather");
+    assert_eq!(calls[1]["function"]["arguments"], json!({"city": "London"}));
+
+    let final_chunk = chunks
+        .iter()
+        .find(|c| c.get("done").and_then(|d| d.as_bool()) == Some(true))
+        .expect("expected a final done:true chunk");
+    assert!(
+        final_chunk["message"].get("tool_calls").is_none(),
+        "final chunk must not repeat tool_calls: {final_chunk}"
     );
 }

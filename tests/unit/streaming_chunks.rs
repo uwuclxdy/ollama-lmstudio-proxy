@@ -98,7 +98,6 @@ fn delta_string_content_captured() {
     let p = process_choice_delta(&choice, &mut state).unwrap();
     assert_eq!(p.content, "hello");
     assert!(p.thinking.is_empty());
-    assert!(p.tool_calls_delta.is_none());
 }
 
 #[test]
@@ -149,8 +148,9 @@ fn delta_object_content_recurses_into_nested_content() {
 
 #[test]
 fn delta_tool_calls_accumulated_into_state() {
-    // A delta with only tool_calls emits an intermediate payload carrying the
-    // partial tool_calls AND accumulates them into state for the final chunk.
+    // A delta with only tool_calls produces NO intermediate payload (fragments
+    // never surface raw); it accumulates into state for the single pre-final
+    // emission.
     let choice = json!({
         "delta": {
             "tool_calls": [{
@@ -161,16 +161,12 @@ fn delta_tool_calls_accumulated_into_state() {
         }
     });
     let mut state = ChunkProcessingState::default();
-    let payload = process_choice_delta(&choice, &mut state)
-        .expect("tool_calls-only delta must emit an intermediate payload");
-    assert!(payload.content.is_empty());
-    assert!(payload.thinking.is_empty());
     assert!(
-        payload.tool_calls_delta.is_some(),
-        "intermediate payload must carry the partial tool_calls"
+        process_choice_delta(&choice, &mut state).is_none(),
+        "tool_calls-only delta must not emit an intermediate payload"
     );
 
-    // Accumulated tool_calls should still be available for the final done chunk.
+    // Accumulated tool_calls are available for the pre-final emission.
     let tc = state
         .take_tool_calls()
         .expect("state must hold accumulated tool_calls");
@@ -349,7 +345,7 @@ fn assert_six_timings(chunk: &Value) {
 
 #[test]
 fn cancellation_chunk_chat_has_empty_content() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, None, true);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -370,7 +366,7 @@ fn cancellation_chunk_chat_has_empty_content() {
 
 #[test]
 fn cancellation_chunk_generate_has_empty_response() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, None, false);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -387,7 +383,7 @@ fn cancellation_chunk_generate_has_empty_response() {
 
 #[test]
 fn cancellation_chunk_zero_tokens_still_empty_content() {
-    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, None, true);
+    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, true);
     let chat_content = chat
         .get("message")
         .and_then(|m| m.get("content"))
@@ -396,72 +392,30 @@ fn cancellation_chunk_zero_tokens_still_empty_content() {
     assert_eq!(chat_content, "");
     assert!(chat.get("done_reason").is_none());
 
-    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, None, false);
+    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, false);
     let generate_response = generate.get("response").and_then(|v| v.as_str()).unwrap();
     assert_eq!(generate_response, "");
     assert!(generate.get("done_reason").is_none());
 }
 
 #[test]
-fn cancellation_chunk_chat_embeds_buffered_tool_calls() {
-    // Mirror the success path: an interrupted stream that already buffered
-    // tool_calls must surface them on the final done chunk per the chat spec.
-    let mut state = ChunkProcessingState::default();
-    let delta = json!({
-        "delta": {
-            "tool_calls": [{
-                "index": 0,
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "get_temp", "arguments": "{\"city\":\"NYC\"}"}
-            }]
-        }
-    });
-    let _ = process_choice_delta(&delta, &mut state);
-    let buffered = state
-        .take_tool_calls()
-        .expect("delta must accumulate tool_calls");
-
-    let c = create_cancellation_chunk(
-        "m",
-        Duration::from_millis(50),
-        7,
-        Some(buffered.clone()),
-        true,
-    );
+fn cancellation_chunk_chat_never_carries_tool_calls() {
+    // Buffered fragments may be half-assembled at cancel time (empty name,
+    // truncated args); the cancellation chunk drops them.
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
     let msg = c
         .get("message")
         .expect("chat cancellation must carry a message");
-    let calls = msg
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .expect("buffered tool_calls must surface on cancellation");
-    assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0].get("function").unwrap().get("name").unwrap(),
-        "get_temp"
+    assert!(
+        msg.get("tool_calls").is_none(),
+        "cancellation must not surface tool_calls"
     );
     assert_six_timings(&c);
 }
 
 #[test]
-fn cancellation_chunk_chat_omits_tool_calls_when_none() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, None, true);
-    let msg = c.get("message").unwrap();
-    assert!(
-        msg.get("tool_calls").is_none(),
-        "no buffered tool_calls means no tool_calls field on the message"
-    );
-}
-
-#[test]
 fn cancellation_chunk_generate_never_has_tool_calls() {
-    // Generate has no tool_calls semantically — defensively drop them even if
-    // a caller passes Some(..).
-    let tc = json!([{
-        "function": {"name": "x", "arguments": {"k": "v"}}
-    }]);
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, Some(tc), false);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
     assert!(c.get("message").is_none(), "generate has no message");
     assert!(
         c.get("tool_calls").is_none(),
@@ -481,7 +435,6 @@ fn final_chunk_chat_no_done_reason_omits_field_with_timings() {
         chunk_count: 4,
         is_chat: true,
         done_reason: None,
-        tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
@@ -501,7 +454,6 @@ fn final_chunk_chat_propagates_done_reason_length() {
         chunk_count: 1,
         is_chat: true,
         done_reason: Some("length"),
-        tool_calls: None,
     });
     assert_eq!(
         c.get("done_reason").and_then(|v| v.as_str()),
@@ -517,7 +469,6 @@ fn final_chunk_generate_omits_context_and_emits_timings() {
         chunk_count: 6,
         is_chat: false,
         done_reason: None,
-        tool_calls: None,
     });
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
@@ -540,7 +491,6 @@ fn final_chunk_generate_propagates_done_reason_length() {
         chunk_count: 1,
         is_chat: false,
         done_reason: Some("length"),
-        tool_calls: None,
     });
     assert_eq!(
         c.get("done_reason").and_then(|v| v.as_str()),
@@ -587,12 +537,11 @@ fn tool_calls_accumulated_across_three_deltas() {
 
     let mut state = ChunkProcessingState::default();
 
-    // Each tool_calls-only delta now produces an intermediate payload AND
-    // accumulates into state. The intermediate carries the per-delta fragment;
-    // the accumulator merges them for the final chunk.
-    assert!(process_choice_delta(&delta_name, &mut state).is_some());
-    assert!(process_choice_delta(&delta_args_part1, &mut state).is_some());
-    assert!(process_choice_delta(&delta_args_part2, &mut state).is_some());
+    // Tool_calls-only deltas produce no intermediate payload; the accumulator
+    // merges the fragments for the single pre-final emission.
+    assert!(process_choice_delta(&delta_name, &mut state).is_none());
+    assert!(process_choice_delta(&delta_args_part1, &mut state).is_none());
+    assert!(process_choice_delta(&delta_args_part2, &mut state).is_none());
 
     let tool_calls = state
         .take_tool_calls()
@@ -600,7 +549,10 @@ fn tool_calls_accumulated_across_three_deltas() {
     let arr = tool_calls.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     let function = arr[0].get("function").unwrap();
-    assert_eq!(function.get("index"), Some(&json!(0)));
+    assert!(
+        function.get("index").is_none(),
+        "emitted function must not carry an index key"
+    );
     assert_eq!(function.get("name"), Some(&json!("get_temperature")));
     assert_eq!(function.get("arguments"), Some(&json!({"city": "NYC"})));
 
@@ -650,74 +602,43 @@ fn concurrent_tool_call_fragments_are_ordered_by_index() {
     });
 
     let mut state = ChunkProcessingState::default();
-    assert!(process_choice_delta(&first_delta, &mut state).is_some());
-    assert!(process_choice_delta(&second_delta, &mut state).is_some());
+    assert!(process_choice_delta(&first_delta, &mut state).is_none());
+    assert!(process_choice_delta(&second_delta, &mut state).is_none());
 
     let tool_calls = state
         .take_tool_calls()
         .expect("accumulated tool_calls must be present");
     let calls = tool_calls.as_array().unwrap();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0]["function"]["index"], json!(0));
     assert_eq!(calls[0]["function"]["name"], json!("get_temperature"));
     assert_eq!(
         calls[0]["function"]["arguments"],
         json!({"city": "New York"})
     );
-    assert_eq!(calls[1]["function"]["index"], json!(1));
     assert_eq!(calls[1]["function"]["name"], json!("get_conditions"));
     assert_eq!(calls[1]["function"]["arguments"], json!({"city": "London"}));
 }
 
 #[test]
-fn tool_calls_in_final_chunk_when_provided() {
-    let tc = json!([{
-        "function": {"name": "get_temp", "arguments": {"city": "NYC"}}
-    }]);
-    let c = create_final_chunk(FinalChunkParams {
-        model_name: "m",
-        duration: Duration::from_millis(50),
-        chunk_count: 3,
-        is_chat: true,
-        done_reason: Some("tool_calls"),
-        tool_calls: Some(tc),
-    });
-    assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
-    let msg = c
-        .get("message")
-        .expect("message must be present in chat chunk");
-    let calls = msg
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .expect("tool_calls must be in the final chunk message");
-    assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0].get("function").unwrap().get("name").unwrap(),
-        "get_temp"
-    );
-}
-
-#[test]
-fn final_chunk_without_tool_calls_has_no_tool_calls_field() {
+fn final_chunk_never_carries_tool_calls() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(50),
         chunk_count: 2,
         is_chat: true,
         done_reason: None,
-        tool_calls: None,
     });
     let msg = c.get("message").unwrap();
     assert!(
         msg.get("tool_calls").is_none(),
-        "tool_calls must be absent when none were accumulated"
+        "final chunk must stay tool-free; assembled calls go out in their own done:false chunk"
     );
 }
 
 #[test]
 fn content_and_thinking_deltas_still_stream_mid_message() {
     // Ensure content and thinking chunks still emit immediately (per-delta),
-    // only tool_calls are deferred to the final chunk.
+    // only tool_calls are deferred to the single pre-final chunk.
     let choice_with_content = json!({ "delta": { "content": "some text" } });
     let choice_with_thinking = json!({ "delta": { "reasoning": "my thought" } });
     let mut state = ChunkProcessingState::default();
@@ -739,7 +660,7 @@ fn content_and_thinking_deltas_still_stream_mid_message() {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn process_choice_delta_emits_intermediate_chunk_for_tool_calls_only_delta() {
+fn process_choice_delta_returns_none_for_tool_calls_only_delta() {
     let choice = json!({
         "delta": {
             "tool_calls": [{
@@ -749,13 +670,13 @@ fn process_choice_delta_emits_intermediate_chunk_for_tool_calls_only_delta() {
         }
     });
     let mut state = ChunkProcessingState::default();
-    let payload = process_choice_delta(&choice, &mut state)
-        .expect("tool_calls-only delta must produce an intermediate payload");
-    assert!(payload.content.is_empty());
-    assert!(payload.thinking.is_empty());
-    let tc = payload
-        .tool_calls_delta
-        .expect("tool_calls_delta must be set");
+    assert!(
+        process_choice_delta(&choice, &mut state).is_none(),
+        "tool_calls-only delta must not surface an intermediate payload"
+    );
+    let tc = state
+        .take_tool_calls()
+        .expect("fragment must accumulate into state");
     let arr = tc.as_array().expect("tool_calls must be an array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["function"]["name"], json!("f"));
@@ -827,7 +748,6 @@ fn final_chunk_translates_tool_calls_to_stop() {
         chunk_count: 1,
         is_chat: true,
         done_reason: Some("tool_calls"),
-        tool_calls: None,
     });
     assert_eq!(
         c.get("done_reason").and_then(|v| v.as_str()),
@@ -844,7 +764,6 @@ fn final_chunk_omits_done_reason_for_unknown_value() {
         chunk_count: 1,
         is_chat: true,
         done_reason: Some("weird_value"),
-        tool_calls: None,
     });
     assert!(
         c.get("done_reason").is_none(),

@@ -21,7 +21,6 @@ fn reasoning_delta_maps_to_thinking() {
         NativeEvent::Delta(p) => {
             assert_eq!(p.thinking, "Need to");
             assert!(p.content.is_empty());
-            assert!(p.tool_calls_delta.is_none());
         }
         _ => panic!("expected Delta"),
     }
@@ -43,7 +42,7 @@ fn message_delta_maps_to_content() {
 }
 
 #[test]
-fn tool_call_arguments_accumulates_and_surfaces_delta() {
+fn tool_call_arguments_accumulates_without_surfacing_delta() {
     let data = json!({
         "type": "tool_call.arguments",
         "tool": "model_search",
@@ -53,22 +52,18 @@ fn tool_call_arguments_accumulates_and_surfaces_delta() {
     let mut state = ChunkProcessingState::default();
     let event = map_native_event("tool_call.arguments", &data, &mut state);
 
-    match event {
-        NativeEvent::Delta(p) => {
-            let delta = p.tool_calls_delta.expect("tool_calls_delta present");
-            let arr = delta.as_array().expect("array");
-            assert_eq!(arr[0]["function"]["name"], json!("model_search"));
-            assert_eq!(
-                arr[0]["function"]["arguments"],
-                json!({ "sort": "trendingScore", "limit": 1 })
-            );
-        }
-        _ => panic!("expected Delta"),
-    }
+    assert!(
+        matches!(event, NativeEvent::Ignore),
+        "tool-call fragments must not surface as client-visible deltas"
+    );
 
-    // The accumulator holds the merged call for the final chunk.
+    // The accumulator holds the merged call for the pre-final emission.
     let final_calls = state.take_tool_calls().expect("accumulated tool calls");
     assert_eq!(final_calls[0]["function"]["name"], json!("model_search"));
+    assert_eq!(
+        final_calls[0]["function"]["arguments"],
+        json!({ "sort": "trendingScore", "limit": 1 })
+    );
 }
 
 #[test]
@@ -80,8 +75,12 @@ fn tool_call_success_also_accumulates() {
         "output": "[{\"type\":\"text\",\"text\":\"...\"}]",
         "provider_info": { "type": "ephemeral_mcp", "server_label": "huggingface" }
     });
-    let (event, _) = map("tool_call.success", data);
-    assert!(matches!(event, NativeEvent::Delta(_)));
+    let (event, mut state) = map("tool_call.success", data);
+    assert!(matches!(event, NativeEvent::Ignore));
+    assert!(
+        state.take_tool_calls().is_some(),
+        "success event must accumulate the completed call"
+    );
 }
 
 #[test]

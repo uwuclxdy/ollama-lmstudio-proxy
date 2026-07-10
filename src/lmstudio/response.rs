@@ -503,18 +503,15 @@ pub fn extract_finish_reason(lm_response: &Value) -> Option<&str> {
 ///
 /// Ollama expects:
 /// ```json
-/// {"function": {"index": 0, "name": "fn", "arguments": {"k": "v"}}}
+/// {"function": {"name": "fn", "arguments": {"k": "v"}}}
 /// ```
-/// where `arguments` is a **JSON object** and the `id`/`type` wrapper fields are absent.
+/// where `arguments` is a **JSON object** and the `id`/`type`/`index` wrapper
+/// fields are absent (`api-docs/ollama/api/chat.md` ToolCall schema; parallel
+/// same-name calls correlate by array order, not index).
 pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
     let converted: Vec<Value> = tool_calls
         .iter()
-        .enumerate()
-        .map(|(position, tc)| {
-            let index = tc
-                .get("index")
-                .and_then(|index| index.as_u64())
-                .unwrap_or(position as u64);
+        .map(|tc| {
             let name = tc
                 .get("function")
                 .and_then(|f| f.get("name"))
@@ -537,7 +534,6 @@ pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
 
             json!({
                 "function": {
-                    "index": index,
                     "name": name,
                     "arguments": arguments
                 }

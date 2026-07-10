@@ -18,11 +18,12 @@ use crate::streaming::chunks::{ChoiceDeltaPayload, ChunkProcessingState};
 
 /// Outcome of mapping a single native SSE event.
 ///
-/// `Delta` carries content/thinking/tool-call fragments to emit as an
-/// intermediate Ollama chunk. `End` signals `chat.end` and hands the caller the
-/// final `result` block (for stats extraction). `Error` surfaces the native
-/// `error` payload so the caller can fail the stream. `Ignore` covers the
-/// boundary/progress events that produce no client-visible output.
+/// `Delta` carries content/thinking to emit as an intermediate Ollama chunk.
+/// `End` signals `chat.end` and hands the caller the final `result` block (for
+/// stats extraction). `Error` surfaces the native `error` payload so the caller
+/// can fail the stream. `Ignore` covers boundary/progress events and tool-call
+/// fragments (those accumulate into `state` for the stream driver's single
+/// pre-final emission).
 pub enum NativeEvent {
     Delta(ChoiceDeltaPayload),
     End(NativeChatEnd),
@@ -67,9 +68,9 @@ impl NativeStreamError {
 /// Map one native SSE event (`event_type` + parsed `data`) to a [`NativeEvent`].
 ///
 /// Tool-call argument/success events accumulate into `state` (reusing the
-/// OpenAI accumulator) and also surface this delta's fragment so progressive
-/// `tool_calls` reach the client. Boundary, progress and start/end-marker events
-/// return [`NativeEvent::Ignore`].
+/// OpenAI accumulator) without producing a client-visible delta; the stream
+/// driver emits the assembled calls once, before the final chunk. Boundary,
+/// progress and start/end-marker events return [`NativeEvent::Ignore`].
 pub fn map_native_event(
     event_type: &str,
     data: &Value,
@@ -85,7 +86,6 @@ pub fn map_native_event(
             NativeEvent::Delta(ChoiceDeltaPayload {
                 content: String::new(),
                 thinking,
-                tool_calls_delta: None,
             })
         }
         "message.delta" => {
@@ -97,24 +97,14 @@ pub fn map_native_event(
             NativeEvent::Delta(ChoiceDeltaPayload {
                 content,
                 thinking: String::new(),
-                tool_calls_delta: None,
             })
         }
         "tool_call.arguments" | "tool_call.success" => {
             // Reshape the native tool entry to the OpenAI-ish shape the
-            // accumulator expects, accumulate it for the final chunk, and
-            // surface this fragment as an intermediate delta.
+            // accumulator expects; emission happens once, pre-final.
             let openai_shaped = native_tool_call_to_openai(data);
-            let fragment = [openai_shaped];
-            state.accumulate_tool_calls(&fragment);
-            let tool_calls_delta = Some(crate::lmstudio::response::convert_tool_calls_to_ollama(
-                &fragment,
-            ));
-            NativeEvent::Delta(ChoiceDeltaPayload {
-                content: String::new(),
-                thinking: String::new(),
-                tool_calls_delta,
-            })
+            state.accumulate_tool_calls(&[openai_shaped]);
+            NativeEvent::Ignore
         }
         "error" => NativeEvent::Error(parse_native_error(data)),
         "chat.end" => NativeEvent::End(parse_chat_end(data)),
