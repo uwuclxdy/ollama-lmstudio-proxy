@@ -455,6 +455,48 @@ impl ModelInfo {
         base
     }
 
+    /// Maps a GGUF quantization name, as LM Studio reports it (`Q4_K_M`,
+    /// `IQ2_M`, ...), to llama.cpp's `general.file_type` (`llama_ftype`) enum.
+    /// Real Ollama derives this from the actual quant (e.g. `Q4_K_M` -> 15,
+    /// api-docs/ollama/api-reference/show-model-details.md:64,100); an
+    /// unrecognized or absent quant (`"unknown"`) returns `None` so the
+    /// caller omits the key rather than fabricate a value.
+    fn llama_file_type(quantization: &str) -> Option<u32> {
+        Some(match quantization.to_ascii_uppercase().as_str() {
+            "F32" => 0,
+            "F16" => 1,
+            "Q4_0" => 2,
+            "Q4_1" => 3,
+            "Q8_0" => 7,
+            "Q5_0" => 8,
+            "Q5_1" => 9,
+            "Q2_K" => 10,
+            "Q3_K_S" => 11,
+            "Q3_K_M" => 12,
+            "Q3_K_L" => 13,
+            "Q4_K_S" => 14,
+            "Q4_K_M" => 15,
+            "Q5_K_S" => 16,
+            "Q5_K_M" => 17,
+            "Q6_K" => 18,
+            "IQ2_XXS" => 19,
+            "IQ2_XS" => 20,
+            "Q2_K_S" => 21,
+            "IQ3_XS" => 22,
+            "IQ3_XXS" => 23,
+            "IQ1_S" => 24,
+            "IQ4_NL" => 25,
+            "IQ3_S" => 26,
+            "IQ3_M" => 27,
+            "IQ2_S" => 28,
+            "IQ2_M" => 29,
+            "IQ4_XS" => 30,
+            "IQ1_M" => 31,
+            "BF16" => 32,
+            _ => return None,
+        })
+    }
+
     /// Build the `model_info` block for `/api/show`.
     ///
     /// Concise (`verbose: false`) emits the GGUF-style keys real Ollama clients
@@ -468,7 +510,9 @@ impl ModelInfo {
     fn build_model_info(&self, verbose: bool) -> Value {
         let mut map = serde_json::Map::new();
         map.insert("general.architecture".into(), json!(self.arch));
-        map.insert("general.file_type".into(), json!(2));
+        if let Some(file_type) = Self::llama_file_type(&self.quantization) {
+            map.insert("general.file_type".into(), json!(file_type));
+        }
         // Ollama clients (api-docs/ollama.md line 1485) use general.parameter_count
         // to size memory budgets. Derive from params_string ("7B" → 7e9) or fall
         // back to the heuristic on the model id.

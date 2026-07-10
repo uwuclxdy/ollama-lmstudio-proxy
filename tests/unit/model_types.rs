@@ -577,9 +577,62 @@ fn show_response_model_info_has_general_keys_and_arch_context_length() {
     let v = info.to_show_response(None, false);
     let mi = &v["model_info"];
     assert_eq!(mi["general.architecture"], json!("llama"));
-    assert_eq!(mi["general.file_type"], json!(2));
+    // native() quantizes as Q4_K_M; real Ollama maps that to file_type 15
+    // (api-docs/ollama/api-reference/show-model-details.md:64,100).
+    assert_eq!(mi["general.file_type"], json!(15));
     assert_eq!(mi["general.quantization_version"], json!(2));
     assert_eq!(mi["llama.context_length"], json!(4096));
+}
+
+#[test]
+fn show_response_file_type_maps_known_quant_iq2_m() {
+    let mut n = native("foo");
+    n.quantization = Some(NativeQuantization {
+        name: Some("IQ2_M".to_string()),
+        bits_per_weight: Some(2.7),
+    });
+    let info = ModelInfo::from_native_data(&n);
+    let v = info.to_show_response(None, false);
+    assert_eq!(v["model_info"]["general.file_type"], json!(29));
+}
+
+#[test]
+fn show_response_file_type_maps_known_quant_q8_0() {
+    let mut n = native("foo");
+    n.quantization = Some(NativeQuantization {
+        name: Some("Q8_0".to_string()),
+        bits_per_weight: Some(8.0),
+    });
+    let info = ModelInfo::from_native_data(&n);
+    let v = info.to_show_response(None, false);
+    assert_eq!(v["model_info"]["general.file_type"], json!(7));
+}
+
+#[test]
+fn show_response_file_type_omitted_for_unknown_quant() {
+    let mut n = native("foo");
+    n.quantization = Some(NativeQuantization {
+        name: Some("Q9_MYSTERY".to_string()),
+        bits_per_weight: None,
+    });
+    let info = ModelInfo::from_native_data(&n);
+    let v = info.to_show_response(None, false);
+    assert!(
+        v["model_info"].get("general.file_type").is_none(),
+        "unknown quant must omit general.file_type, got {v}"
+    );
+}
+
+#[test]
+fn show_response_file_type_omitted_when_quantization_absent() {
+    let mut n = native("foo");
+    n.quantization = None;
+    let info = ModelInfo::from_native_data(&n);
+    let v = info.to_show_response(None, false);
+    assert!(
+        v["model_info"].get("general.file_type").is_none(),
+        "absent quantization must omit general.file_type, got {v}"
+    );
 }
 
 #[test]
