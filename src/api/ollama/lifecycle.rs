@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
-use crate::constants::LOG_PREFIX_SUCCESS;
+use crate::constants::{LOG_PREFIX_SUCCESS, WARNING_MESSAGES_NOT_APPLIED};
 use crate::error::ProxyError;
 use crate::http::json_response;
 use crate::logging::{log_request, log_timed};
@@ -144,6 +144,22 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
+    // `messages` is stored in virtual-model metadata but never read back on
+    // inference (LM Studio has no Modelfile/template engine to seed turns
+    // into) — warn server-side and flag the client rather than staying
+    // silent about the no-op.
+    let messages_seeded = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .is_some_and(|arr| !arr.is_empty());
+    if messages_seeded {
+        log::warn!(
+            "create '{}': {}",
+            new_model_name,
+            WARNING_MESSAGES_NOT_APPLIED
+        );
+    }
+
     // LM Studio has no API for creating real models; the proxy implements
     // virtual aliases only. Files and quantization require real model creation
     // which is not possible upstream.
@@ -200,17 +216,23 @@ pub async fn handle_ollama_create(
     log_timed(LOG_PREFIX_SUCCESS, "Ollama create", start_time);
 
     if stream {
-        let statuses = vec![
+        let mut statuses = vec![
             json!({"status": "reading model metadata"}),
             json!({"status": "creating alias"}),
             json!({"status": "writing manifest"}),
-            json!({"status": "success"}),
         ];
+        if messages_seeded {
+            statuses.push(json!({"status": format!("warning: {WARNING_MESSAGES_NOT_APPLIED}")}));
+        }
+        statuses.push(json!({"status": "success"}));
         log_handler_io("create", None, None);
         return stream_status_messages(statuses, "failed to create model alias stream");
     }
 
-    let response = json!({"status": "success"});
+    let mut response = json!({"status": "success"});
+    if messages_seeded {
+        response["warning"] = json!(WARNING_MESSAGES_NOT_APPLIED);
+    }
     log_handler_io("create", None, Some(&response));
     Ok(json_response(&response))
 }

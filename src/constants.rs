@@ -52,6 +52,10 @@ pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
 
+/// Warning messages
+pub const WARNING_MESSAGES_NOT_APPLIED: &str =
+    "MESSAGE history is stored but not applied by the LM Studio backend";
+
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";
 pub const SSE_DONE_MESSAGE: &str = "[DONE]";

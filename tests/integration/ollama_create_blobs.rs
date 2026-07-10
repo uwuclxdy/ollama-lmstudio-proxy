@@ -412,6 +412,164 @@ async fn create_with_template_stored_in_virtual() {
 }
 
 #[tokio::test]
+async fn create_with_messages_stream_false_includes_warning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "msg-seed-model:v1",
+            "from": "llama3.2:3b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with messages");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["status"].as_str(),
+        Some("success"),
+        "create with messages must still succeed; got {body}"
+    );
+    assert!(
+        body.get("warning").and_then(Value::as_str).is_some(),
+        "non-stream create with non-empty messages should surface a warning field; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_messages_stream_true_warns_before_success() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "msg-seed-stream:v1",
+            "from": "llama3.2:3b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/create stream with messages");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            serde_json::from_str(l)
+                .unwrap_or_else(|e| panic!("invalid JSON chunk: {e}; line='{l}'"))
+        })
+        .collect();
+
+    assert_eq!(
+        lines.last().unwrap()["status"].as_str(),
+        Some("success"),
+        "last create chunk must still be status:success; got {lines:?}"
+    );
+
+    let has_warning_line = lines.iter().any(|chunk| {
+        chunk["status"]
+            .as_str()
+            .is_some_and(|s| s.to_lowercase().contains("warning"))
+    });
+    assert!(
+        has_warning_line,
+        "streamed create with non-empty messages should emit a warning status line before success; got {lines:?}"
+    );
+}
+
+#[tokio::test]
+async fn create_without_messages_response_unchanged() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "no-msg-model:v1",
+            "from": "llama3.2:3b",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create without messages");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"status": "success"}),
+        "create without messages must be byte-identical to today's response; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_empty_messages_array_response_unchanged() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "empty-msg-model:v1",
+            "from": "llama3.2:3b",
+            "messages": [],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with empty messages");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"status": "success"}),
+        "create with empty messages array must be unchanged; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn create_missing_model_field_returns_400() {
     let p = spawn_proxy().await;
 
