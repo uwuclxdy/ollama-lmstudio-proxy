@@ -1125,23 +1125,46 @@ async fn generate_suffix_with_images_is_dropped_from_upstream_body() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 16. missing prompt → 400
+// 16. missing prompt → warm/load no-op (real Ollama treats this as a load
+// trigger, not an error — see `api-docs/ollama/api/generate.md`'s "Load
+// model" sample: `{"model":"gemma4"}` with no prompt).
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn missing_prompt_returns_400() {
+async fn missing_prompt_triggers_warm_load() {
     let p = spawn_proxy().await;
     mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
 
     let resp = p
         .client
         .post(p.url("/api/generate"))
-        .json(&json!({ "model": "llama3.2:3b" }))
+        .json(&json!({ "model": "llama3.2:3b", "stream": false }))
         .send()
         .await
         .expect("POST /api/generate no prompt");
 
-    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["response"], "");
+    assert_eq!(body["done_reason"], "load");
+    assert_eq!(body["model"], "llama3.2:3b");
+
+    p.mock.verify().await;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1831,4 +1854,145 @@ async fn generate_keep_alive_zero_no_prompt_streaming_returns_ndjson_done_chunk(
 
     assert_no_inference_calls(&p).await;
     assert!(wait_for_unload_call(&p).await);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 29. promptless generate (keep_alive != 0) → warm/load, not unload
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Disambiguation from section 28: `keep_alive:0` + no prompt is unload-only
+// (asserted above via `assert_no_inference_calls`, which forbids the
+// `/api/v0/chat/completions` warm ping this section's requests always fire).
+
+#[tokio::test]
+async fn empty_prompt_triggers_warm_load() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({ "model": "llama3.2:3b", "prompt": "", "stream": false }))
+        .send()
+        .await
+        .expect("POST /api/generate empty prompt");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["response"], "");
+    assert_eq!(body["done_reason"], "load");
+
+    p.mock.verify().await;
+}
+
+#[tokio::test]
+async fn missing_prompt_with_nonzero_keep_alive_still_warms_not_unloads() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({ "model": "llama3.2:3b", "keep_alive": 300, "stream": false }))
+        .send()
+        .await
+        .expect("POST /api/generate no prompt, keep_alive:300");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done_reason"], "load");
+
+    p.mock.verify().await;
+}
+
+#[tokio::test]
+async fn missing_prompt_streaming_warm_load_returns_ndjson_done_chunk() {
+    let p = spawn_proxy().await;
+    mount_llm_catalog(&p, "llama3.2-3b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({ "model": "llama3.2:3b", "stream": true }))
+        .send()
+        .await
+        .expect("POST /api/generate no prompt, stream:true");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let final_chunk = chunks.last().expect("at least one chunk");
+    assert_eq!(final_chunk["done"], true);
+    assert_eq!(final_chunk["response"], "");
+    assert_eq!(final_chunk["done_reason"], "load");
+
+    p.mock.verify().await;
+}
+
+#[tokio::test]
+async fn missing_prompt_unknown_model_returns_404_not_warm() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [llm_entry("different-model-v1")]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({ "model": "llama3.2:3b" }))
+        .send()
+        .await
+        .expect("POST /api/generate no prompt, unknown model");
+
+    assert_eq!(resp.status(), 404);
+
+    p.mock.verify().await;
 }

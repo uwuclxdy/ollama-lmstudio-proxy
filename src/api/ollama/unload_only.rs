@@ -1,26 +1,32 @@
-//! Short-circuit handler for `keep_alive: 0` requests with no prompt/messages.
+//! Short-circuit handlers for promptless/messageless `/api/generate` and
+//! `/api/chat` requests: `keep_alive: 0` unloads, anything else warms.
 //!
 //! Per the Ollama spec (`api-docs/ollama/api/generate.md` and `chat.md`), both
 //! `GenerateRequest` and `ChatRequest` only require the `model` field. The
 //! documented invocation `{"model":"x","keep_alive":0}` is an unload-only
 //! request: no inference is performed, the model is unloaded, and a single
-//! `done:true` response chunk is returned.
+//! `done:true` response chunk is returned. `generate.md`'s "Load model" sample
+//! (`{"model":"x"}`, no `keep_alive:0`) is the mirror case: a load/warm no-op
+//! with no inference, `done_reason:"load"`.
 //!
 //! This module builds the response envelope and emits it in either NDJSON
 //! (stream:true) or single-JSON (stream:false) form. The actual unload is
-//! kicked off via `spawn_model_unload_if_needed` exactly as it would be after
-//! a normal inference call with `keep_alive: 0`.
+//! kicked off via `spawn_model_unload_if_needed`, and the warm via
+//! `trigger_model_loading_for_ollama`, exactly as either would run after a
+//! normal inference call.
 //!
-//! The body is considered "unload-only" when `keep_alive == 0` AND the
-//! per-endpoint payload field is missing or empty (generate: `prompt`; chat:
-//! `messages`). With a non-empty payload the request still flows through the
-//! regular inference path and the unload races the inference response — see
-//! the existing `keep_alive_zero_accepted` integration tests.
+//! A body is "unload-only" when `keep_alive == 0` AND the per-endpoint payload
+//! field is missing or empty (generate: `prompt`; chat: `messages`); it is
+//! "warm-only" under the same payload condition but `keep_alive != 0`. With a
+//! non-empty payload the request still flows through the regular inference
+//! path and the unload races the inference response — see the existing
+//! `keep_alive_zero_accepted` integration tests.
 //!
-//! `done_reason` is omitted: `api-docs/ollama/api/generate.md` and `chat.md`
-//! only document `stop | length`, and the project's policy (see
+//! Unload's `done_reason` is omitted: `api-docs/ollama/api/generate.md` and
+//! `chat.md` only document `stop | length`, and the project's policy (see
 //! `src/streaming/chunks.rs`) is to omit unknown reasons rather than fabricate
-//! one.
+//! one. Warm is the documented exception — live Ollama 0.31.1 emits a real
+//! `done_reason:"load"` for this case, so `build_warm_chunk` sends it.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
 use crate::api::ollama::status_stream::stream_status_messages;
+use crate::api::retry::trigger_model_loading_for_ollama;
 use crate::error::ProxyError;
 use crate::http::json_response;
 use crate::lmstudio::keep_alive::spawn_model_unload_if_needed;
@@ -143,4 +150,84 @@ pub fn is_chat_unload_only(body: &Value, keep_alive_seconds: Option<i64>) -> boo
         Some(Value::Array(arr)) => arr.is_empty(),
         _ => false,
     }
+}
+
+/// Generate: warm-only when `prompt` is missing or an empty string AND
+/// `keep_alive != 0` (the `keep_alive == 0` case is unload-only, above).
+pub fn is_generate_warm_only(body: &Value, keep_alive_seconds: Option<i64>) -> bool {
+    if matches!(keep_alive_seconds, Some(0)) {
+        return false;
+    }
+    match body.get("prompt") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.is_empty(),
+        _ => false,
+    }
+}
+
+pub struct GenerateWarmOnlyCall<'a> {
+    pub context: &'a RequestContext<'a>,
+    pub model_resolver: Arc<ModelResolver>,
+    pub ollama_model_name: &'a str,
+    pub stream: bool,
+    pub cancellation_token: CancellationToken,
+}
+
+/// Resolves the model (404 parity with a normal request), warms/loads it via
+/// the same path `/api/show` uses, and returns a `done:true,
+/// done_reason:"load"` response in the requested wire format. No inference is
+/// performed.
+///
+/// `keep_alive` on a warm-only request is not applied as a TTL here (this
+/// path never reaches `apply_keep_alive_ttl`, which only runs on the
+/// inference request) — a ceiling shared with `/api/show`'s identical
+/// unconditional-warm call; a future TTL-aware warm would need to thread
+/// `keep_alive_seconds` into a post-warm `spawn_model_unload_if_needed`.
+pub async fn respond_generate_warm_only(
+    call: GenerateWarmOnlyCall<'_>,
+) -> Result<axum::response::Response, ProxyError> {
+    let GenerateWarmOnlyCall {
+        context,
+        model_resolver,
+        ollama_model_name,
+        stream,
+        cancellation_token,
+    } = call;
+
+    // Verify the model resolves — a 404 here matches what a normal request
+    // would return, rather than silently "warming" an unknown name.
+    model_resolver
+        .resolve_model_name(
+            ollama_model_name,
+            context.client,
+            cancellation_token.clone(),
+        )
+        .await?;
+
+    trigger_model_loading_for_ollama(context, ollama_model_name, cancellation_token).await?;
+
+    let payload = build_warm_chunk(ollama_model_name);
+
+    if stream {
+        stream_status_messages(
+            vec![payload],
+            "failed to create warm-only streaming response",
+        )
+    } else {
+        Ok(json_response(&payload))
+    }
+}
+
+/// Live Ollama 0.31.1 omits every duration/eval field for a load-only
+/// response and includes only `model`, `created_at`, `response`, `done`, and
+/// a real `done_reason:"load"` — unlike `build_done_chunk`'s unload envelope,
+/// which zero-fills those fields and omits `done_reason` entirely.
+fn build_warm_chunk(ollama_model_name: &str) -> Value {
+    json!({
+        "model": ollama_model_name,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "response": "",
+        "done": true,
+        "done_reason": "load",
+    })
 }

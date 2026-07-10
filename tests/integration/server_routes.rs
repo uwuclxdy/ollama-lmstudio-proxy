@@ -547,21 +547,25 @@ async fn chat_missing_messages_returns_error() {
 }
 
 #[tokio::test]
-async fn generate_missing_prompt_returns_error() {
+async fn generate_missing_prompt_triggers_warm_load() {
     let p = spawn_proxy().await;
     mount_models_stub(&p).await;
+    mount_chat_stub(&p, "/api/v0/chat/completions").await;
     let resp = p
         .client
         .post(p.url("/api/generate"))
-        .json(&json!({"model": "llama3"}))
+        .json(&json!({"model": "llama3", "stream": false}))
         .send()
         .await
         .expect("POST /api/generate no prompt");
-    let status = resp.status().as_u16();
-    assert!(
-        status != 404,
-        "missing prompt must not produce a 404: {status}"
+    assert_eq!(
+        resp.status(),
+        200,
+        "a promptless generate is a load/warm no-op, not an error"
     );
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["done_reason"], "load");
 }
 
 // ---------------------------------------------------------------------------

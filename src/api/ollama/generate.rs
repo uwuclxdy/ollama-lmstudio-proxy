@@ -24,7 +24,10 @@ use crate::model::ModelResolver;
 use crate::model::naming::extract_required_model_name;
 
 use super::resolution::{make_top_level_params, resolve_model_with_context};
-use super::unload_only::{UnloadOnlyCall, is_generate_unload_only, respond_unload_only};
+use super::unload_only::{
+    GenerateWarmOnlyCall, UnloadOnlyCall, is_generate_unload_only, is_generate_warm_only,
+    respond_generate_warm_only, respond_unload_only,
+};
 
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
@@ -51,6 +54,22 @@ pub async fn handle_ollama_generate(
             is_chat: false,
             stream,
             start_time,
+            cancellation_token,
+        })
+        .await;
+    }
+
+    // Spec: `{"model":"x"}` (no/empty `prompt`, `keep_alive` not 0) is a
+    // load/warm no-op — real Ollama's documented "Load model" sample. Short-
+    // circuit before the inference path exactly like the unload case above,
+    // just without tearing the model down.
+    if is_generate_warm_only(&body, keep_alive_seconds) {
+        let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
+        return respond_generate_warm_only(GenerateWarmOnlyCall {
+            context: &context,
+            model_resolver,
+            ollama_model_name: &ollama_model_name,
+            stream,
             cancellation_token,
         })
         .await;
