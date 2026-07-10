@@ -689,18 +689,23 @@ fn normalize_message(msg: &Value, prior: &[Value], consumed: &mut HashMap<String
 }
 
 pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
-    // Per-tool_name count of results already correlated within the current assistant
-    // turn's tool-call group. Reset when a new assistant turn begins, because Ollama
-    // correlates parallel calls per turn: the Nth same-named result maps to the Nth
-    // same-named call of THAT turn.
+    // Per-tool_name count of results already correlated within the current tool-call
+    // group. Reset only when an assistant message actually starts a new group (carries
+    // a non-empty tool_calls), because Ollama correlates parallel calls per turn: the
+    // Nth same-named result maps to the Nth same-named call of THAT turn. A no-tool_calls
+    // assistant message must not reset mid-group.
     let mut consumed: HashMap<String, usize> = HashMap::new();
     let mut normalized: Vec<Value> = Vec::with_capacity(messages.len());
     for (i, msg) in messages.iter().enumerate() {
-        let is_assistant = msg
+        let starts_tool_call_group = msg
             .get("role")
             .and_then(|r| r.as_str())
-            .is_some_and(|r| r.eq_ignore_ascii_case("assistant"));
-        if is_assistant {
+            .is_some_and(|r| r.eq_ignore_ascii_case("assistant"))
+            && msg
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .is_some_and(|calls| !calls.is_empty());
+        if starts_tool_call_group {
             consumed.clear();
         }
         normalized.push(normalize_message(msg, &messages[..i], &mut consumed));

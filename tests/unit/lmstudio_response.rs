@@ -1347,7 +1347,7 @@ fn normalize_tool_role_parallel_tool_calls_match_by_name() {
 }
 
 #[test]
-fn normalize_tool_role_same_name_parallel_calls_by_function_index() {
+fn normalize_tool_role_same_name_parallel_calls_by_array_position() {
     // Two calls to the SAME function (indices 0 and 2) with a distinct call at 1.
     // The Nth same-named result must map to the Nth same-named call, so the second
     // get_weather result gets call_2, not call_0 (the first-hit collapse bug).
@@ -1465,6 +1465,50 @@ fn normalize_tool_role_bare_tool_calls_fall_back_to_positional_ids() {
         arr[4].get("tool_call_id").and_then(|v| v.as_str()),
         Some("call_2"),
         "second get_weather result must get positional call_2, never null"
+    );
+}
+
+#[test]
+fn normalize_tool_role_second_turn_does_not_continue_first_turn_consumption() {
+    // Two SEPARATE assistant turns, each issuing two parallel same-named calls.
+    // Turn 2's results must correlate against turn 2's own tool_calls array
+    // (fresh call_0/call_1), never continuing turn 1's already-exhausted counter.
+    let msgs = vec![
+        json!({"role": "user", "content": "weather twice"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_weather", "arguments": {"city": "NY"}}},
+                {"function": {"name": "get_weather", "arguments": {"city": "LA"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "22C"}),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "18C"}),
+        json!({"role": "user", "content": "weather twice again"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_weather", "arguments": {"city": "SF"}}},
+                {"function": {"name": "get_weather", "arguments": {"city": "SEA"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "15C"}),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "12C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    assert_eq!(
+        arr[6].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_0"),
+        "turn 2's first get_weather result must reference turn 2's own call_0"
+    );
+    assert_eq!(
+        arr[7].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_1"),
+        "turn 2's second get_weather result must reference turn 2's own call_1, \
+         not turn 1's leftover consumption count"
     );
 }
 
