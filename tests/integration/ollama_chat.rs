@@ -401,6 +401,51 @@ async fn options_num_ctx_reloads_model_at_context_length() {
     p.mock.verify().await;
 }
 
+// A non-2xx unload response must count as a failure: the reload must be
+// skipped entirely (no load call), so a stale instance is never stacked on
+// top of one LM Studio refused to release.
+#[tokio::test]
+async fn options_num_ctx_unload_4xx_skips_reload() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({ "error": "busy" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/load"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Test" }],
+            "stream": false,
+            "options": { "num_ctx": 2048 }
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat num_ctx unload 4xx");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
 // When `num_ctx` already matches the single loaded instance's context, the proxy
 // must NOT unload or reload — the request flows straight to inference.
 #[tokio::test]
@@ -1142,6 +1187,63 @@ async fn keep_alive_zero_accepted() {
     assert!(
         unload_was_called,
         "keep_alive: 0 must result in a POST to /api/v1/models/unload"
+    );
+}
+
+// A 4xx from the background unload must not panic the spawned task or affect
+// the (already-returned) chat response — the unload still fires, it just
+// can't succeed.
+#[tokio::test]
+async fn keep_alive_zero_unload_4xx_does_not_fail_request() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({ "error": "busy" })))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "keep_alive": 0
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive 0 unload 4xx");
+
+    assert_eq!(resp.status(), 200);
+
+    let unload_was_called = async {
+        for _ in 0..50 {
+            let received = p.mock.received_requests().await.unwrap_or_default();
+            if received
+                .iter()
+                .any(|r| r.url.path() == "/api/v1/models/unload")
+            {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    }
+    .await;
+
+    assert!(
+        unload_was_called,
+        "keep_alive: 0 must still POST to /api/v1/models/unload even though it 4xxs"
     );
 }
 

@@ -181,6 +181,7 @@ async fn unload_model_instances(
                 .json(&json!({ "instance_id": instance.id }))
                 .send()
                 .await
+                .and_then(|r| r.error_for_status())
             {
                 Ok(_) => log::debug!("unloaded model instance '{}'", instance.id),
                 Err(e) => log::warn!("failed to unload instance '{}': {}", instance.id, e),
@@ -212,6 +213,7 @@ pub async fn unload_instances_except(
                 .json(&json!({ "instance_id": instance.id }))
                 .send()
                 .await
+                .and_then(|r| r.error_for_status())
             {
                 Ok(_) => log::debug!(
                     "auto-evict: unloaded instance '{}' of '{}'",

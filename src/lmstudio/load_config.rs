@@ -172,6 +172,7 @@ pub async fn ensure_context_length(
             .json(&json!({ "instance_id": instance.id }))
             .send()
             .await
+            .and_then(|r| r.error_for_status())
         {
             log::warn!("num_ctx: unload '{}' failed: {e}", instance.id);
             unloads_ok = false;

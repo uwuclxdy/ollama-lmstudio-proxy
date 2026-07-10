@@ -147,6 +147,53 @@ async fn auto_evict_unloads_other_when_target_not_loaded() {
     p.mock.verify().await;
 }
 
+// auto-evict ON, target NOT loaded, the other model's unload 4xxs → eviction
+// is best-effort: the failed unload must not block or fail the chat request.
+#[tokio::test]
+async fn auto_evict_unload_4xx_does_not_block_inference() {
+    let p = spawn_proxy_with_auto_evict().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(catalog_target_unloaded(
+                "llama3.1-8b-instruct",
+                "mistral-7b-instruct",
+            )),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .and(body_partial_json(json!({ "instance_id": "other-inst-0" })))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({ "error": "busy" })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_ok()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(resp.status(), 200);
+    p.mock.verify().await;
+}
+
 // auto-evict ON, target ALREADY loaded → no unload call issued at all.
 #[tokio::test]
 async fn auto_evict_skips_unload_when_target_already_loaded() {
