@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -547,19 +548,32 @@ pub fn convert_tool_calls_to_ollama(tool_calls: &[Value]) -> Value {
     json!(converted)
 }
 
+/// Resolve the OpenAI `tool_call_id` for an assistant tool_call at array `position`:
+/// an explicit `id`, else a positional `call_<position>`. Shared by the assistant-side
+/// synthesis and the tool-result correlation so both sides agree on the same id even for
+/// a bare client echo (no `id`), which otherwise leaves the result's `tool_call_id` null.
+fn tool_call_id_for(tc: &Value, position: usize) -> String {
+    tc.get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("call_{position}"))
+}
+
 /// Convert a single Ollama-shaped message to OpenAI shape for forwarding to LM Studio.
 ///
 /// Handles two multi-turn shapes that Ollama and OpenAI represent differently:
 ///
 /// - `role:"tool"` — Ollama uses `tool_name`; OpenAI requires `name` and `tool_call_id`.
-///   We walk prior assistant messages to find a matching `tool_calls` entry by name and
-///   copy its `id` when available. If none is found we log a debug message and omit
-///   `tool_call_id` rather than emitting a fabricated id that could confuse the model.
+///   We walk prior assistant messages to the most recent turn carrying a matching call
+///   and take its Nth same-named entry (`consumed` counts how many the current turn has
+///   already claimed) so parallel calls to one function don't collapse onto the first id.
+///   The id is that call's own `id` or a positional `call_<position>`; with no match at
+///   all we log a debug message and omit `tool_call_id`.
 ///
 /// - `role:"assistant"` with `tool_calls` — Ollama uses object `arguments`; OpenAI
 ///   requires a JSON string. We also add the `id` and `type` fields required by OpenAI
-///   if they are absent, synthesizing a stable id from the call index.
-fn normalize_message(msg: &Value, prior: &[Value]) -> Value {
+///   if they are absent, synthesizing a stable id from the call position.
+fn normalize_message(msg: &Value, prior: &[Value], consumed: &mut HashMap<String, usize>) -> Value {
     let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
 
     match role {
@@ -570,34 +584,31 @@ fn normalize_message(msg: &Value, prior: &[Value]) -> Value {
                 .cloned()
                 .unwrap_or(Value::String(String::new()));
 
-            // Walk prior messages in reverse to find the most recent assistant tool_calls
-            // entry whose function.name matches this tool result.
+            // Correlate this result with the Nth prior same-named call so parallel calls
+            // to one function don't collapse onto the first id. `consumed` tracks how many
+            // same-named results the current assistant turn has already claimed; we skip
+            // that many name-matches. Walk prior messages in reverse to the most recent
+            // assistant turn that carries a matching call.
+            let skip = consumed.get(tool_name).copied().unwrap_or(0);
             let tool_call_id = prior.iter().rev().find_map(|m| {
                 let r = m.get("role").and_then(|v| v.as_str())?;
                 if !r.eq_ignore_ascii_case("assistant") {
                     return None;
                 }
                 let calls = m.get("tool_calls").and_then(|v| v.as_array())?;
-                calls.iter().find_map(|tc| {
-                    let name = tc
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(|n| n.as_str())?;
-                    if name != tool_name {
-                        return None;
-                    }
-                    // Prefer an explicit `id` field; fall back to `function.index`.
-                    tc.get("id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| {
-                            tc.get("function")
-                                .and_then(|f| f.get("index"))
-                                .and_then(|i| i.as_u64())
-                                .map(|i| format!("call_{i}"))
-                        })
-                })
+                calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tc)| {
+                        tc.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            == Some(tool_name)
+                    })
+                    .nth(skip)
+                    .map(|(position, tc)| tool_call_id_for(tc, position))
             });
+            *consumed.entry(tool_name.to_string()).or_insert(0) += 1;
 
             if tool_call_id.is_none() {
                 log::debug!(
@@ -624,11 +635,7 @@ fn normalize_message(msg: &Value, prior: &[Value]) -> Value {
                     .iter()
                     .enumerate()
                     .map(|(idx, tc)| {
-                        let id = tc
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("call_{idx}"));
+                        let id = tool_call_id_for(tc, idx);
 
                         let name = tc
                             .get("function")
@@ -682,11 +689,22 @@ fn normalize_message(msg: &Value, prior: &[Value]) -> Value {
 }
 
 pub fn normalize_chat_messages(messages: &[Value], system_prompt: Option<&str>) -> Value {
-    let normalized: Vec<Value> = messages
-        .iter()
-        .enumerate()
-        .map(|(i, msg)| normalize_message(msg, &messages[..i]))
-        .collect();
+    // Per-tool_name count of results already correlated within the current assistant
+    // turn's tool-call group. Reset when a new assistant turn begins, because Ollama
+    // correlates parallel calls per turn: the Nth same-named result maps to the Nth
+    // same-named call of THAT turn.
+    let mut consumed: HashMap<String, usize> = HashMap::new();
+    let mut normalized: Vec<Value> = Vec::with_capacity(messages.len());
+    for (i, msg) in messages.iter().enumerate() {
+        let is_assistant = msg
+            .get("role")
+            .and_then(|r| r.as_str())
+            .is_some_and(|r| r.eq_ignore_ascii_case("assistant"));
+        if is_assistant {
+            consumed.clear();
+        }
+        normalized.push(normalize_message(msg, &messages[..i], &mut consumed));
+    }
 
     if let Some(system_text) = system_prompt {
         let already_has_system = normalized.iter().any(|message| {

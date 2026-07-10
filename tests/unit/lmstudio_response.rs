@@ -1346,6 +1346,128 @@ fn normalize_tool_role_parallel_tool_calls_match_by_name() {
     );
 }
 
+#[test]
+fn normalize_tool_role_same_name_parallel_calls_by_function_index() {
+    // Two calls to the SAME function (indices 0 and 2) with a distinct call at 1.
+    // The Nth same-named result must map to the Nth same-named call, so the second
+    // get_weather result gets call_2, not call_0 (the first-hit collapse bug).
+    let msgs = vec![
+        json!({"role": "user", "content": "weather + time"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"type": "function",
+                 "function": {"index": 0, "name": "get_weather", "arguments": {"city": "NY"}}},
+                {"type": "function",
+                 "function": {"index": 1, "name": "get_time", "arguments": {"tz": "EST"}}},
+                {"type": "function",
+                 "function": {"index": 2, "name": "get_weather", "arguments": {"city": "London"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "22C"}),
+        json!({"role": "tool", "tool_name": "get_time", "content": "10:00"}),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "15C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    assert_eq!(
+        arr[2].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_0"),
+        "first get_weather result must reference call_0"
+    );
+    assert_eq!(
+        arr[3].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_1"),
+        "get_time result must reference call_1"
+    );
+    assert_eq!(
+        arr[4].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_2"),
+        "second get_weather result must reference call_2, not collapse onto call_0"
+    );
+}
+
+#[test]
+fn normalize_tool_role_same_name_parallel_calls_with_explicit_ids() {
+    // Same shape but with explicit ids: the Nth same-named result maps to the Nth
+    // same-named call's own id.
+    let msgs = vec![
+        json!({"role": "user", "content": "weather + time"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_a", "type": "function",
+                 "function": {"name": "get_weather", "arguments": {"city": "NY"}}},
+                {"id": "call_b", "type": "function",
+                 "function": {"name": "get_time", "arguments": {"tz": "EST"}}},
+                {"id": "call_c", "type": "function",
+                 "function": {"name": "get_weather", "arguments": {"city": "London"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "22C"}),
+        json!({"role": "tool", "tool_name": "get_time", "content": "10:00"}),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "15C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    assert_eq!(
+        arr[2].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_a"),
+        "first get_weather result must reference call_a"
+    );
+    assert_eq!(
+        arr[3].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_b"),
+        "get_time result must reference call_b"
+    );
+    assert_eq!(
+        arr[4].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_c"),
+        "second get_weather result must reference call_c, not call_a"
+    );
+}
+
+#[test]
+fn normalize_tool_role_bare_tool_calls_fall_back_to_positional_ids() {
+    // Bare tool_calls (no id, no function.index) — what a plain client echo looks like.
+    // Each result must get a positional call_<position> id matching the assistant-side
+    // synthesis, never a null tool_call_id.
+    let msgs = vec![
+        json!({"role": "user", "content": "weather + time"}),
+        json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_weather", "arguments": {"city": "NY"}}},
+                {"function": {"name": "get_time", "arguments": {"tz": "EST"}}},
+                {"function": {"name": "get_weather", "arguments": {"city": "London"}}}
+            ]
+        }),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "22C"}),
+        json!({"role": "tool", "tool_name": "get_time", "content": "10:00"}),
+        json!({"role": "tool", "tool_name": "get_weather", "content": "15C"}),
+    ];
+    let out = normalize_chat_messages(&msgs, None);
+    let arr = out.as_array().unwrap();
+    assert_eq!(
+        arr[2].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_0"),
+        "first get_weather result must get positional call_0"
+    );
+    assert_eq!(
+        arr[3].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_1"),
+        "get_time result must get positional call_1"
+    );
+    assert_eq!(
+        arr[4].get("tool_call_id").and_then(|v| v.as_str()),
+        Some("call_2"),
+        "second get_weather result must get positional call_2, never null"
+    );
+}
+
 // =========================================================================
 // GAP B — inbound assistant tool_calls with object arguments
 // =========================================================================
