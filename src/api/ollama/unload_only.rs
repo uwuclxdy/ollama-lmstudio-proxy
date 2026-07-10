@@ -1,13 +1,16 @@
 //! Short-circuit handlers for promptless/messageless `/api/generate` and
-//! `/api/chat` requests: `keep_alive: 0` unloads, anything else warms.
+//! `/api/chat` requests: `keep_alive: 0` unloads on both endpoints; a
+//! promptless `/api/generate` with `keep_alive != 0` warms (`/api/chat` has
+//! no warm-only equivalent yet — a messageless chat request still 400s via
+//! the regular required-field validation; parity is a possible follow-up).
 //!
 //! Per the Ollama spec (`api-docs/ollama/api/generate.md` and `chat.md`), both
 //! `GenerateRequest` and `ChatRequest` only require the `model` field. The
 //! documented invocation `{"model":"x","keep_alive":0}` is an unload-only
 //! request: no inference is performed, the model is unloaded, and a single
 //! `done:true` response chunk is returned. `generate.md`'s "Load model" sample
-//! (`{"model":"x"}`, no `keep_alive:0`) is the mirror case: a load/warm no-op
-//! with no inference, `done_reason:"load"`.
+//! (`{"model":"x"}`, no `keep_alive:0`) is the mirror case, generate-only: a
+//! load/warm no-op with no inference, `done_reason:"load"`.
 //!
 //! This module builds the response envelope and emits it in either NDJSON
 //! (stream:true) or single-JSON (stream:false) form. The actual unload is
@@ -16,11 +19,13 @@
 //! normal inference call.
 //!
 //! A body is "unload-only" when `keep_alive == 0` AND the per-endpoint payload
-//! field is missing or empty (generate: `prompt`; chat: `messages`); it is
-//! "warm-only" under the same payload condition but `keep_alive != 0`. With a
-//! non-empty payload the request still flows through the regular inference
-//! path and the unload races the inference response — see the existing
-//! `keep_alive_zero_accepted` integration tests.
+//! field is missing or empty (generate: `prompt`; chat: `messages`) — this
+//! applies to both endpoints (`is_generate_unload_only`/`is_chat_unload_only`).
+//! "Warm-only" is `is_generate_warm_only` alone: the same empty-`prompt`
+//! condition but `keep_alive != 0`. With a non-empty payload the request
+//! still flows through the regular inference path and the unload races the
+//! inference response — see the existing `keep_alive_zero_accepted`
+//! integration tests.
 //!
 //! Unload's `done_reason` is omitted: `api-docs/ollama/api/generate.md` and
 //! `chat.md` only document `stop | length`, and the project's policy (see
