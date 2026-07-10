@@ -149,7 +149,7 @@ fn build_native_input(messages: &Value) -> Value {
                 if let Some(base64_data) = image.as_str() {
                     input.push(json!({
                         "type": "image",
-                        "data_url": crate::lmstudio::images::native_image_data_url(base64_data),
+                        "data_url": crate::lmstudio::images::image_data_url(base64_data),
                     }));
                 }
             }

@@ -2,24 +2,21 @@ use std::borrow::Cow;
 
 use serde_json::{Value, json};
 
-fn image_data_url(base64_data: &str) -> String {
+/// Build a `data:<mime>;base64,<payload>` URL, shared by the OpenAI-compat
+/// `image_url` content parts and LM Studio's native `/api/v1/chat`
+/// `{type:"image", data_url}` input entries.
+///
+/// If the caller already passed a full data URL, it is returned unchanged;
+/// otherwise the MIME type is sniffed from the base64 magic prefix.
+pub fn image_data_url(base64_data: &str) -> String {
+    if base64_data.starts_with("data:") {
+        return base64_data.to_string();
+    }
     format!(
         "data:{};base64,{}",
         detect_image_mime(base64_data),
         base64_data
     )
-}
-
-/// Build a `data:<mime>;base64,<payload>` URL for LM Studio's native
-/// `/api/v1/chat` `{type:"image", data_url}` input entries.
-///
-/// If the caller already passed a full data URL, it is returned unchanged;
-/// otherwise the MIME type is sniffed from the base64 magic prefix.
-pub fn native_image_data_url(base64_data: &str) -> String {
-    if base64_data.starts_with("data:") {
-        return base64_data.to_string();
-    }
-    image_data_url(base64_data)
 }
 
 /// Sniff the base64 magic prefix to infer an image MIME type.

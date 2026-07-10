@@ -61,6 +61,39 @@ fn inject_uses_detected_mime() {
     assert!(url.starts_with("data:image/webp;base64,"), "got {url}");
 }
 
+/// An already-`data:`-prefixed image (the same input the native path
+/// already guards against) must pass through the OpenAI-compat path
+/// unchanged, not get double-wrapped into `data:...;base64,data:...`.
+#[test]
+fn already_data_url_input_is_not_double_wrapped() {
+    let messages = json!([{"role": "user", "content": "what's in here"}]);
+    let images = json!(["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA"]);
+    let updated = inject_images_into_messages(messages, &images);
+    let parts = updated.as_array().unwrap()[0]["content"]
+        .as_array()
+        .unwrap();
+    let url = parts[1]["image_url"]["url"].as_str().unwrap();
+    assert_eq!(url, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA");
+    assert_eq!(
+        url.matches("data:image").count(),
+        1,
+        "must not double-wrap an already-prefixed data URL, got {url}"
+    );
+}
+
+/// Regression guard for the merge: raw base64 (no prefix) must still get wrapped.
+#[test]
+fn raw_base64_input_still_gets_wrapped() {
+    let messages = json!([{"role": "user", "content": "what's in here"}]);
+    let images = json!(["iVBORw0KGgoAAAANSUhEUgAA"]);
+    let updated = inject_images_into_messages(messages, &images);
+    let parts = updated.as_array().unwrap()[0]["content"]
+        .as_array()
+        .unwrap();
+    let url = parts[1]["image_url"]["url"].as_str().unwrap();
+    assert_eq!(url, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA");
+}
+
 // =========================================================================
 // Tests from translation_images
 // =========================================================================
