@@ -1278,6 +1278,185 @@ async fn chat_stream_all_lines_are_valid_json() {
 }
 
 // ---------------------------------------------------------------------------
+// 20. Pre-stream upstream 4xx must surface as an error response, never a
+//     fabricated 200 NDJSON stream (default v0 path — no native flags).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_stream_pre_stream_400_returns_error_not_stream() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "model not found"}
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "upstream 400 must not become a 200 stream"
+    );
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        !content_type.contains("application/x-ndjson"),
+        "error response must not be NDJSON: {content_type}"
+    );
+
+    let body: Value = resp.json().await.expect("JSON error body");
+    assert!(
+        body.get("error").is_some(),
+        "error body must carry an 'error' field: {body}"
+    );
+}
+
+#[tokio::test]
+async fn chat_stream_pre_stream_429_returns_error_not_stream() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {"message": "rate limited"}
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_ne!(
+        resp.status().as_u16(),
+        200,
+        "upstream 429 must not become a 200 stream"
+    );
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        !content_type.contains("application/x-ndjson"),
+        "error response must not be NDJSON: {content_type}"
+    );
+}
+
+#[tokio::test]
+async fn generate_stream_pre_stream_400_returns_error_not_stream() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "model not found"}
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3",
+            "prompt": "hi",
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "upstream 400 must not become a 200 stream"
+    );
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        !content_type.contains("application/x-ndjson"),
+        "error response must not be NDJSON: {content_type}"
+    );
+
+    let body: Value = resp.json().await.expect("JSON error body");
+    assert!(
+        body.get("error").is_some(),
+        "error body must carry an 'error' field: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // T7. Tool-call-only deltas produce intermediate NDJSON lines
 // ---------------------------------------------------------------------------
 

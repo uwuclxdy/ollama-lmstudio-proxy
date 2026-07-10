@@ -30,6 +30,34 @@ static STREAM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const STREAM_START_LOADING_THRESHOLD_MS: u128 = 500;
 
+/// Status-gate a to-be-streamed upstream response before any SSE parsing starts.
+///
+/// A non-2xx status means the body is a plain JSON error, not an SSE stream —
+/// parsing it as one yields zero events and a silently fabricated `done:true`
+/// 200. Shared by both the v0 (OpenAI-compat) and native streaming entry points.
+async fn reject_pre_stream_error(
+    lm_studio_response: reqwest::Response,
+) -> Result<reqwest::Response, ProxyError> {
+    let status = lm_studio_response.status();
+    if status.is_success() {
+        return Ok(lm_studio_response);
+    }
+
+    let body_text = lm_studio_response.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<Value>(&body_text)
+        .ok()
+        .and_then(|v| match v.get("error") {
+            Some(Value::Object(obj)) => obj
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string()),
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| format!("LM Studio error: {}", status));
+    Err(ProxyError::new(message, status.as_u16()))
+}
+
 pub async fn handle_streaming_response(
     lm_studio_response: reqwest::Response,
     is_chat_endpoint: bool,
@@ -38,6 +66,8 @@ pub async fn handle_streaming_response(
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
+    let lm_studio_response = reject_pre_stream_error(lm_studio_response).await?;
+
     let runtime_config = get_runtime_config();
     let ollama_model_name = ollama_model_name.to_string();
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
@@ -274,22 +304,7 @@ pub async fn handle_native_streaming_response(
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
-    let status = lm_studio_response.status();
-    if !status.is_success() {
-        let body_text = lm_studio_response.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<serde_json::Value>(&body_text)
-            .ok()
-            .and_then(|v| match v.get("error") {
-                Some(serde_json::Value::Object(obj)) => obj
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .map(|s| s.to_string()),
-                Some(serde_json::Value::String(s)) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| format!("LM Studio error: {}", status));
-        return Err(ProxyError::new(message, status.as_u16()));
-    }
+    let lm_studio_response = reject_pre_stream_error(lm_studio_response).await?;
 
     let runtime_config = get_runtime_config();
     let ollama_model_name = ollama_model_name.to_string();
