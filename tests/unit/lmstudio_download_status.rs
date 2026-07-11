@@ -109,6 +109,25 @@ fn in_progress_chunk_matches_status_event_schema() {
 }
 
 #[test]
+fn in_progress_status_uses_pulling_prefix() {
+    // Ollama clients pattern-match the `pulling` prefix; LM Studio's raw
+    // `downloading` must be translated, not passed through.
+    let s: LmStudioDownloadStatus = serde_json::from_value(json!({
+        "job_id": "job789",
+        "status": "downloading",
+        "total_size_bytes": 1_000_000u64,
+        "downloaded_bytes": 500_000u64
+    }))
+    .unwrap();
+    let chunk = s.to_chunk("llama3.2");
+    let status = chunk["status"].as_str().expect("status string");
+    assert!(
+        status.starts_with("pulling"),
+        "in-progress status must use Ollama's `pulling` convention, not raw `downloading`; got {status}"
+    );
+}
+
+#[test]
 fn in_progress_chunk_omits_digest() {
     let s: LmStudioDownloadStatus = serde_json::from_value(json!({
         "job_id": "job456",

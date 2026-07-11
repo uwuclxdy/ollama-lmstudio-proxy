@@ -284,6 +284,12 @@ async fn pull_stream_true_in_progress_chunk_matches_status_event_schema() {
         .find(|c| c["status"].as_str() != Some("success"))
         .expect("expected at least one in-progress chunk before terminal success");
 
+    assert!(
+        in_progress["status"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("pulling")),
+        "in-progress status must use Ollama's `pulling` convention, not raw `downloading`; got {in_progress}"
+    );
     assert_eq!(
         in_progress["total"].as_u64(),
         Some(4_000_000_000),

@@ -6,7 +6,9 @@
 //!
 //! LM Studio's status payload is rich; Ollama's `/api/pull` stream is narrower
 //! (see api-docs/ollama.md §"Pull a Model"):
-//!   - in-progress: `{"status":"pulling <digest>", "digest":..., "total":..., "completed":...}`
+//!   - in-progress: `{"status":"pulling", "total":..., "completed":...}` (Ollama's
+//!     convention is `pulling <digest>`; LM Studio exposes no content digest, so
+//!     the bare `pulling` prefix is emitted and `digest` omitted).
 //!   - terminal:    `{"status":"success"}` (literal — clients match by equality).
 
 use std::time::Duration;
@@ -55,6 +57,11 @@ impl LmStudioDownloadStatus {
     fn translated_status(&self) -> String {
         match self.status.as_str() {
             "completed" | "already_downloaded" => "success".to_string(),
+            // Ollama's in-progress convention is `pulling <digest>`; clients
+            // pattern-match on the `pulling` prefix. LM Studio's `downloading`
+            // carries no content digest, so emit the bare prefix (byte progress
+            // still rides in total/completed).
+            "downloading" => "pulling".to_string(),
             other => other.to_string(),
         }
     }
