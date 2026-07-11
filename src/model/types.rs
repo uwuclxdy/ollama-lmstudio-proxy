@@ -32,6 +32,12 @@ pub struct NativeModelData {
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Multi-quant variant keys (e.g. `publisher/model@q4_k_m`) when the model
+    /// ships several quantizations.
+    #[serde(default)]
+    pub variants: Vec<String>,
+    #[serde(default)]
+    pub selected_variant: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -71,6 +77,10 @@ pub struct NativeLoadedInstanceConfig {
     pub eval_batch_size: Option<u64>,
     #[serde(default)]
     pub parallel: Option<u64>,
+    /// Load-confirmation readback of the `--offload-kv-cache` flag the proxy
+    /// sends on `/api/v1/models/load`.
+    #[serde(default)]
+    pub offload_kv_cache_to_gpu: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -115,6 +125,9 @@ pub struct ModelInfo {
     pub loaded_flash_attention: Option<bool>,
     pub loaded_eval_batch_size: Option<u64>,
     pub loaded_parallel: Option<u64>,
+    pub loaded_offload_kv_cache: Option<bool>,
+    pub variants: Vec<String>,
+    pub selected_variant: Option<String>,
 }
 
 impl ModelInfo {
@@ -154,6 +167,7 @@ impl ModelInfo {
         let loaded_flash_attention = first_config.and_then(|cfg| cfg.flash_attention);
         let loaded_eval_batch_size = first_config.and_then(|cfg| cfg.eval_batch_size);
         let loaded_parallel = first_config.and_then(|cfg| cfg.parallel);
+        let loaded_offload_kv_cache = first_config.and_then(|cfg| cfg.offload_kv_cache_to_gpu);
 
         let ollama_name = if native_data.key.contains(':') {
             native_data.key.clone()
@@ -219,6 +233,9 @@ impl ModelInfo {
             loaded_flash_attention,
             loaded_eval_batch_size,
             loaded_parallel,
+            loaded_offload_kv_cache,
+            variants: native_data.variants.clone(),
+            selected_variant: native_data.selected_variant.clone(),
         }
     }
 
@@ -565,6 +582,15 @@ impl ModelInfo {
                 if let Some(parallel) = self.loaded_parallel {
                     map.insert("lmstudio.parallel".into(), json!(parallel));
                 }
+                if let Some(offload) = self.loaded_offload_kv_cache {
+                    map.insert("lmstudio.offload_kv_cache_to_gpu".into(), json!(offload));
+                }
+            }
+            if !self.variants.is_empty() {
+                map.insert("lmstudio.variants".into(), json!(self.variants));
+            }
+            if let Some(ref variant) = self.selected_variant {
+                map.insert("lmstudio.selected_variant".into(), json!(variant));
             }
             if let Some(ref ps) = self.params_string {
                 map.insert("lmstudio.params_string".into(), json!(ps));

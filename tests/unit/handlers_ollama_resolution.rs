@@ -221,6 +221,9 @@ fn model_info(id: &str, supports_reasoning: bool) -> ModelInfo {
         loaded_flash_attention: None,
         loaded_eval_batch_size: None,
         loaded_parallel: None,
+        loaded_offload_kv_cache: None,
+        variants: Vec::new(),
+        selected_variant: None,
     }
 }
 

@@ -24,6 +24,8 @@ fn native(key: &str) -> NativeModelData {
         params_string: None,
         display_name: None,
         description: None,
+        variants: Vec::new(),
+        selected_variant: None,
     }
 }
 
@@ -35,6 +37,7 @@ fn loaded_instance(ctx: Option<u64>) -> NativeLoadedInstance {
             flash_attention: None,
             eval_batch_size: None,
             parallel: None,
+            offload_kv_cache_to_gpu: None,
         }),
     }
 }
@@ -53,6 +56,7 @@ fn loaded_instance_full(
             flash_attention,
             eval_batch_size,
             parallel,
+            offload_kv_cache_to_gpu: None,
         }),
     }
 }
@@ -96,6 +100,8 @@ fn make_native_with_caps(
         params_string: None,
         display_name: None,
         description: None,
+        variants: Vec::new(),
+        selected_variant: None,
     }
 }
 
@@ -1210,5 +1216,73 @@ fn tags_model_still_omits_parent_model_after_ps_change() {
     assert!(
         v["details"].get("parent_model").is_none(),
         "tags details must not include parent_model; got {v}"
+    );
+}
+
+// ─── backend field parsing: variants / selected_variant / offload readback ──
+
+#[test]
+fn native_data_parses_variants_and_offload_readback() {
+    let raw = serde_json::json!({
+        "key": "qwen/qwen3.6-27b",
+        "type": "llm",
+        "publisher": "qwen",
+        "architecture": "qwen3",
+        "format": "gguf",
+        "quantization": { "name": "Q4_K_M", "bits_per_weight": 4.5 },
+        "max_context_length": 262144,
+        "variants": ["qwen/qwen3.6-27b@q4_k_m", "qwen/qwen3.6-27b@q8_0"],
+        "selected_variant": "qwen/qwen3.6-27b@q4_k_m",
+        "loaded_instances": [{
+            "id": "inst-1",
+            "config": {
+                "context_length": 8192,
+                "flash_attention": true,
+                "offload_kv_cache_to_gpu": true
+            }
+        }]
+    });
+    let data: NativeModelData = serde_json::from_value(raw).expect("deserializes");
+    assert_eq!(data.variants.len(), 2);
+    assert_eq!(
+        data.selected_variant.as_deref(),
+        Some("qwen/qwen3.6-27b@q4_k_m")
+    );
+
+    let info = ModelInfo::from_native_data(&data);
+    assert_eq!(info.loaded_offload_kv_cache, Some(true));
+    assert_eq!(info.variants, data.variants);
+    assert_eq!(info.selected_variant, data.selected_variant);
+}
+
+#[test]
+fn model_info_surfaces_variants_and_offload_in_verbose_map() {
+    let mut data = native("qwen/qwen3.6-27b");
+    data.variants = vec!["qwen/qwen3.6-27b@q4_k_m".to_string()];
+    data.selected_variant = Some("qwen/qwen3.6-27b@q4_k_m".to_string());
+    data.loaded_instances = vec![NativeLoadedInstance {
+        id: "inst-1".to_string(),
+        config: Some(NativeLoadedInstanceConfig {
+            context_length: Some(8192),
+            flash_attention: None,
+            eval_batch_size: None,
+            parallel: None,
+            offload_kv_cache_to_gpu: Some(false),
+        }),
+    }];
+    let info = ModelInfo::from_native_data(&data);
+
+    let model_info = info.build_model_info(true);
+    assert_eq!(
+        model_info["lmstudio.offload_kv_cache_to_gpu"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        model_info["lmstudio.variants"],
+        serde_json::json!(["qwen/qwen3.6-27b@q4_k_m"])
+    );
+    assert_eq!(
+        model_info["lmstudio.selected_variant"],
+        serde_json::json!("qwen/qwen3.6-27b@q4_k_m")
     );
 }
