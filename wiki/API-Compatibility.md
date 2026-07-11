@@ -10,7 +10,7 @@ endpoint is translated to its native equivalent.
 | `GET /` | Returns "Ollama is running" |
 | `GET /api/tags` | Translates to `/api/v1/models`; includes proxy-managed aliases |
 | `GET /api/ps` | Translates to `/api/v1/models`; shows loaded models plus aliases; `size_vram` mirrors the loaded model `size` (LM Studio reports no GPU/CPU split); `details.parent_model` is `""`; `expires_at` is a best-effort placeholder |
-| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`/`offload_kv_cache_to_gpu`) while the model is loaded and multi-quant `variants`/`selected_variant` when the backend reports them; merges alias info when present |
+| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`/`offload_kv_cache_to_gpu`) while the model is loaded and multi-quant `variants`/`selected_variant` when the backend reports them; merges alias info when present. Native models omit `modelfile`/`template`/`parameters`/`license` since LM Studio exposes no Modelfile |
 | `POST /api/chat` | Translates to `/api/v0/chat/completions` for real token stats (or native `/api/v1/chat` with `--use-native-chat`). A messageless request warms the model (`done_reason:"load"` no-op); `keep_alive: 0` without messages unloads it |
 | `POST /api/generate` | Translates to `/api/v0/completions`; vision requests use the v0 chat endpoint. A promptless request warms the model; `keep_alive: 0` without a prompt unloads it |
 | `POST /api/embed` | Translates to `/v1/embeddings`; also handles `/api/embeddings`. Auto-loads (JIT) an unloaded embedding model on demand instead of returning "no models loaded"; honors `num_ctx`; `truncate` defaults to `true` |
@@ -37,8 +37,8 @@ errors return `400`, and a model missing from LM Studio returns `404`.
 modification. This includes `POST /v1/messages` (Anthropic-compat) and
 `POST /v1/responses` (OpenAI Responses), which LM Studio serves natively. The
 proxy remaps the `model` field (and the `GET /v1/models/{id}` path segment)
-from the Ollama-style name to the resolved LM Studio id before forwarding, and
-adds a few compatibility shims on top:
+from the Ollama-style name or a `/api/copy` alias to the resolved LM Studio id
+before forwarding. A few compatibility shims apply on top:
 
 - `response_format: {"type": "json_object"}` is rewritten to the permissive
   `json_schema` envelope LM Studio accepts.
