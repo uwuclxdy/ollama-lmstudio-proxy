@@ -235,6 +235,68 @@ async fn tags_response_omits_modified_at_when_no_mtime_available() {
 }
 
 #[tokio::test]
+async fn tags_orphan_alias_omits_modified_at() {
+    let p = spawn_proxy().await;
+
+    // Source present at copy time so the alias resolves and is stored.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let copy = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "orphan-alias:latest"}))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
+
+    // The target vanishes from LM Studio → the alias is now an orphan. Reset the
+    // mock to an empty list and expire the model-resolution cache (1s TTL in
+    // tests) so /api/tags takes the orphan branch.
+    p.mock.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lms_models(vec![])))
+        .mount(&p.mock)
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let entry = body["models"]
+        .as_array()
+        .expect("models array")
+        .iter()
+        .find(|m| m["name"].as_str() == Some("orphan-alias:latest"))
+        .unwrap_or_else(|| panic!("orphan alias must appear in tags; got {body}"));
+    assert!(
+        entry.get("modified_at").is_none(),
+        "an orphan alias must omit modified_at like every other tags entry; got {entry}"
+    );
+}
+
+#[tokio::test]
 async fn tags_virtual_model_created_via_copy_appears_in_list() {
     let p = spawn_proxy().await;
 

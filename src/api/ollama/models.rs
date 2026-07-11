@@ -146,10 +146,12 @@ pub async fn handle_ollama_tags(
             // Orphan alias — its target was removed from LM Studio so we have
             // no real metadata. Emit the same shape as a real entry with zeros
             // for size/context so clients don't fall back to their own defaults.
+            // `modified_at` is omitted to match native models and live-resolving
+            // aliases (LM Studio exposes no per-model timestamp) — tags stays
+            // uniform across every model kind.
             ollama_models.push(json!({
                 "name": entry.name,
                 "model": entry.name,
-                "modified_at": entry.updated_at.to_rfc3339(),
                 "size": 0,
                 "digest": hex::encode(Sha256::digest(entry.name.as_bytes())),
                 "context_length": 0,
