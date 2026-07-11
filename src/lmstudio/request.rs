@@ -249,19 +249,46 @@ pub(crate) fn log_unsupported_options(options: &Value) {
     }
 }
 
+/// LM Studio's `response_format` accepts only `json_schema` or `text`. Both the
+/// Ollama `format:"json"` shim and an OpenAI `response_format:{"type":"json_object"}`
+/// map to this permissive object-typed json_schema, so any JSON object validates.
+///
+/// `name` is a required field of LM Studio's json_schema envelope; Ollama/OpenAI
+/// supply none, so it is a synthetic label LM Studio ignores (verified live).
+/// Dropping it risks a 400.
+pub(crate) fn permissive_json_object_response_format() -> Value {
+    json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "json",
+            "schema": { "type": "object" }
+        }
+    })
+}
+
+/// Rewrite an OpenAI `response_format:{"type":"json_object"}` in place into LM
+/// Studio's permissive json_schema envelope. LM Studio's `/v1` chat/completions
+/// rejects a bare `json_object` with a 400. No-op for any other `response_format`
+/// shape (an explicit `json_schema` or `text` passes through untouched).
+pub(crate) fn rewrite_json_object_format(body: &mut Value) {
+    let is_json_object = body
+        .get("response_format")
+        .and_then(|rf| rf.get("type"))
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| t.eq_ignore_ascii_case("json_object"));
+    if is_json_object && let Some(obj) = body.as_object_mut() {
+        obj.insert(
+            "response_format".to_string(),
+            permissive_json_object_response_format(),
+        );
+    }
+}
+
 fn convert_structured_format(format_value: &Value) -> Option<Value> {
     match format_value {
-        Value::String(mode) if mode.eq_ignore_ascii_case("json") => Some(json!({
-            "type": "json_schema",
-            "json_schema": {
-                // `name` is a required field of LM Studio's json_schema
-                // response_format envelope; Ollama supplies none, so this is a
-                // synthetic label LM Studio ignores (verified live). Dropping it
-                // risks a 400.
-                "name": "json",
-                "schema": { "type": "object" }
-            }
-        })),
+        Value::String(mode) if mode.eq_ignore_ascii_case("json") => {
+            Some(permissive_json_object_response_format())
+        }
         Value::String(mode) if mode.eq_ignore_ascii_case("text") => Some(json!({ "type": "text" })),
         Value::Object(_) => Some(json!({
             "type": "json_schema",

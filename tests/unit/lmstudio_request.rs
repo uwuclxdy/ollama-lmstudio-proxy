@@ -941,3 +941,41 @@ fn top_level_all_none_fields_inserts_nothing() {
     assert!(request.get("logprobs").is_none());
     assert!(request.get("top_logprobs").is_none());
 }
+
+#[test]
+fn json_object_response_format_rewritten_to_permissive_json_schema() {
+    let mut body = json!({
+        "model": "m",
+        "response_format": { "type": "json_object" }
+    });
+    rewrite_json_object_format(&mut body);
+    assert_eq!(body["response_format"]["type"], "json_schema");
+    assert_eq!(
+        body["response_format"]["json_schema"]["schema"]["type"], "object",
+        "json_object must map to an object-typed json_schema; got {body}"
+    );
+}
+
+#[test]
+fn existing_json_schema_response_format_untouched() {
+    let original = json!({
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": { "name": "pet", "schema": { "type": "object", "properties": {} } }
+        }
+    });
+    let mut body = original.clone();
+    rewrite_json_object_format(&mut body);
+    assert_eq!(
+        body, original,
+        "an explicit json_schema must pass through unchanged"
+    );
+}
+
+#[test]
+fn absent_response_format_is_noop() {
+    let original = json!({ "model": "m", "messages": [] });
+    let mut body = original.clone();
+    rewrite_json_object_format(&mut body);
+    assert_eq!(body, original);
+}

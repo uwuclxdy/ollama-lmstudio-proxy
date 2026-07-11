@@ -213,3 +213,57 @@ async fn passthrough_stream_backend_4xx_keeps_status_not_fake_sse() {
 
     p.mock.verify().await;
 }
+
+// ── response_format json_object rewritten to a permissive json_schema ────────
+
+#[tokio::test]
+async fn chat_completions_json_object_rewritten_to_json_schema() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "meta/llama-3.2").await;
+
+    // LM Studio rejects a bare json_object; the backend mock only matches when
+    // the proxy has rewritten it into a json_schema envelope. An unrewritten
+    // json_object would miss the mock and surface a 404.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(json!({
+            "model": "meta/llama-3.2",
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": { "schema": { "type": "object" } }
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "{}" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "llama-3.2",
+            "messages": [{ "role": "user", "content": "give me json" }],
+            "response_format": { "type": "json_object" }
+        }))
+        .send()
+        .await
+        .expect("POST /v1/chat/completions json_object");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "json_object must be rewritten to json_schema and accepted; got {}",
+        resp.status()
+    );
+
+    p.mock.verify().await;
+}

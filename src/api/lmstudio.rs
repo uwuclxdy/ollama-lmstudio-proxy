@@ -97,6 +97,16 @@ pub async fn handle_lmstudio_passthrough(
                     }
                 }
 
+                // LM Studio's /v1 chat/completions rejects
+                // response_format:{"type":"json_object"} (only json_schema/text),
+                // so translate it to a permissive json_schema, matching the
+                // ollama-path format:"json" shim.
+                if let Some(ref mut body_json) = current_body
+                    && (endpoint.contains("chat") || endpoint.contains("completion"))
+                {
+                    crate::lmstudio::request::rewrite_json_object_format(body_json);
+                }
+
                 let final_endpoint_url = context.append_query_params(
                     determine_passthrough_endpoint_url(
                         context.lmstudio_url,
