@@ -10,9 +10,9 @@ endpoint is translated to its native equivalent.
 | `GET /` | Returns "Ollama is running" |
 | `GET /api/tags` | Translates to `/api/v1/models`; includes proxy-managed aliases |
 | `GET /api/ps` | Translates to `/api/v1/models`; shows loaded models plus aliases; `size_vram` mirrors the loaded model `size` (LM Studio reports no GPU/CPU split); `details.parent_model` is `""`; `expires_at` is a best-effort placeholder |
-| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`) while the model is loaded; merges alias info when present |
-| `POST /api/chat` | Translates to `/api/v0/chat/completions` for real token stats (or native `/api/v1/chat` with `--use-native-chat`) |
-| `POST /api/generate` | Translates to `/api/v0/completions`; vision requests use the v0 chat endpoint |
+| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`/`offload_kv_cache_to_gpu`) while the model is loaded and multi-quant `variants`/`selected_variant` when the backend reports them; merges alias info when present |
+| `POST /api/chat` | Translates to `/api/v0/chat/completions` for real token stats (or native `/api/v1/chat` with `--use-native-chat`). A messageless request warms the model (`done_reason:"load"` no-op); `keep_alive: 0` without messages unloads it |
+| `POST /api/generate` | Translates to `/api/v0/completions`; vision requests use the v0 chat endpoint. A promptless request warms the model; `keep_alive: 0` without a prompt unloads it |
 | `POST /api/embed` | Translates to `/v1/embeddings`; also handles `/api/embeddings`. Auto-loads (JIT) an unloaded embedding model on demand instead of returning "no models loaded"; honors `num_ctx`; `truncate` defaults to `true` |
 | `GET /api/version` | Returns configurable version string (`--ollama-version`, default `0.30.0`) in Ollama format |
 | `GET /health` | Validates LM Studio reachability |
@@ -36,8 +36,19 @@ errors return `400`, and a model missing from LM Studio returns `404`.
 `ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without
 modification. This includes `POST /v1/messages` (Anthropic-compat) and
 `POST /v1/responses` (OpenAI Responses), which LM Studio serves natively. The
-proxy only remaps the `model` field from the Ollama-style name to the resolved
-LM Studio id before forwarding.
+proxy remaps the `model` field (and the `GET /v1/models/{id}` path segment)
+from the Ollama-style name to the resolved LM Studio id before forwarding, and
+adds a few compatibility shims on top:
+
+- `response_format: {"type": "json_object"}` is rewritten to the permissive
+  `json_schema` envelope LM Studio accepts.
+- `encoding_format: "base64"` on `/v1/embeddings` is honored by the proxy
+  (LM Studio always returns floats; the proxy re-encodes them).
+- Proxy-generated errors on `/v1/messages` use Anthropic's
+  `{"type":"error","error":{...}}` envelope, including auth rejections.
+- Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
+  protocol: `event: error` for Anthropic, `event: response.failed` for
+  `/v1/responses`, a typed `error` object for OpenAI-style streams.
 
 Anthropic clients such as Claude Code work against `/v1/messages` with no extra
 setup. See the
