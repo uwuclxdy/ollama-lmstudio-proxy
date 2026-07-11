@@ -26,19 +26,33 @@ pub async fn api_key_gate(
         return next.run(req).await;
     }
 
-    match extract_bearer(req.headers().get(header::AUTHORIZATION)) {
-        // Constant-time compare so the bearer check can't be timed into a
-        // byte-at-a-time oracle. ct_eq returns unequal (0) without panicking on
-        // differing token lengths.
-        Some(token) if expected.as_bytes().ct_eq(token.as_bytes()).into() => next.run(req).await,
-        _ => {
-            log::warn!(
-                "auth: rejected {} {} (missing or invalid bearer token)",
-                req.method(),
-                req.uri().path()
-            );
-            unauthorized()
-        }
+    // `/api/version` is unauthenticated in real Ollama (its OpenAPI declares
+    // `security: []`) and the version string is not sensitive — exempt it from
+    // the gate. Every other endpoint stays gated (deliberate hardening).
+    if req.uri().path() == "/api/version" {
+        return next.run(req).await;
+    }
+
+    // Accept the OpenAI-style `Authorization: Bearer <key>` or the Anthropic
+    // SDK's default `x-api-key: <key>` header. Constant-time compare so the
+    // check can't be timed into a byte-at-a-time oracle; ct_eq returns unequal
+    // (0) without panicking on differing token lengths. `matches!` drops the
+    // header borrow before `req` moves into `next.run`.
+    let authorized = matches!(
+        extract_bearer(req.headers().get(header::AUTHORIZATION))
+            .or_else(|| extract_api_key(req.headers().get("x-api-key"))),
+        Some(token) if expected.as_bytes().ct_eq(token.as_bytes()).into()
+    );
+
+    if authorized {
+        next.run(req).await
+    } else {
+        log::warn!(
+            "auth: rejected {} {} (missing or invalid credentials)",
+            req.method(),
+            req.uri().path()
+        );
+        unauthorized()
     }
 }
 
@@ -54,6 +68,15 @@ fn extract_bearer(value: Option<&HeaderValue>) -> Option<&str> {
         return None;
     }
     Some(token)
+}
+
+/// Parse the Anthropic-style `x-api-key: <token>` header (no scheme prefix).
+fn extract_api_key(value: Option<&HeaderValue>) -> Option<&str> {
+    let key = value?.to_str().ok()?.trim();
+    if key.is_empty() {
+        return None;
+    }
+    Some(key)
 }
 
 fn unauthorized() -> Response {
