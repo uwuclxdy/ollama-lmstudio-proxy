@@ -979,3 +979,57 @@ fn absent_response_format_is_noop() {
     rewrite_json_object_format(&mut body);
     assert_eq!(body, original);
 }
+
+#[test]
+fn structured_object_all_required_keeps_strict() {
+    let schema = json!({
+        "type": "object",
+        "properties": { "name": {"type": "string"}, "age": {"type": "integer"} },
+        "required": ["name", "age"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert_eq!(
+        out["json_schema"]["strict"],
+        json!(true),
+        "an all-required schema keeps strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_optional_field_omits_strict() {
+    // The doc's Pet example: `age` optional → strict:true would 400.
+    let schema = json!({
+        "type": "object",
+        "properties": { "name": {"type": "string"}, "age": {"type": "integer"} },
+        "required": ["name"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an optional-field schema must not be sent strict; got {out}"
+    );
+    assert_eq!(
+        out["json_schema"]["schema"], schema,
+        "the schema itself must pass through unchanged"
+    );
+}
+
+#[test]
+fn structured_object_nested_optional_omits_strict() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "owner": {
+                "type": "object",
+                "properties": { "name": {"type": "string"}, "phone": {"type": "string"} },
+                "required": ["name"]
+            }
+        },
+        "required": ["owner"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "a nested optional field must drop strict; got {out}"
+    );
+}

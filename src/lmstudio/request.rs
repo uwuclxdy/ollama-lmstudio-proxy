@@ -290,20 +290,56 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
             Some(permissive_json_object_response_format())
         }
         Value::String(mode) if mode.eq_ignore_ascii_case("text") => Some(json!({ "type": "text" })),
-        Value::Object(_) => Some(json!({
-            "type": "json_schema",
-            "json_schema": {
-                // `name` is a required field of LM Studio's json_schema
-                // response_format envelope; Ollama supplies none, so this is a
-                // synthetic label LM Studio ignores (verified live). Dropping it
-                // risks a 400.
-                "name": "ollama_format",
-                "strict": true,
-                "schema": format_value.clone()
+        Value::Object(_) => {
+            let mut json_schema = serde_json::Map::new();
+            // `name` is a required field of LM Studio's json_schema envelope;
+            // Ollama supplies none, so this is a synthetic label LM Studio
+            // ignores (verified live). Dropping it risks a 400.
+            json_schema.insert("name".to_string(), json!("ollama_format"));
+            // `strict:true` forces every declared property into `required`; on a
+            // schema with an optional field that 400s. Only send strict when the
+            // schema already requires all its properties (recursively).
+            if all_properties_required(format_value) {
+                json_schema.insert("strict".to_string(), json!(true));
             }
-        })),
+            json_schema.insert("schema".to_string(), format_value.clone());
+            Some(json!({ "type": "json_schema", "json_schema": json_schema }))
+        }
         _ => None,
     }
+}
+
+/// Whether `strict:true` is safe for this json-schema. LM Studio's strict mode
+/// requires every declared property to also appear in its object's `required`
+/// list (recursively), so a schema with an optional field must not be sent
+/// strict or the backend 400s. Nodes without `properties` (leaf types, arrays)
+/// impose no constraint; property subschemas and array `items` are checked too.
+fn all_properties_required(schema: &Value) -> bool {
+    let Some(map) = schema.as_object() else {
+        return true;
+    };
+
+    if let Some(props) = map.get("properties").and_then(|p| p.as_object()) {
+        let required: std::collections::HashSet<&str> = map
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        if !props.keys().all(|k| required.contains(k.as_str())) {
+            return false;
+        }
+        if !props.values().all(all_properties_required) {
+            return false;
+        }
+    }
+
+    if let Some(items) = map.get("items")
+        && !all_properties_required(items)
+    {
+        return false;
+    }
+
+    true
 }
 
 #[cfg(test)]
