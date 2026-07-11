@@ -4,14 +4,23 @@ use crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS;
 use crate::error::ProxyError;
 use crate::http::client::handle_json_response;
 use crate::http::json_response;
-use crate::lmstudio::response::ResponseTransformer;
+use crate::lmstudio::response::{
+    ResponseTransformer, estimate_token_count, estimate_tokens_from_bytes,
+};
 use crate::logging::log_handler_io;
 use crate::streaming::handle_streaming_response;
 use tokio_util::sync::CancellationToken;
 
 pub enum ResponseContext {
-    Chat { message_count: usize },
-    Generate { prompt: String },
+    Chat {
+        message_count: usize,
+        /// Total request text length, for the streaming prompt-token estimate
+        /// (streaming has no usage block to read a real count from).
+        input_chars: usize,
+    },
+    Generate {
+        prompt: String,
+    },
 }
 
 pub struct ResponseParams<'a> {
@@ -38,6 +47,10 @@ pub async fn handle_response(
     } = params;
 
     if stream {
+        let prompt_tokens_estimate = match &context {
+            ResponseContext::Chat { input_chars, .. } => estimate_tokens_from_bytes(*input_chars),
+            ResponseContext::Generate { prompt } => estimate_token_count(prompt),
+        };
         handle_streaming_response(
             response,
             is_chat,
@@ -45,18 +58,21 @@ pub async fn handle_response(
             start_time,
             cancellation_token,
             DEFAULT_STREAM_TIMEOUT_SECONDS,
+            prompt_tokens_estimate,
         )
         .await
     } else {
         let lm_response_value = handle_json_response(response, cancellation_token).await?;
 
         let ollama_response = match context {
-            ResponseContext::Chat { message_count } => ResponseTransformer::convert_to_ollama_chat(
-                &lm_response_value,
-                model_name,
-                message_count,
-                start_time,
-            ),
+            ResponseContext::Chat { message_count, .. } => {
+                ResponseTransformer::convert_to_ollama_chat(
+                    &lm_response_value,
+                    model_name,
+                    message_count,
+                    start_time,
+                )
+            }
             ResponseContext::Generate { prompt } => {
                 ResponseTransformer::convert_to_ollama_generate(
                     &lm_response_value,

@@ -305,7 +305,7 @@ fn timing_from_native_v0_stats_does_not_subtract_ttft() {
         }
     });
 
-    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 24, 53);
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 24, 53, None);
 
     let ttft_ns = 111_000_000u64;
     let gen_ns = 954_000_000u64;
@@ -348,7 +348,7 @@ fn timing_from_native_v1_responses_stats() {
         }
     });
 
-    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 0, 0);
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 0, 0, None);
 
     let ttft_ns = 1_088_000_000u64;
     let expected_gen_ns = ((586.0_f64 / 29.753900615398926_f64) * 1_000_000_000.0) as u64;
@@ -393,7 +393,7 @@ fn timing_prefers_v0_time_to_first_token_over_v1_seconds() {
         }
     });
 
-    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5);
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5, None);
     assert_eq!(
         timing.prompt_eval_duration, 222_000_000u64,
         "v0 time_to_first_token must win over time_to_first_token_seconds"
@@ -1044,7 +1044,7 @@ fn timing_legacy_estimation_falls_back_to_estimates() {
 
 #[test]
 fn timing_stream_chunks_no_zero_fields() {
-    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 12, None);
+    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 10, 12);
     assert!(timing.total_duration >= 1);
     assert!(timing.load_duration >= 1);
     assert!(timing.prompt_eval_count >= 1);
@@ -1054,21 +1054,20 @@ fn timing_stream_chunks_no_zero_fields() {
 }
 
 #[test]
-fn timing_stream_chunks_uses_actual_completion_tokens_when_provided() {
-    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 12, Some(77));
-    assert_eq!(
-        timing.eval_count, 77,
-        "actual completion tokens must override chunk-count estimate"
-    );
+fn timing_stream_chunks_uses_supplied_estimates() {
+    // Streaming carries no usage block; the caller passes length-derived
+    // estimates for both sides and they must land verbatim (not the old
+    // hardcoded prompt 10 / chunk-count pair).
+    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 123, 77);
+    assert_eq!(timing.prompt_eval_count, 123);
+    assert_eq!(timing.eval_count, 77);
 }
 
 #[test]
-fn timing_stream_chunks_uses_chunk_count_estimate_as_fallback() {
-    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 9, None);
-    assert_eq!(
-        timing.eval_count, 9,
-        "chunk-count estimate must be used as fallback"
-    );
+fn timing_stream_chunks_floors_zero_estimates() {
+    let timing = TimingInfo::from_stream_chunks(Duration::from_millis(50), 0, 0);
+    assert_eq!(timing.prompt_eval_count, 1);
+    assert_eq!(timing.eval_count, 1);
 }
 
 // =========================================================================
@@ -1214,7 +1213,7 @@ fn timing_stream_chunks_is_wall_clock_heuristic_not_real_stats() {
     // When LM Studio adds streaming usage support, this test should be updated
     // to assert against real per-token stats from upstream.
     let duration = Duration::from_millis(200);
-    let timing = TimingInfo::from_stream_chunks(duration, 20, None);
+    let timing = TimingInfo::from_stream_chunks(duration, 10, 20);
     assert_eq!(
         timing.total_duration,
         duration.as_nanos() as u64,
@@ -1617,4 +1616,49 @@ fn normalize_non_tool_messages_pass_through_unmodified() {
     assert_eq!(arr[0], json!({"role": "user", "content": "hello"}));
     assert_eq!(arr[1], json!({"role": "assistant", "content": "hi there"}));
     assert_eq!(arr[2], json!({"role": "system", "content": "be helpful"}));
+}
+
+// =========================================================================
+// model_load fallback: stream-observed load time + total_duration semantics
+// =========================================================================
+
+#[test]
+fn timing_native_stats_fallback_load_used_when_stats_omit_it() {
+    // chat.end stats without model_load_time_seconds: the model_load.end
+    // event's observed value must fill load_duration and count into total.
+    let lm = json!({
+        "stats": { "time_to_first_token": 0.5, "generation_time": 1.0 }
+    });
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5, Some(2.5));
+    assert_eq!(timing.load_duration, 2_500_000_000);
+    assert_eq!(
+        timing.total_duration, 4_000_000_000,
+        "total must cover load + ttft + generation"
+    );
+}
+
+#[test]
+fn timing_native_stats_reported_load_wins_over_fallback() {
+    let lm = json!({
+        "stats": {
+            "time_to_first_token": 0.5,
+            "generation_time": 1.0,
+            "model_load_time_seconds": 1.5
+        }
+    });
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5, Some(9.9));
+    assert_eq!(timing.load_duration, 1_500_000_000);
+    assert_eq!(timing.total_duration, 3_000_000_000);
+}
+
+#[test]
+fn timing_native_stats_placeholder_load_not_added_to_total() {
+    // Warm request: no load anywhere -> 1ms placeholder load_duration, and the
+    // placeholder must NOT inflate total_duration.
+    let lm = json!({
+        "stats": { "time_to_first_token": 0.5, "generation_time": 1.0 }
+    });
+    let timing = TimingInfo::from_native_stats(&lm, Instant::now(), 10, 5, None);
+    assert_eq!(timing.load_duration, 1_000_000);
+    assert_eq!(timing.total_duration, 1_500_000_000);
 }

@@ -20,27 +20,30 @@ use crate::streaming::chunks::{ChoiceDeltaPayload, ChunkProcessingState};
 ///
 /// `Delta` carries content/thinking to emit as an intermediate Ollama chunk.
 /// `End` signals `chat.end` and hands the caller the final `result` block (for
-/// stats extraction). `Error` surfaces the native `error` payload so the caller
-/// can fail the stream. `Ignore` covers boundary/progress events and tool-call
-/// fragments (those accumulate into `state` for the stream driver's single
-/// pre-final emission).
+/// stats extraction). `Error` surfaces the native `error` payload; per the
+/// streaming-events doc it is recoverable — `chat.end` still follows with
+/// whatever was generated, so the caller should surface it and keep reading.
+/// `ModelLoaded` carries `model_load.end`'s `load_time_seconds` for
+/// `load_duration` when the final stats block omits it. `Ignore` covers
+/// boundary/progress events and tool-call fragments (those accumulate into
+/// `state` for the stream driver's single pre-final emission).
 pub enum NativeEvent {
     Delta(ChoiceDeltaPayload),
     End(NativeChatEnd),
     Error(NativeStreamError),
+    ModelLoaded(f64),
     Ignore,
 }
 
 /// Data extracted from a `chat.end` event for building the final timing chunk.
 ///
 /// `result` is the aggregated response object (same shape as a non-streaming
-/// `/api/v1/chat` body); `stats` is pulled out for convenience. `done_reason` is
-/// the literal a caller should attach to the final Ollama chunk. The native API
-/// exposes no finish-reason anywhere, so it is always `"stop"`.
+/// `/api/v1/chat` body); `stats` is pulled out for convenience. The native API
+/// exposes no finish-reason anywhere, so the caller derives `done_reason` via
+/// the shared proxy heuristic (`native_done_reason_heuristic`).
 pub struct NativeChatEnd {
     pub result: Value,
     pub stats: Option<Value>,
-    pub done_reason: &'static str,
 }
 
 /// A native `error` event payload, surfaced so the caller can fail the stream.
@@ -99,17 +102,30 @@ pub fn map_native_event(
                 thinking: String::new(),
             })
         }
+        "tool_call.start" => {
+            // Native events carry no call index; calls are strictly sequential,
+            // so each start boundary opens the next accumulator slot. Without
+            // this, parallel calls collapse into slot 0 (last one wins).
+            state.begin_native_tool_call();
+            NativeEvent::Ignore
+        }
         "tool_call.arguments" | "tool_call.success" => {
             // Reshape the native tool entry to the OpenAI-ish shape the
-            // accumulator expects; emission happens once, pre-final.
+            // accumulator expects; emission happens once, pre-final. Successive
+            // `arguments` payloads are snapshots, so replacing per slot is the
+            // correct merge (`tool_call.success` carries the final object).
             let openai_shaped = native_tool_call_to_openai(data);
-            state.accumulate_tool_calls(&[openai_shaped]);
+            state.accumulate_native_tool_call(openai_shaped);
             NativeEvent::Ignore
         }
         "error" => NativeEvent::Error(parse_native_error(data)),
+        "model_load.end" => match data.get("load_time_seconds").and_then(|v| v.as_f64()) {
+            Some(seconds) => NativeEvent::ModelLoaded(seconds),
+            None => NativeEvent::Ignore,
+        },
         "chat.end" => NativeEvent::End(parse_chat_end(data)),
-        // chat.start, model_load.*, prompt_processing.*, reasoning.start/end,
-        // message.start/end, tool_call.start, tool_call.failure (boundary only).
+        // chat.start, model_load.start/progress, prompt_processing.*,
+        // reasoning.start/end, message.start/end, tool_call.failure (boundary only).
         _ => NativeEvent::Ignore,
     }
 }
@@ -142,19 +158,14 @@ fn parse_native_error(data: &Value) -> NativeStreamError {
 /// Extract `result.stats` from a `chat.end` event.
 ///
 /// The `result` object is cloned out so a caller can run it through the
-/// non-streaming converter if it wants the full aggregated body. `done_reason`
-/// is hardcoded to `"stop"`: the native API exposes no finish-reason (neither
-/// `chat.end` nor the stats block carry one), so `"stop"` is the only honest
-/// value.
+/// non-streaming converter if it wants the full aggregated body. No
+/// finish-reason exists to extract (neither `chat.end` nor the stats block
+/// carry one) — `done_reason` is the caller's heuristic.
 pub fn parse_chat_end(data: &Value) -> NativeChatEnd {
     let result = data.get("result").cloned().unwrap_or(Value::Null);
     let stats = result.get("stats").cloned();
 
-    NativeChatEnd {
-        result,
-        stats,
-        done_reason: "stop",
-    }
+    NativeChatEnd { result, stats }
 }
 
 /// Parse one raw native SSE message block into `(event_type, data)`.

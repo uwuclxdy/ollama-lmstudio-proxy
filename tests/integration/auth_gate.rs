@@ -198,3 +198,33 @@ async fn key_set_rejects_wrong_x_api_key() {
 
     assert_eq!(resp.status(), 401);
 }
+
+// ── /v1/messages 401 wears the Anthropic error envelope ─────────────────────
+
+#[tokio::test]
+async fn key_set_rejects_v1_messages_with_anthropic_envelope() {
+    let p = spawn_proxy_with_api_key(KEY).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "m",
+            "max_tokens": 5,
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .send()
+        .await
+        .expect("POST /v1/messages no auth");
+
+    assert_eq!(resp.status(), 401);
+    let body: Value = resp.json().await.expect("JSON error body");
+    assert_eq!(body["type"], "error", "Anthropic envelope: {body}");
+    assert_eq!(body["error"]["type"], "authentication_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("unauthorized")),
+        "message must mention unauthorized: {body}"
+    );
+}

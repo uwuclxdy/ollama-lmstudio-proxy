@@ -16,7 +16,9 @@ use crate::http::body::{parse_json_body_template, prepare_request_body};
 use crate::http::{build_forward_headers, client::CancellableRequest};
 use crate::logging::{LogConfig, format_duration, log_request, log_timed};
 use crate::model::ModelResolver;
-use crate::streaming::{handle_passthrough_streaming_response, is_streaming_request};
+use crate::streaming::{
+    PassthroughProtocol, handle_passthrough_streaming_response, is_streaming_request,
+};
 
 pub struct LmStudioPassthroughRequest {
     pub method: http::Method,
@@ -81,6 +83,7 @@ pub async fn handle_lmstudio_passthrough(
             let original_model_name = original_model_name_clone.clone();
 
             async move {
+                let mut endpoint = endpoint;
                 let mut current_body = json_template.clone();
                 let mut resolved_model_name: Option<String> = None;
 
@@ -97,6 +100,20 @@ pub async fn handle_lmstudio_passthrough(
                     }
                 }
 
+                // /v1/models/{id} carries the model in the URL path, not the
+                // body — resolve an Ollama alias there too. Resolution failure
+                // forwards the original segment so the backend's own error
+                // (not a proxy 404) reaches the client, matching exact-id calls.
+                if let Some(path_model) = endpoint
+                    .strip_prefix("/v1/models/")
+                    .filter(|rest| !rest.is_empty())
+                    && let Ok(resolved_model) = model_resolver
+                        .resolve_model_name(path_model, context.client, cancellation_token.clone())
+                        .await
+                {
+                    endpoint = format!("/v1/models/{}", resolved_model);
+                }
+
                 // LM Studio's /v1 chat/completions rejects
                 // response_format:{"type":"json_object"} (only json_schema/text),
                 // so translate it to a permissive json_schema, matching the
@@ -105,6 +122,21 @@ pub async fn handle_lmstudio_passthrough(
                     && (endpoint.contains("chat") || endpoint.contains("completion"))
                 {
                     crate::lmstudio::request::rewrite_json_object_format(body_json);
+                }
+
+                // encoding_format:"base64" on embeddings: LM Studio ignores the
+                // field and returns floats regardless — strip it outbound and
+                // transcode the response ourselves. Stripping also protects
+                // against a future backend honoring it (double-encoding).
+                let mut transcode_base64 = false;
+                if endpoint.contains("/embeddings")
+                    && let Some(ref mut body_json) = current_body
+                    && body_json.get("encoding_format").and_then(|v| v.as_str()) == Some("base64")
+                {
+                    transcode_base64 = true;
+                    if let Some(obj) = body_json.as_object_mut() {
+                        obj.remove("encoding_format");
+                    }
                 }
 
                 let final_endpoint_url = context.append_query_params(
@@ -131,6 +163,7 @@ pub async fn handle_lmstudio_passthrough(
                         body_bytes: &body_bytes,
                         endpoint: &endpoint,
                         original_model_name: original_model_name.as_deref(),
+                        transcode_base64,
                         cancellation_token,
                     })
                     .await
@@ -179,6 +212,7 @@ struct ForwardJsonRequest<'a> {
     body_bytes: &'a Bytes,
     endpoint: &'a str,
     original_model_name: Option<&'a str>,
+    transcode_base64: bool,
     cancellation_token: CancellationToken,
 }
 
@@ -194,6 +228,7 @@ async fn forward_json_body_request(
         body_bytes,
         endpoint,
         original_model_name,
+        transcode_base64,
         cancellation_token,
     } = req;
     let is_streaming = is_streaming_request(&body_json);
@@ -220,7 +255,15 @@ async fn forward_json_body_request(
         );
     }
 
-    route_response(response, is_streaming, cancellation_token).await
+    let protocol = PassthroughProtocol::from_endpoint(endpoint);
+    route_response(
+        response,
+        is_streaming,
+        transcode_base64,
+        protocol,
+        cancellation_token,
+    )
+    .await
 }
 
 async fn forward_raw_body_request(
@@ -245,6 +288,8 @@ async fn forward_raw_body_request(
 async fn route_response(
     response: reqwest::Response,
     is_streaming: bool,
+    transcode_base64: bool,
+    protocol: PassthroughProtocol,
     cancellation_token: CancellationToken,
 ) -> Result<axum::response::Response, ProxyError> {
     if is_streaming {
@@ -259,20 +304,53 @@ async fn route_response(
         if LogConfig::get().debug_enabled {
             log::debug!("passthrough response: (streaming)");
         }
-        handle_passthrough_streaming_response(response, cancellation_token, 60).await
+        handle_passthrough_streaming_response(response, protocol, cancellation_token, 60).await
     } else {
-        route_non_streaming_response(response, cancellation_token).await
+        route_non_streaming_response(response, transcode_base64, cancellation_token).await
     }
 }
 
 async fn route_non_streaming_response(
     response: reqwest::Response,
+    transcode_base64: bool,
     _cancellation_token: CancellationToken,
 ) -> Result<axum::response::Response, ProxyError> {
+    if transcode_base64 && response.status().is_success() {
+        return transcode_embeddings_base64(response).await;
+    }
     if LogConfig::get().debug_enabled {
         log::debug!("passthrough response: (verbatim)");
     }
     forward_raw_response(response).await
+}
+
+/// Re-encode float embeddings as base64 for a client that asked
+/// `encoding_format:"base64"` — LM Studio always returns float arrays.
+/// Bytes are the f32 little-endian concatenation, matching OpenAI's encoding.
+async fn transcode_embeddings_base64(response: reqwest::Response) -> Result<Response, ProxyError> {
+    use base64::Engine as _;
+
+    let mut body: Value = response.json().await.map_err(|e| {
+        ProxyError::bad_gateway(&format!("embeddings response is not valid JSON: {}", e))
+    })?;
+
+    if let Some(data) = body.get_mut("data").and_then(|d| d.as_array_mut()) {
+        for entry in data {
+            let Some(floats) = entry.get("embedding").and_then(|e| e.as_array()) else {
+                continue;
+            };
+            let mut bytes = Vec::with_capacity(floats.len() * 4);
+            for value in floats {
+                bytes.extend_from_slice(&(value.as_f64().unwrap_or(0.0) as f32).to_le_bytes());
+            }
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("embedding".to_string(), Value::String(encoded));
+            }
+        }
+    }
+
+    Ok(crate::http::json_response(&body))
 }
 
 fn determine_passthrough_endpoint_url(

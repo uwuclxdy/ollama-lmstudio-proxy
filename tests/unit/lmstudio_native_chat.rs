@@ -4,7 +4,8 @@ use serde_json::{Value, json};
 
 use crate::lmstudio::native_chat::{
     NativeChatRequestParams, build_native_chat_request, convert_native_to_ollama_chat,
-    native_done_reason, native_tool_call_to_openai,
+    native_done_reason_heuristic, native_drop_warning, native_dropped_fields,
+    native_tool_call_to_openai, requested_output_limit,
 };
 
 fn build(messages: &Value, options: Option<&Value>, think: Option<&Value>) -> Value {
@@ -184,7 +185,7 @@ fn convert_maps_message_and_reasoning_output() {
         "response_id": "resp_02b2017dbc06c12bfc353a2ed6c2b802f8cc682884bb5716"
     });
 
-    let out = convert_native_to_ollama_chat(&native, "ollama-model", Instant::now());
+    let out = convert_native_to_ollama_chat(&native, "ollama-model", Instant::now(), None, None);
 
     assert_eq!(out["model"], json!("ollama-model"));
     assert_eq!(out["done"], json!(true));
@@ -226,7 +227,7 @@ fn convert_maps_tool_call_output() {
         }
     });
 
-    let out = convert_native_to_ollama_chat(&native, "m", Instant::now());
+    let out = convert_native_to_ollama_chat(&native, "m", Instant::now(), None, None);
 
     assert_eq!(out["message"]["content"], json!("done"));
     let tool_calls = out["message"]["tool_calls"]
@@ -247,7 +248,7 @@ fn convert_omits_empty_thinking_and_tool_calls() {
         "output": [{ "type": "message", "content": "hi" }],
         "stats": {}
     });
-    let out = convert_native_to_ollama_chat(&native, "m", Instant::now());
+    let out = convert_native_to_ollama_chat(&native, "m", Instant::now(), None, None);
     assert!(out["message"].get("thinking").is_none());
     assert!(out["message"].get("tool_calls").is_none());
     // No response_id when absent.
@@ -270,8 +271,70 @@ fn native_tool_call_shape_matches_converter_input() {
 }
 
 #[test]
-fn done_reason_is_stop() {
-    assert_eq!(native_done_reason(), "stop");
+fn done_reason_heuristic_infers_length_at_cap() {
+    // No cap or under-cap output -> "stop"; output at/over the cap -> "length".
+    assert_eq!(native_done_reason_heuristic(5, None), "stop");
+    assert_eq!(native_done_reason_heuristic(7, Some(8)), "stop");
+    assert_eq!(native_done_reason_heuristic(8, Some(8)), "length");
+    assert_eq!(native_done_reason_heuristic(9, Some(8)), "length");
+}
+
+#[test]
+fn requested_output_limit_ignores_negative_sentinels() {
+    assert_eq!(
+        requested_output_limit(Some(&json!({"num_predict": 8}))),
+        Some(8)
+    );
+    assert_eq!(
+        requested_output_limit(Some(&json!({"max_tokens": 16}))),
+        Some(16)
+    );
+    assert_eq!(
+        requested_output_limit(Some(&json!({"num_predict": -1}))),
+        None
+    );
+    assert_eq!(
+        requested_output_limit(Some(&json!({"num_predict": -2}))),
+        None
+    );
+    assert_eq!(requested_output_limit(Some(&json!({}))), None);
+    assert_eq!(requested_output_limit(None), None);
+}
+
+#[test]
+fn dropped_fields_detected_and_warned() {
+    let body = json!({
+        "model": "m",
+        "messages": [],
+        "tools": [{"type": "function"}],
+        "format": "json",
+        "top_logprobs": 3
+    });
+    let dropped = native_dropped_fields(&body);
+    assert_eq!(dropped, vec!["tools", "format", "top_logprobs"]);
+    let warning = native_drop_warning(&dropped);
+    assert!(warning.contains("tools, format, top_logprobs"));
+    assert!(warning.contains("dropped"));
+
+    // Empty tools array and absent fields trigger nothing.
+    let clean = json!({"model": "m", "messages": [], "tools": []});
+    assert!(native_dropped_fields(&clean).is_empty());
+}
+
+#[test]
+fn convert_attaches_warning_and_length_done_reason() {
+    let native = json!({
+        "output": [{ "type": "message", "content": "12345678" }],
+        "stats": {
+            "total_output_tokens": 8,
+            "tokens_per_second": 40.0,
+            "time_to_first_token_seconds": 0.1
+        }
+    });
+    let out =
+        convert_native_to_ollama_chat(&native, "m", Instant::now(), Some(8), Some("tools dropped"));
+    assert_eq!(out["done_reason"], json!("length"));
+    assert_eq!(out["warning"], json!("tools dropped"));
 }
 
 #[test]

@@ -52,7 +52,7 @@ pub async fn api_key_gate(
             req.method(),
             req.uri().path()
         );
-        unauthorized()
+        unauthorized(req.uri().path())
     }
 }
 
@@ -79,7 +79,18 @@ fn extract_api_key(value: Option<&HeaderValue>) -> Option<&str> {
     Some(key)
 }
 
-fn unauthorized() -> Response {
+fn unauthorized(path: &str) -> Response {
+    // Anthropic SDKs on /v1/messages* parse {"type":"error","error":{...}};
+    // the Ollama {"error":msg} shape reads as a malformed response to them.
+    if path.starts_with("/v1/messages") {
+        let body = crate::error::anthropic_error_body(401, "unauthorized").to_string();
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response();
+    }
     (
         StatusCode::UNAUTHORIZED,
         [(header::CONTENT_TYPE, "application/json")],

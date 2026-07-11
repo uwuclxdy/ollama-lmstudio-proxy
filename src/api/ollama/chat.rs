@@ -20,16 +20,21 @@ use crate::lmstudio::images::{convert_per_message_images, inject_images_into_mes
 use crate::lmstudio::keep_alive::{apply_keep_alive_ttl, parse_keep_alive_seconds};
 use crate::lmstudio::native_chat::{
     NativeChatRequestParams, build_native_chat_request, convert_native_to_ollama_chat,
+    native_drop_warning, native_dropped_fields, requested_output_limit,
 };
 use crate::lmstudio::request::{LMStudioRequestType, build_lm_studio_request};
-use crate::lmstudio::response::normalize_chat_messages;
+use crate::lmstudio::response::{estimate_tokens_from_bytes, normalize_chat_messages};
 use crate::logging::LogConfig;
 use crate::model::ModelResolver;
 use crate::model::naming::extract_required_model_name;
 use crate::streaming::handle_native_streaming_response;
+use crate::streaming::sse::NativeFinalizeOptions;
 
 use super::resolution::{make_top_level_params, resolve_model_with_context};
-use super::unload_only::{UnloadOnlyCall, is_chat_unload_only, respond_unload_only};
+use super::unload_only::{
+    UnloadOnlyCall, WarmOnlyCall, is_chat_unload_only, is_chat_warm_only, respond_unload_only,
+    respond_warm_only,
+};
 
 /// Server-config knobs the chat handler reads, bundled so the entry point
 /// stays under clippy's argument limit.
@@ -70,6 +75,22 @@ pub async fn handle_ollama_chat(
             is_chat: true,
             stream,
             start_time,
+            cancellation_token,
+        })
+        .await;
+    }
+
+    // Spec: a messageless chat with `keep_alive != 0` is a load/warm no-op —
+    // upstream chat.md's "Load a model" sample (empty assistant `message`,
+    // `done_reason:"load"`). The chat twin of the generate warm path.
+    if is_chat_warm_only(&body, keep_alive_seconds) {
+        let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(true);
+        return respond_warm_only(WarmOnlyCall {
+            context: &context,
+            model_resolver,
+            ollama_model_name: &ollama_model_name,
+            is_chat: true,
+            stream,
             cancellation_token,
         })
         .await;
@@ -134,11 +155,30 @@ pub async fn handle_ollama_chat(
                 .await;
 
                 let message_count = messages.len();
+                // Request text length for the streaming prompt-token estimate
+                // (string contents only; parts arrays contribute nothing, an
+                // acceptable under-estimate for a heuristic).
+                let input_chars: usize = messages
+                    .iter()
+                    .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                    .map(str::len)
+                    .sum();
 
                 // Native /api/v1/chat path: build the request from the raw Ollama
                 // messages (the native builder owns its own `input`/image shaping)
                 // and dispatch to the native converter / streaming driver.
                 if use_native {
+                    // The native request schema has no slot for several Ollama
+                    // fields — warn (log + response) instead of dropping silently,
+                    // matching the /api/create MESSAGE-not-applied precedent.
+                    let dropped_fields = native_dropped_fields(&body);
+                    let drop_warning = (!dropped_fields.is_empty()).then(|| {
+                        let warning = native_drop_warning(&dropped_fields);
+                        log::warn!("native chat: {}", warning);
+                        warning
+                    });
+                    let requested_max_tokens =
+                        requested_output_limit(resolution_ctx.effective_options.as_ref());
                     // Only forward `integrations` on the native path; the default
                     // OpenAI-compat path never reads this field.
                     let integrations = body.get("integrations").filter(|v| v.is_array());
@@ -178,6 +218,11 @@ pub async fn handle_ollama_chat(
                             start_time,
                             cancellation_token,
                             DEFAULT_STREAM_TIMEOUT_SECONDS,
+                            NativeFinalizeOptions {
+                                requested_max_tokens,
+                                warning: drop_warning,
+                                prompt_tokens_estimate: estimate_tokens_from_bytes(input_chars),
+                            },
                         )
                         .await
                     } else {
@@ -187,6 +232,8 @@ pub async fn handle_ollama_chat(
                             &native_value,
                             &ollama_model_name,
                             start_time,
+                            requested_max_tokens,
+                            drop_warning.as_deref(),
                         );
                         Ok(json_response(&ollama_response))
                     };
@@ -249,7 +296,10 @@ pub async fn handle_ollama_chat(
                     is_chat: true,
                     model_name: &ollama_model_name,
                     start_time,
-                    context: ResponseContext::Chat { message_count },
+                    context: ResponseContext::Chat {
+                        message_count,
+                        input_chars,
+                    },
                     cancellation_token,
                 })
                 .await

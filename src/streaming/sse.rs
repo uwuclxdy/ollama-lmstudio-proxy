@@ -13,7 +13,7 @@ use crate::constants::{
     SSE_DONE_MESSAGE, SSE_MESSAGE_BOUNDARY,
 };
 use crate::error::ProxyError;
-use crate::lmstudio::response::TimingInfo;
+use crate::lmstudio::response::{TimingInfo, estimate_tokens_from_bytes};
 use crate::logging::log_timed;
 use crate::streaming::chunks::{
     ChunkProcessingState, FinalChunkParams, create_cancellation_chunk, create_final_chunk,
@@ -65,6 +65,7 @@ pub async fn handle_streaming_response(
     start_time: Instant,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
+    prompt_tokens_estimate: u64,
 ) -> Result<axum::response::Response, ProxyError> {
     let lm_studio_response = reject_pre_stream_error(lm_studio_response).await?;
 
@@ -82,6 +83,9 @@ pub async fn handle_streaming_response(
         let mut stream = lm_studio_response.bytes_stream();
         let mut sse_buffer = String::with_capacity(runtime_config.max_buffer_size.min(1024 * 1024));
         let mut chunk_count = 0u64;
+        // Streamed output text length (content + thinking) — the token-count
+        // estimates derive from this, not from the SSE chunk count.
+        let mut streamed_chars = 0usize;
         let mut chunk_state = ChunkProcessingState::default();
         let mut first_chunk_received = false;
         let mut recovery_buffer = String::new();
@@ -94,7 +98,8 @@ pub async fn handle_streaming_response(
                     let cancellation_chunk = create_cancellation_chunk(
                         &model_clone_for_task,
                         start_time.elapsed(),
-                        chunk_count,
+                        prompt_tokens_estimate,
+                        estimate_tokens_from_bytes(streamed_chars),
                         is_chat_endpoint,
                     );
                     send_chunk_and_close_channel(&tx, cancellation_chunk).await;
@@ -141,6 +146,7 @@ pub async fn handle_streaming_response(
                                                     }
 
                                                 if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                    streamed_chars += content_to_send.len() + thinking_to_send.len();
                                                     let ollama_chunk = create_ollama_streaming_chunk(
                                                         &model_clone_for_task,
                                                         &content_to_send,
@@ -170,6 +176,7 @@ pub async fn handle_streaming_response(
                                                             }
 
                                                         if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                            streamed_chars += content_to_send.len() + thinking_to_send.len();
                                                             let ollama_chunk = create_ollama_streaming_chunk(
                                                                 &model_clone_for_task,
                                                                 &content_to_send,
@@ -231,6 +238,7 @@ pub async fn handle_streaming_response(
                                         }
 
                                     if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                        streamed_chars += content_to_send.len() + thinking_to_send.len();
                                         let ollama_chunk = create_ollama_streaming_chunk(
                                             &model_clone_for_task,
                                             &content_to_send,
@@ -275,7 +283,8 @@ pub async fn handle_streaming_response(
             let final_chunk = create_final_chunk(FinalChunkParams {
                 model_name: &model_clone_for_task,
                 duration: start_time.elapsed(),
-                chunk_count,
+                prompt_tokens_estimate,
+                output_tokens_estimate: estimate_tokens_from_bytes(streamed_chars),
                 is_chat: is_chat_endpoint,
                 done_reason: chunk_state.finish_reason(),
             });
@@ -302,12 +311,23 @@ pub async fn handle_streaming_response(
 /// the stream with a bare error line, and `chat.end` drives the final timing
 /// chunk from the native `stats` block. Native is always chat-shaped, so chunk
 /// recovery (OpenAI-specific) is intentionally skipped.
+/// Request-derived extras for the native stream's final chunk: the output cap
+/// feeding the `done_reason` heuristic, the dropped-field warning, and the
+/// input-length token estimate for stats fallbacks.
+#[derive(Default)]
+pub struct NativeFinalizeOptions {
+    pub requested_max_tokens: Option<u64>,
+    pub warning: Option<String>,
+    pub prompt_tokens_estimate: u64,
+}
+
 pub async fn handle_native_streaming_response(
     lm_studio_response: reqwest::Response,
     ollama_model_name: &str,
     start_time: Instant,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
+    finalize: NativeFinalizeOptions,
 ) -> Result<axum::response::Response, ProxyError> {
     let lm_studio_response = reject_pre_stream_error(lm_studio_response).await?;
 
@@ -325,10 +345,19 @@ pub async fn handle_native_streaming_response(
         let mut stream = lm_studio_response.bytes_stream();
         let mut sse_buffer = String::with_capacity(runtime_config.max_buffer_size.min(1024 * 1024));
         let mut chunk_count = 0u64;
+        // Streamed output text length (content + thinking), for the stats
+        // fallbacks when chat.end never arrives (and the cancel chunk).
+        let mut streamed_chars = 0usize;
         let mut chunk_state = ChunkProcessingState::default();
         let mut first_chunk_received = false;
         // Captured from `chat.end` so the final done chunk can carry native stats.
         let mut chat_end: Option<NativeChatEnd> = None;
+        // `model_load.end` load time, used when the chat.end stats omit theirs.
+        let mut observed_load_seconds: Option<f64> = None;
+        // A native `error` event is recoverable (chat.end still follows with
+        // whatever was generated); remember it so a stream that then dies
+        // WITHOUT a chat.end doesn't fabricate a final done:true chunk.
+        let mut had_error_event = false;
 
         let stream_result = 'stream_loop: loop {
             tokio::select! {
@@ -337,7 +366,8 @@ pub async fn handle_native_streaming_response(
                     let cancellation_chunk = create_cancellation_chunk(
                         &model_clone_for_task,
                         start_time.elapsed(),
-                        chunk_count,
+                        finalize.prompt_tokens_estimate,
+                        estimate_tokens_from_bytes(streamed_chars),
                         true,
                     );
                     send_chunk_and_close_channel(&tx, cancellation_chunk).await;
@@ -377,6 +407,7 @@ pub async fn handle_native_streaming_response(
                                             if payload.content.is_empty() && payload.thinking.is_empty() {
                                                 continue;
                                             }
+                                            streamed_chars += payload.content.len() + payload.thinking.len();
                                             let ollama_chunk = create_ollama_streaming_chunk(
                                                 &model_clone_for_task,
                                                 &payload.content,
@@ -395,10 +426,19 @@ pub async fn handle_native_streaming_response(
                                             break 'stream_loop Ok(());
                                         }
                                         NativeEvent::Error(err) => {
+                                            // Recoverable per the streaming-events doc: surface the
+                                            // error line but keep reading — chat.end still follows
+                                            // with the stats block and any content generated after.
                                             let message = err.to_message();
                                             log::error!("native stream error: {}", message);
-                                            send_error_and_close(&tx, &message).await;
-                                            break 'stream_loop Err(message);
+                                            had_error_event = true;
+                                            let error_chunk = crate::streaming::chunks::create_error_chunk(&message);
+                                            if !send_chunk(&tx, &error_chunk).await {
+                                                break 'stream_loop Ok(());
+                                            }
+                                        }
+                                        NativeEvent::ModelLoaded(seconds) => {
+                                            observed_load_seconds = Some(seconds);
                                         }
                                         NativeEvent::Ignore => {}
                                     }
@@ -428,7 +468,11 @@ pub async fn handle_native_streaming_response(
             }
         };
 
-        if stream_result.is_ok() && !token_clone.is_cancelled() {
+        // After an error event, only a real chat.end may produce the final
+        // chunk — a stream that died post-error must not fabricate done:true
+        // (mirrors the v0 path's "error line ends the stream" contract).
+        let may_finalize = !had_error_event || chat_end.is_some();
+        if stream_result.is_ok() && !token_clone.is_cancelled() && may_finalize {
             // Same contract as the v0 path: assembled tool calls in one
             // done:false chunk, final chunk tool-free.
             if let Some(tool_calls) = chunk_state.take_tool_calls() {
@@ -447,7 +491,9 @@ pub async fn handle_native_streaming_response(
                 &model_clone_for_task,
                 chat_end.as_ref(),
                 start_time,
-                chunk_count,
+                streamed_chars,
+                observed_load_seconds,
+                &finalize,
             );
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
@@ -468,50 +514,134 @@ pub async fn handle_native_streaming_response(
 /// Build the final `done:true` chunk for the native streaming path.
 ///
 /// When a `chat.end` was seen, timing comes from its native `stats` block via
-/// [`TimingInfo::from_native_stats`] and `done_reason` from the parsed end
-/// event; otherwise (stream ended early) it falls back to the wall-clock
-/// heuristics in [`create_final_chunk`].
+/// [`TimingInfo::from_native_stats`] (with the `model_load.end` event's load
+/// time as fallback when the stats omit theirs) and `done_reason` from the
+/// parsed end event; otherwise (stream ended early) it falls back to the
+/// wall-clock heuristics in [`create_final_chunk`].
 fn build_native_final_chunk(
     model_name: &str,
     chat_end: Option<&NativeChatEnd>,
     start_time: Instant,
-    chunk_count: u64,
+    streamed_chars: usize,
+    observed_load_seconds: Option<f64>,
+    finalize: &NativeFinalizeOptions,
 ) -> Value {
-    let Some(end) = chat_end else {
-        return create_final_chunk(FinalChunkParams {
+    let output_tokens_estimate = estimate_tokens_from_bytes(streamed_chars);
+    let mut chunk = match chat_end {
+        Some(end) => {
+            let timing = TimingInfo::from_native_stats(
+                &end.result,
+                start_time,
+                finalize.prompt_tokens_estimate,
+                output_tokens_estimate.max(1),
+                observed_load_seconds,
+            );
+
+            let mut chunk = create_ollama_streaming_chunk(model_name, "", true, true, None, "");
+
+            if let Some(obj) = chunk.as_object_mut() {
+                // Proxy heuristic — the native API exposes no finish-reason.
+                let done_reason = crate::lmstudio::native_chat::native_done_reason_heuristic(
+                    timing.eval_count,
+                    finalize.requested_max_tokens,
+                );
+                obj.insert("done_reason".to_string(), json!(done_reason));
+                obj.insert("total_duration".to_string(), json!(timing.total_duration));
+                obj.insert("load_duration".to_string(), json!(timing.load_duration));
+                obj.insert(
+                    "prompt_eval_count".to_string(),
+                    json!(timing.prompt_eval_count),
+                );
+                obj.insert(
+                    "prompt_eval_duration".to_string(),
+                    json!(timing.prompt_eval_duration),
+                );
+                obj.insert("eval_count".to_string(), json!(timing.eval_count));
+                obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
+            }
+
+            chunk
+        }
+        None => create_final_chunk(FinalChunkParams {
             model_name,
             duration: start_time.elapsed(),
-            chunk_count,
+            prompt_tokens_estimate: finalize.prompt_tokens_estimate,
+            output_tokens_estimate,
             is_chat: true,
             done_reason: None,
-        });
+        }),
     };
 
-    let timing = TimingInfo::from_native_stats(&end.result, start_time, 10, chunk_count.max(1));
-
-    let mut chunk = create_ollama_streaming_chunk(model_name, "", true, true, None, "");
-
-    if let Some(obj) = chunk.as_object_mut() {
-        obj.insert("done_reason".to_string(), json!(end.done_reason));
-        obj.insert("total_duration".to_string(), json!(timing.total_duration));
-        obj.insert("load_duration".to_string(), json!(timing.load_duration));
-        obj.insert(
-            "prompt_eval_count".to_string(),
-            json!(timing.prompt_eval_count),
-        );
-        obj.insert(
-            "prompt_eval_duration".to_string(),
-            json!(timing.prompt_eval_duration),
-        );
-        obj.insert("eval_count".to_string(), json!(timing.eval_count));
-        obj.insert("eval_duration".to_string(), json!(timing.eval_duration));
+    if let Some(warning) = &finalize.warning
+        && let Some(obj) = chunk.as_object_mut()
+    {
+        obj.insert("warning".to_string(), json!(warning));
     }
 
     chunk
 }
 
+/// Wire protocol of a passthrough stream, for shaping proxy-injected
+/// cancel/timeout/error frames. The Ollama bare `data:{"error":...}` line is
+/// wrong on every passthrough surface: Anthropic clients dispatch on `event:`
+/// names, OpenAI clients expect a typed `error` object, `/v1/responses`
+/// clients expect a `response.failed` event, and the native `/api/v1` stream
+/// uses named `event: error` blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassthroughProtocol {
+    /// OpenAI-style SSE: `/v1/chat/completions`, `/v1/completions`, `/api/v0/*`.
+    OpenAi,
+    /// Anthropic messages: `/v1/messages`.
+    Anthropic,
+    /// OpenAI responses API: `/v1/responses`.
+    Responses,
+    /// LM Studio native versioned API: `/api/v1/*` and later.
+    NativeV1,
+}
+
+impl PassthroughProtocol {
+    pub fn from_endpoint(endpoint: &str) -> Self {
+        if endpoint.starts_with("/v1/messages") {
+            Self::Anthropic
+        } else if endpoint.starts_with("/v1/responses") {
+            Self::Responses
+        } else if endpoint.starts_with("/api/") && !endpoint.starts_with("/api/v0/") {
+            Self::NativeV1
+        } else {
+            Self::OpenAi
+        }
+    }
+
+    /// Frame a proxy-injected error (cancel/timeout/upstream failure) as a
+    /// complete SSE block in this protocol's error shape.
+    fn frame_error(&self, message: &str) -> String {
+        match self {
+            Self::OpenAi => format!(
+                "data: {}\n\n",
+                json!({"error": {"message": message, "type": "server_error"}})
+            ),
+            Self::Anthropic => format!(
+                "event: error\ndata: {}\n\n",
+                json!({"type": "error", "error": {"type": "api_error", "message": message}})
+            ),
+            Self::Responses => format!(
+                "event: response.failed\ndata: {}\n\n",
+                json!({
+                    "type": "response.failed",
+                    "response": {"status": "failed", "error": {"code": "server_error", "message": message}}
+                })
+            ),
+            Self::NativeV1 => format!(
+                "event: error\ndata: {}\n\n",
+                json!({"type": "error", "error": {"type": "internal_error", "message": message}})
+            ),
+        }
+    }
+}
+
 pub async fn handle_passthrough_streaming_response(
     response: reqwest::Response,
+    protocol: PassthroughProtocol,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -527,7 +657,7 @@ pub async fn handle_passthrough_streaming_response(
             tokio::select! {
                 biased;
                 _ = cancellation_token.cancelled() => {
-                    let cancel_data = format!("data: {{\"error\": \"{}\", \"cancelled\": true}}\n\n", ERROR_CANCELLED);
+                    let cancel_data = protocol.frame_error(ERROR_CANCELLED);
                     let _ = tx.send(Ok(bytes::Bytes::from(cancel_data)));
                     break;
                 }
@@ -540,13 +670,13 @@ pub async fn handle_passthrough_streaming_response(
                             }
                         }
                         Ok(Some(Err(e))) => {
-                            let error_data = format!("data: {{\"error\": \"streaming error: {}\"}}\n\n", e);
+                            let error_data = protocol.frame_error(&format!("streaming error: {}", e));
                             let _ = tx.send(Ok(bytes::Bytes::from(error_data)));
                             break;
                         }
                         Ok(None) => break,
                         Err(_) => {
-                            let timeout_data = format!("data: {{\"error\": \"{}\"}}\n\n", ERROR_TIMEOUT);
+                            let timeout_data = protocol.frame_error(ERROR_TIMEOUT);
                             let _ = tx.send(Ok(bytes::Bytes::from(timeout_data)));
                             break;
                         }

@@ -296,3 +296,59 @@ async fn streaming_native_sse_converts_to_ollama_ndjson() {
         assert_eq!(chunk["done"], false, "non-final chunk must be done:false");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Non-streaming: dropped-field warning + length done_reason heuristic
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn non_streaming_warns_on_dropped_fields_and_infers_length() {
+    let p = spawn_proxy_with_native().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "llama3.1-8b-instruct",
+            "output": [{ "type": "message", "content": "one two three" }],
+            "stats": {
+                "input_tokens": 12,
+                "total_output_tokens": 3,
+                "tokens_per_second": 40.0,
+                "time_to_first_token_seconds": 0.1
+            }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // format + tools have no native slot -> warned; 3 tokens == num_predict:3
+    // -> the proxy heuristic reports length (the native API has no finish
+    // reason of its own).
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "tools": [{ "type": "function", "function": { "name": "noop" } }],
+            "format": "json",
+            "options": { "num_predict": 3 },
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat (native, dropped fields)");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done_reason"], "length");
+    let warning = body["warning"].as_str().expect("warning field present");
+    assert!(warning.contains("tools"), "warning names tools: {warning}");
+    assert!(
+        warning.contains("format"),
+        "warning names format: {warning}"
+    );
+
+    p.mock.verify().await;
+}

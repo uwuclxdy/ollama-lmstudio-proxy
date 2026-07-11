@@ -1244,6 +1244,7 @@ name = "ollama-lmstudio-proxy"
 version = "1.4.0"
 dependencies = [
  "axum",
+ "base64",
  "bytes",
  "chrono",
  "clap",

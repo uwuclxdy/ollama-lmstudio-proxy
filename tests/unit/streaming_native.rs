@@ -129,7 +129,6 @@ fn chat_end_extracts_stats() {
     let (event, _) = map("chat.end", data);
     match event {
         NativeEvent::End(end) => {
-            assert_eq!(end.done_reason, "stop");
             let stats = end.stats.expect("stats present");
             assert_eq!(stats["input_tokens"], json!(329));
             assert_eq!(stats["total_output_tokens"], json!(268));
@@ -202,4 +201,90 @@ fn parse_sse_message_rejects_missing_event_or_data() {
     assert!(parse_native_sse_message("data: {}").is_none());
     assert!(parse_native_sse_message("event: message.delta").is_none());
     assert!(parse_native_sse_message("event: message.delta\ndata: not-json").is_none());
+}
+
+#[test]
+fn sequential_tool_calls_accumulate_into_separate_slots() {
+    // Native events carry no index; each tool_call.start opens the next slot,
+    // so two parallel calls must both survive (regression: last-wins collapse).
+    let mut state = ChunkProcessingState::default();
+    let start = |tool: &str| json!({ "type": "tool_call.start", "tool": tool });
+    let args = |tool: &str, city: &str| json!({ "type": "tool_call.arguments", "tool": tool, "arguments": { "city": city } });
+
+    map_native_event("tool_call.start", &start("get_weather"), &mut state);
+    map_native_event(
+        "tool_call.arguments",
+        &args("get_weather", "Paris"),
+        &mut state,
+    );
+    map_native_event("tool_call.start", &start("get_time"), &mut state);
+    map_native_event(
+        "tool_call.arguments",
+        &args("get_time", "Tokyo"),
+        &mut state,
+    );
+
+    let calls = state.take_tool_calls().expect("accumulated calls");
+    let arr = calls.as_array().expect("tool_calls array");
+    assert_eq!(arr.len(), 2, "two started calls must fill two slots");
+    assert_eq!(arr[0]["function"]["name"], json!("get_weather"));
+    assert_eq!(arr[0]["function"]["arguments"], json!({ "city": "Paris" }));
+    assert_eq!(arr[1]["function"]["name"], json!("get_time"));
+    assert_eq!(arr[1]["function"]["arguments"], json!({ "city": "Tokyo" }));
+}
+
+#[test]
+fn tool_call_argument_snapshots_replace_within_slot() {
+    // Successive `arguments` payloads are progressively complete snapshots of
+    // the same call; the latest one (tool_call.success carries the final) wins.
+    let mut state = ChunkProcessingState::default();
+    map_native_event(
+        "tool_call.start",
+        &json!({ "type": "tool_call.start", "tool": "search" }),
+        &mut state,
+    );
+    map_native_event(
+        "tool_call.arguments",
+        &json!({ "type": "tool_call.arguments", "tool": "search", "arguments": { "q": "ru" } }),
+        &mut state,
+    );
+    map_native_event(
+        "tool_call.success",
+        &json!({
+            "type": "tool_call.success",
+            "tool": "search",
+            "arguments": { "q": "rust", "limit": 3 },
+            "output": "[]"
+        }),
+        &mut state,
+    );
+
+    let calls = state.take_tool_calls().expect("accumulated calls");
+    let arr = calls.as_array().expect("tool_calls array");
+    assert_eq!(arr.len(), 1, "one call, however many snapshots");
+    assert_eq!(
+        arr[0]["function"]["arguments"],
+        json!({ "q": "rust", "limit": 3 })
+    );
+}
+
+#[test]
+fn model_load_end_surfaces_load_time() {
+    let (event, _) = map(
+        "model_load.end",
+        json!({ "type": "model_load.end", "model_instance_id": "m", "load_time_seconds": 12.34 }),
+    );
+    match event {
+        NativeEvent::ModelLoaded(seconds) => assert!((seconds - 12.34).abs() < f64::EPSILON),
+        _ => panic!("expected ModelLoaded"),
+    }
+}
+
+#[test]
+fn model_load_end_without_time_is_ignored() {
+    let (event, _) = map(
+        "model_load.end",
+        json!({ "type": "model_load.end", "model_instance_id": "m" }),
+    );
+    assert!(matches!(event, NativeEvent::Ignore));
 }

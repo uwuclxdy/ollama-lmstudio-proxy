@@ -11,11 +11,19 @@ use super::*;
 
 #[test]
 fn response_context_chat_variant() {
-    let ctx = ResponseContext::Chat { message_count: 3 };
-    let ResponseContext::Chat { message_count } = ctx else {
+    let ctx = ResponseContext::Chat {
+        message_count: 3,
+        input_chars: 42,
+    };
+    let ResponseContext::Chat {
+        message_count,
+        input_chars,
+    } = ctx
+    else {
         panic!("expected Chat variant");
     };
     assert_eq!(message_count, 3);
+    assert_eq!(input_chars, 42);
 }
 
 #[test]

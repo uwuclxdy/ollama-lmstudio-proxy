@@ -25,7 +25,6 @@ use serde_json::{Map, Value, json};
 
 use crate::lmstudio::request::normalize_reasoning;
 use crate::lmstudio::response::{TimingInfo, convert_tool_calls_to_ollama};
-use crate::streaming::chunks::map_done_reason;
 
 /// Parameters for building a native `/api/v1/chat` request body.
 ///
@@ -104,9 +103,12 @@ fn apply_native_sampling(ollama_options: Option<&Value>, body: &mut Map<String, 
     }
 
     // Native uses `max_output_tokens`; accept either Ollama spelling as source.
+    // Ollama's negative num_predict sentinels (-1 infinite / -2 fill context)
+    // mean "no limit" — omit the field, mirroring the v0 builder.
     if let Some(max_tokens) = options
         .get("max_tokens")
         .or_else(|| options.get("num_predict"))
+        && max_tokens.as_i64().is_none_or(|n| n >= 0)
     {
         body.insert("max_output_tokens".to_string(), max_tokens.clone());
     }
@@ -166,11 +168,14 @@ fn build_native_input(messages: &Value) -> Value {
 /// `message.thinking` (omitted when empty); `{type:"tool_call"}` entries are
 /// collected and shaped via `convert_tool_calls_to_ollama`. Timing comes from
 /// the native `stats` block via the shared `TimingInfo::from_native_stats`.
-/// Output shape matches `convert_to_ollama_chat`.
+/// Output shape matches `convert_to_ollama_chat`. `warning` (dropped-field
+/// notice) is attached as a top-level `warning` key, matching `/api/create`.
 pub fn convert_native_to_ollama_chat(
     native_response: &Value,
     model_ollama_name: &str,
     start_time: Instant,
+    requested_max_tokens: Option<u64>,
+    warning: Option<&str>,
 ) -> Value {
     let NativeOutput {
         content,
@@ -183,6 +188,7 @@ pub fn convert_native_to_ollama_chat(
         start_time,
         10,
         crate::lmstudio::response::estimate_token_count(&content),
+        None,
     );
 
     let mut ollama_message = json!({
@@ -202,12 +208,9 @@ pub fn convert_native_to_ollama_chat(
         }
     }
 
-    // The native API exposes no finish-reason anywhere (the non-stream stats
-    // block carries only token/timing data), so `done_reason` is always `"stop"`
-    // by backend limitation.
-    let done_reason = "stop";
+    let done_reason = native_done_reason_heuristic(timing.eval_count, requested_max_tokens);
 
-    json!({
+    let mut response = json!({
         "model": model_ollama_name,
         "created_at": chrono::Utc::now().to_rfc3339(),
         "message": ollama_message,
@@ -219,7 +222,75 @@ pub fn convert_native_to_ollama_chat(
         "prompt_eval_duration": timing.prompt_eval_duration,
         "eval_count": timing.eval_count,
         "eval_duration": timing.eval_duration,
-    })
+    });
+
+    if let Some(warning) = warning
+        && let Some(obj) = response.as_object_mut()
+    {
+        obj.insert("warning".to_string(), json!(warning));
+    }
+
+    response
+}
+
+/// Derive `done_reason` for the native path. Proxy heuristic, NOT a backend
+/// value: the native API exposes no finish-reason anywhere, so truncation is
+/// inferred from the output token count reaching the requested cap.
+pub fn native_done_reason_heuristic(
+    eval_count: u64,
+    requested_max_tokens: Option<u64>,
+) -> &'static str {
+    match requested_max_tokens {
+        Some(limit) if eval_count >= limit => "length",
+        _ => "stop",
+    }
+}
+
+/// Positive `max_tokens`/`num_predict` cap from Ollama `options`, for the
+/// `done_reason` heuristic. The negative "no limit" sentinels yield `None`.
+pub fn requested_output_limit(options: Option<&Value>) -> Option<u64> {
+    let options = options?;
+    options
+        .get("max_tokens")
+        .or_else(|| options.get("num_predict"))?
+        .as_i64()
+        .filter(|n| *n > 0)
+        .map(|n| n as u64)
+}
+
+/// Request fields the native `/api/v1/chat` schema has no slot for (see the
+/// module doc). Used to warn instead of dropping them silently.
+pub fn native_dropped_fields(body: &Value) -> Vec<&'static str> {
+    let mut dropped = Vec::new();
+    if body
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .is_some_and(|arr| !arr.is_empty())
+    {
+        dropped.push("tools");
+    }
+    for key in [
+        "tool_choice",
+        "format",
+        "response_format",
+        "logprobs",
+        "top_logprobs",
+        "images",
+    ] {
+        if body.get(key).is_some_and(|v| !v.is_null()) {
+            dropped.push(key);
+        }
+    }
+    dropped
+}
+
+/// Human-readable warning for `native_dropped_fields` hits, mirroring the
+/// `/api/create` MESSAGE/TEMPLATE not-applied warnings.
+pub fn native_drop_warning(dropped: &[&str]) -> String {
+    format!(
+        "{} not supported on the native chat path (LM Studio /api/v1/chat has no such field) and was dropped; use the default OpenAI-compat path for it",
+        dropped.join(", ")
+    )
 }
 
 /// Aggregated text/reasoning/tool_call data drawn from a native `output` array.
@@ -287,13 +358,6 @@ pub fn native_tool_call_to_openai(item: &Value) -> Value {
             "arguments": arguments,
         }
     })
-}
-
-/// Re-exported so callers can build a final timing chunk from the same
-/// `done_reason` literal the non-streaming converter uses.
-pub fn native_done_reason() -> &'static str {
-    // Mirror `map_done_reason("stop")` to stay aligned with the OpenAI path.
-    map_done_reason("stop").unwrap_or("stop")
 }
 
 #[cfg(test)]

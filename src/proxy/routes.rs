@@ -379,8 +379,9 @@ async fn forward_passthrough(
     headers: HeaderMap,
     query: Option<String>,
 ) -> Result<Response, ProxyError> {
+    let is_anthropic_surface = full_path.starts_with("/v1/messages");
     let context = create_context(&s);
-    lmstudio::handle_lmstudio_passthrough(
+    let result = lmstudio::handle_lmstudio_passthrough(
         context,
         s.model_resolver.clone(),
         lmstudio::LmStudioPassthroughRequest {
@@ -393,7 +394,14 @@ async fn forward_passthrough(
         s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
-    .await
+    .await;
+
+    // Proxy-generated errors on the Anthropic surface must wear Anthropic's
+    // envelope; the global IntoResponse emits the Ollama {"error":msg} shape.
+    match result {
+        Err(e) if is_anthropic_surface => Ok(e.into_anthropic_response()),
+        other => other,
+    }
 }
 
 fn encode_query(pairs: &[(String, String)]) -> Option<String> {

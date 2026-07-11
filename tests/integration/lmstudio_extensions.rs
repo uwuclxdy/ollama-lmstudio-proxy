@@ -267,3 +267,126 @@ async fn chat_completions_json_object_rewritten_to_json_schema() {
 
     p.mock.verify().await;
 }
+
+// ── /v1/messages proxy errors wear the Anthropic envelope ───────────────────
+
+#[tokio::test]
+async fn messages_unknown_model_returns_anthropic_error_envelope() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "meta/llama-3.2").await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/messages"))
+        .json(&json!({
+            "model": "does-not-exist",
+            "max_tokens": 8,
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .send()
+        .await
+        .expect("POST /v1/messages unknown model");
+
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["type"], "error", "Anthropic envelope: {body}");
+    assert_eq!(body["error"]["type"], "not_found_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("not found")),
+        "message must carry the resolver detail: {body}"
+    );
+}
+
+// ── /v1/models/{model}: path segment resolved like a body model ─────────────
+
+#[tokio::test]
+async fn models_path_segment_resolved_from_alias() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "meta/llama-3.2").await;
+
+    // The backend must be hit with the RESOLVED key in the path; an
+    // unresolved alias would miss this mock and 404.
+    Mock::given(method("GET"))
+        .and(path("/v1/models/meta/llama-3.2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "meta/llama-3.2",
+            "object": "model",
+            "owned_by": "organization_owner"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models/llama-3.2:latest"))
+        .send()
+        .await
+        .expect("GET /v1/models/{alias}");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["id"], "meta/llama-3.2");
+
+    p.mock.verify().await;
+}
+
+// ── /v1/embeddings encoding_format:"base64" transcoded by the proxy ─────────
+
+#[tokio::test]
+async fn embeddings_base64_transcoded_from_backend_floats() {
+    use base64::Engine as _;
+
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "nomic/embed-text").await;
+
+    // LM Studio ignores encoding_format and always returns float arrays; the
+    // proxy strips the field outbound and self-encodes the response.
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({ "model": "nomic/embed-text" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "object": "embedding", "index": 0, "embedding": [1.0, -0.5] }],
+            "model": "nomic/embed-text",
+            "usage": { "prompt_tokens": 2, "total_tokens": 2 }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/embeddings"))
+        .json(&json!({
+            "model": "nomic/embed-text",
+            "input": "hi",
+            "encoding_format": "base64"
+        }))
+        .send()
+        .await
+        .expect("POST /v1/embeddings base64");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    let encoded = body["data"][0]["embedding"]
+        .as_str()
+        .expect("embedding must be a base64 string, not a float array");
+
+    // OpenAI convention: base64 over the f32 little-endian byte concatenation.
+    let mut expected_bytes = Vec::new();
+    expected_bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    expected_bytes.extend_from_slice(&(-0.5f32).to_le_bytes());
+    assert_eq!(
+        encoded,
+        base64::engine::general_purpose::STANDARD.encode(&expected_bytes)
+    );
+    assert_eq!(
+        body["usage"]["prompt_tokens"], 2,
+        "other fields pass through"
+    );
+
+    p.mock.verify().await;
+}

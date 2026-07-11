@@ -314,3 +314,97 @@ fn pipeline_stream_split_across_two_chunks_reassembled() {
     }
     // If the split happened after the \n\n then p1 would have one entry — also fine
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PassthroughProtocol — injected cancel/timeout/error frame shaping
+// ════════════════════════════════════════════════════════════════════════════
+
+use crate::streaming::sse::PassthroughProtocol;
+
+#[test]
+fn passthrough_protocol_maps_endpoints() {
+    use PassthroughProtocol::*;
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/messages"),
+        Anthropic
+    );
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/messages/count_tokens"),
+        Anthropic
+    );
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/responses"),
+        Responses
+    );
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/chat/completions"),
+        OpenAi
+    );
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/completions"),
+        OpenAi
+    );
+    assert_eq!(PassthroughProtocol::from_endpoint("/v1/embeddings"), OpenAi);
+    // /api/v0 is LM Studio's OpenAI-compat surface; /api/v1+ is native events.
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/api/v0/chat/completions"),
+        OpenAi
+    );
+    assert_eq!(PassthroughProtocol::from_endpoint("/api/v1/chat"), NativeV1);
+}
+
+/// Split a framed SSE block into (event-name, parsed data payload).
+fn parse_frame(frame: &str) -> (Option<String>, serde_json::Value) {
+    assert!(
+        frame.ends_with("\n\n"),
+        "frame must be a complete SSE block"
+    );
+    let mut event = None;
+    let mut data = String::new();
+    for line in frame.lines() {
+        if let Some(rest) = line.strip_prefix("event: ") {
+            event = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("data: ") {
+            data.push_str(rest);
+        }
+    }
+    (
+        event,
+        serde_json::from_str(&data).expect("frame data is JSON"),
+    )
+}
+
+#[test]
+fn anthropic_frame_is_named_error_event_with_typed_body() {
+    let (event, data) = parse_frame(&PassthroughProtocol::Anthropic.frame_error("boom"));
+    assert_eq!(event.as_deref(), Some("error"));
+    assert_eq!(data["type"], json!("error"));
+    assert_eq!(data["error"]["type"], json!("api_error"));
+    assert_eq!(data["error"]["message"], json!("boom"));
+}
+
+#[test]
+fn openai_frame_is_bare_data_with_typed_error_object() {
+    let (event, data) = parse_frame(&PassthroughProtocol::OpenAi.frame_error("boom"));
+    assert_eq!(event, None, "OpenAI SSE uses bare data: lines");
+    assert_eq!(data["error"]["message"], json!("boom"));
+    assert_eq!(data["error"]["type"], json!("server_error"));
+}
+
+#[test]
+fn responses_frame_is_response_failed_event() {
+    let (event, data) = parse_frame(&PassthroughProtocol::Responses.frame_error("boom"));
+    assert_eq!(event.as_deref(), Some("response.failed"));
+    assert_eq!(data["type"], json!("response.failed"));
+    assert_eq!(data["response"]["status"], json!("failed"));
+    assert_eq!(data["response"]["error"]["message"], json!("boom"));
+}
+
+#[test]
+fn native_frame_is_named_error_event_with_native_type() {
+    let (event, data) = parse_frame(&PassthroughProtocol::NativeV1.frame_error("boom"));
+    assert_eq!(event.as_deref(), Some("error"));
+    assert_eq!(data["type"], json!("error"));
+    assert_eq!(data["error"]["type"], json!("internal_error"));
+    assert_eq!(data["error"]["message"], json!("boom"));
+}

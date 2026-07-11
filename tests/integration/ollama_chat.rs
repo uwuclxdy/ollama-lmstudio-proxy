@@ -1255,19 +1255,57 @@ async fn keep_alive_zero_unload_4xx_does_not_fail_request() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn missing_messages_returns_400() {
+async fn non_array_messages_returns_400() {
     let p = spawn_proxy().await;
     mount_model_catalog(&p, "llama3.1-8b-instruct").await;
 
     let resp = p
         .client
         .post(p.url("/api/chat"))
-        .json(&json!({ "model": "llama3.1:8b" }))
+        .json(&json!({ "model": "llama3.1:8b", "messages": "oops" }))
         .send()
         .await
-        .expect("POST /api/chat no messages");
+        .expect("POST /api/chat non-array messages");
 
     assert_eq!(resp.status(), 400);
+}
+
+// A messageless chat (`keep_alive != 0`) is upstream chat.md's "Load a model"
+// sample: warm the model, no inference, empty assistant message,
+// done_reason:"load" — the chat twin of the generate warm no-op.
+#[tokio::test]
+async fn messageless_chat_warms_with_done_reason_load() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // The warm ping is a /api/v0/chat/completions call; exactly one must fire.
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("", "stop")))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({ "model": "llama3.1:8b", "messages": [], "stream": false }))
+        .send()
+        .await
+        .expect("POST /api/chat messageless warm");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert_eq!(body["done_reason"], "load");
+    assert_eq!(body["message"]["role"], "assistant");
+    assert_eq!(body["message"]["content"], "");
+    assert!(
+        body.get("response").is_none(),
+        "chat warm must carry message, not response"
+    );
+
+    p.mock.verify().await;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1638,8 +1676,9 @@ async fn populated_stats_drives_timings_not_wall_clock() {
 
     assert_eq!(
         body["total_duration"].as_u64(),
-        Some(5_000_000_000),
-        "total_duration must equal ttft + generation_time in ns"
+        Some(6_500_000_000),
+        "total_duration must equal load + ttft + generation_time in ns (Ollama's \
+         total covers the whole request, so a real reported load adds on top)"
     );
     assert_eq!(
         body["prompt_eval_duration"].as_u64(),

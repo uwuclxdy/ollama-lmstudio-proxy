@@ -205,3 +205,269 @@ async fn non_streaming_stays_on_v0_chat_completions() {
 
     p.mock.verify().await;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// error event is recoverable: error line surfaced, chat.end stats still land
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Per api-docs streaming-events.md: "The final payload will still be sent in
+// `chat.end` with whatever was generated." The proxy must keep reading.
+
+#[tokio::test]
+async fn native_stream_error_event_recovers_through_chat_end() {
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "event: chat.start\ndata: {\"type\":\"chat.start\",\"model_instance_id\":\"m\"}\n\n",
+                    "event: message.delta\ndata: {\"type\":\"message.delta\",\"content\":\"partial\"}\n\n",
+                    "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"mcp_connection_error\",\"message\":\"tool server dropped\"}}\n\n",
+                    "event: message.delta\ndata: {\"type\":\"message.delta\",\"content\":\" tail\"}\n\n",
+                    "event: chat.end\ndata: {\"type\":\"chat.end\",\"result\":{\"output\":[{\"type\":\"message\",\"content\":\"partial tail\"}],\"stats\":{\"input_tokens\":5,\"total_output_tokens\":2,\"tokens_per_second\":40.0,\"time_to_first_token_seconds\":0.1}}}\n\n"
+                )
+                .as_bytes(),
+                "text/event-stream",
+            ),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+
+    let error_idx = chunks
+        .iter()
+        .position(|c| c.get("error").is_some())
+        .expect("mid-stream error line must be surfaced");
+    assert!(
+        chunks[error_idx]["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("tool server dropped")),
+        "error line must carry the native message"
+    );
+    assert!(
+        chunks
+            .iter()
+            .skip(error_idx + 1)
+            .any(|c| c["message"]["content"] == " tail"),
+        "content generated after a recoverable error must still stream"
+    );
+
+    let last = chunks.last().expect("final chunk");
+    assert_eq!(
+        last["done"], true,
+        "chat.end must still produce a final chunk"
+    );
+    assert_eq!(
+        last["prompt_eval_count"], 5,
+        "final chunk carries real stats"
+    );
+    assert_eq!(last["eval_count"], 2);
+
+    p.mock.verify().await;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// two sequential tool calls both surface (no last-wins collapse)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_stream_two_tool_calls_both_surface() {
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "event: chat.start\ndata: {\"type\":\"chat.start\",\"model_instance_id\":\"m\"}\n\n",
+                    "event: tool_call.start\ndata: {\"type\":\"tool_call.start\",\"tool\":\"get_weather\"}\n\n",
+                    "event: tool_call.arguments\ndata: {\"type\":\"tool_call.arguments\",\"tool\":\"get_weather\",\"arguments\":{\"city\":\"Paris\"}}\n\n",
+                    "event: tool_call.success\ndata: {\"type\":\"tool_call.success\",\"tool\":\"get_weather\",\"arguments\":{\"city\":\"Paris\"},\"output\":\"{}\"}\n\n",
+                    "event: tool_call.start\ndata: {\"type\":\"tool_call.start\",\"tool\":\"get_time\"}\n\n",
+                    "event: tool_call.arguments\ndata: {\"type\":\"tool_call.arguments\",\"tool\":\"get_time\",\"arguments\":{\"city\":\"Tokyo\"}}\n\n",
+                    "event: tool_call.success\ndata: {\"type\":\"tool_call.success\",\"tool\":\"get_time\",\"arguments\":{\"city\":\"Tokyo\"},\"output\":\"{}\"}\n\n",
+                    "event: chat.end\ndata: {\"type\":\"chat.end\",\"result\":{\"output\":[],\"stats\":{\"input_tokens\":5,\"total_output_tokens\":10,\"tokens_per_second\":40.0,\"time_to_first_token_seconds\":0.1}}}\n\n"
+                )
+                .as_bytes(),
+                "text/event-stream",
+            ),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "both tools please" }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+
+    let tool_chunk = chunks
+        .iter()
+        .find(|c| c["message"].get("tool_calls").is_some())
+        .expect("one pre-final chunk must carry the assembled tool calls");
+    let calls = tool_chunk["message"]["tool_calls"]
+        .as_array()
+        .expect("tool_calls array");
+    assert_eq!(calls.len(), 2, "both calls must survive: {calls:?}");
+    assert_eq!(calls[0]["function"]["name"], "get_weather");
+    assert_eq!(
+        calls[0]["function"]["arguments"],
+        json!({ "city": "Paris" })
+    );
+    assert_eq!(calls[1]["function"]["name"], "get_time");
+    assert_eq!(
+        calls[1]["function"]["arguments"],
+        json!({ "city": "Tokyo" })
+    );
+
+    p.mock.verify().await;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// model_load.end fills load_duration when chat.end stats omit theirs
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_stream_model_load_end_fills_load_duration() {
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    // stats: ttft 0.1s, 4 tokens at 40 tps -> 0.1s generation; load 2.5s from
+    // the model_load.end event only.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "event: chat.start\ndata: {\"type\":\"chat.start\",\"model_instance_id\":\"m\"}\n\n",
+                    "event: model_load.end\ndata: {\"type\":\"model_load.end\",\"model_instance_id\":\"m\",\"load_time_seconds\":2.5}\n\n",
+                    "event: message.delta\ndata: {\"type\":\"message.delta\",\"content\":\"hi\"}\n\n",
+                    "event: chat.end\ndata: {\"type\":\"chat.end\",\"result\":{\"output\":[{\"type\":\"message\",\"content\":\"hi\"}],\"stats\":{\"input_tokens\":5,\"total_output_tokens\":4,\"tokens_per_second\":40.0,\"time_to_first_token_seconds\":0.1}}}\n\n"
+                )
+                .as_bytes(),
+                "text/event-stream",
+            ),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let last = chunks.last().expect("final chunk");
+
+    assert_eq!(
+        last["load_duration"], 2_500_000_000u64,
+        "model_load.end load time must land in load_duration"
+    );
+    assert_eq!(
+        last["total_duration"], 2_700_000_000u64,
+        "total must cover load + ttft + generation"
+    );
+
+    p.mock.verify().await;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// done_reason "length" heuristic at the cap + dropped-field warning
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_stream_length_done_reason_and_drop_warning() {
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "event: chat.start\ndata: {\"type\":\"chat.start\",\"model_instance_id\":\"m\"}\n\n",
+                    "event: message.delta\ndata: {\"type\":\"message.delta\",\"content\":\"one two\"}\n\n",
+                    "event: chat.end\ndata: {\"type\":\"chat.end\",\"result\":{\"output\":[{\"type\":\"message\",\"content\":\"one two\"}],\"stats\":{\"input_tokens\":5,\"total_output_tokens\":4,\"tokens_per_second\":40.0,\"time_to_first_token_seconds\":0.1}}}\n\n"
+                )
+                .as_bytes(),
+                "text/event-stream",
+            ),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // tools has no native slot -> warned; output hit num_predict:4 -> length.
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "tools": [{ "type": "function", "function": { "name": "noop" } }],
+            "options": { "num_predict": 4 },
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let last = chunks.last().expect("final chunk");
+
+    assert_eq!(
+        last["done_reason"], "length",
+        "output at the num_predict cap must report length (proxy heuristic)"
+    );
+    assert!(
+        last["warning"]
+            .as_str()
+            .is_some_and(|w| w.contains("tools")),
+        "dropped tools must be warned on the final chunk: {last}"
+    );
+
+    p.mock.verify().await;
+}

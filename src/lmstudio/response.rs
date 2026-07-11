@@ -25,6 +25,7 @@ impl TimingInfo {
         start_time: Instant,
         estimated_input_tokens: u64,
         estimated_output_tokens: u64,
+        fallback_load_seconds: Option<f64>,
     ) -> Self {
         let actual_prompt_tokens = lm_response
             .get("usage")
@@ -79,19 +80,25 @@ impl TimingInfo {
             // that omits timings) leaves these zeroed. With nothing usable in the
             // block, returning all-1 floors would lie about the real elapsed time
             // — fall back to wall-clock and preserve the load duration signal if
-            // `model_load_time_seconds` was reported.
+            // `model_load_time_seconds` was reported (or observed on the stream's
+            // `model_load.end` event, the caller-supplied fallback).
             let model_load_ns = stats
                 .get("model_load_time_seconds")
                 .and_then(|t| t.as_f64())
+                .or(fallback_load_seconds)
                 .map(|s| (s * 1_000_000_000.0) as u64);
 
             let ttft_ns = (time_to_first_token * 1_000_000_000.0) as u64;
             let generation_time_ns = (generation_time * 1_000_000_000.0) as u64;
-            let total_duration_ns = ttft_ns + generation_time_ns;
+            let inference_duration_ns = ttft_ns + generation_time_ns;
 
-            if total_duration_ns > 0 {
+            if inference_duration_ns > 0 {
                 return Self {
-                    total_duration: total_duration_ns,
+                    // LM Studio's ttft excludes load time, so a REAL load is
+                    // added on top (Ollama's total_duration covers the whole
+                    // request). The 1ms placeholder is deliberately not added:
+                    // total may undershoot load_duration by that floor.
+                    total_duration: inference_duration_ns + model_load_ns.unwrap_or(0),
                     load_duration: model_load_ns.unwrap_or(DEFAULT_LOAD_DURATION_NS),
                     prompt_eval_count: stats_prompt_tokens.max(1),
                     prompt_eval_duration: ttft_ns.max(1),
@@ -141,16 +148,16 @@ impl TimingInfo {
 
     pub fn from_stream_chunks(
         duration: Duration,
-        chunk_count_estimate: u64,
-        actual_completion_tokens: Option<u64>,
+        prompt_tokens_estimate: u64,
+        output_tokens_estimate: u64,
     ) -> Self {
         let total_duration_ns = duration.as_nanos() as u64;
         Self::from_duration_and_tokens(
             total_duration_ns,
-            10,
-            chunk_count_estimate.max(1),
+            prompt_tokens_estimate.max(1),
+            output_tokens_estimate.max(1),
             None,
-            actual_completion_tokens,
+            None,
         )
     }
 
@@ -210,6 +217,7 @@ impl ResponseTransformer {
             start_time,
             (message_count_for_estimation * 10).max(1) as u64,
             estimate_token_count(&content),
+            None,
         );
 
         let done_reason = extract_finish_reason(lm_response)
@@ -294,6 +302,7 @@ impl ResponseTransformer {
             start_time,
             estimate_token_count(prompt_for_estimation),
             estimate_token_count(&content),
+            None,
         );
 
         let done_reason = extract_finish_reason(lm_response)
@@ -347,6 +356,7 @@ impl ResponseTransformer {
             start_time,
             estimated_input_tokens,
             estimated_output_tokens,
+            None,
         );
 
         json!({
@@ -465,7 +475,14 @@ pub fn estimate_token_count(text: &str) -> u64 {
     if text.is_empty() {
         return 0;
     }
-    ((text.len() as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
+    estimate_tokens_from_bytes(text.len())
+}
+
+/// Length-proportional token estimate from an accumulated byte count, for
+/// streaming paths that never hold the full text in one buffer. Multi-byte
+/// text over-estimates (same convention as `estimate_token_count`).
+pub fn estimate_tokens_from_bytes(byte_len: usize) -> u64 {
+    ((byte_len as f64) * TOKEN_TO_CHAR_RATIO).ceil() as u64
 }
 
 /// Length-proportional token estimate for an embedding `input`.

@@ -17,6 +17,10 @@ pub struct ChunkProcessingState {
     /// final chunk makes them execute duplicates. We merge fragments by OpenAI
     /// call index and emit the full array once, right before the final chunk.
     accumulated_tool_calls: BTreeMap<u64, Value>,
+    /// Slot for the native stream's current tool call. Native events carry no
+    /// index, so `tool_call.start` boundaries advance this counter; `None`
+    /// means no start was seen yet (fragments then land defensively in slot 0).
+    native_tool_position: Option<u64>,
 }
 
 impl ChunkProcessingState {
@@ -33,12 +37,30 @@ impl ChunkProcessingState {
     pub fn accumulate_tool_calls(&mut self, tool_calls: &[Value]) {
         for (position, tool_call) in tool_calls.iter().enumerate() {
             let index = tool_call_index(tool_call, position);
-            let entry = self
-                .accumulated_tool_calls
-                .entry(index)
-                .or_insert_with(|| json!({"index": index, "function": {}}));
-            merge_tool_call_fragment(entry, tool_call, index);
+            self.merge_into_slot(index, tool_call);
         }
+    }
+
+    /// Open the next native tool-call slot (driven by `tool_call.start`).
+    pub fn begin_native_tool_call(&mut self) {
+        self.native_tool_position = Some(match self.native_tool_position {
+            Some(position) => position + 1,
+            None => 0,
+        });
+    }
+
+    /// Accumulate a native tool-call fragment into the current slot.
+    pub fn accumulate_native_tool_call(&mut self, tool_call: Value) {
+        let index = self.native_tool_position.unwrap_or(0);
+        self.merge_into_slot(index, &tool_call);
+    }
+
+    fn merge_into_slot(&mut self, index: u64, tool_call: &Value) {
+        let entry = self
+            .accumulated_tool_calls
+            .entry(index)
+            .or_insert_with(|| json!({"index": index, "function": {}}));
+        merge_tool_call_fragment(entry, tool_call, index);
     }
 
     /// Returns the accumulated tool_calls if any were collected, consuming them.
@@ -308,7 +330,8 @@ pub fn create_error_chunk(error_message: &str) -> Value {
 pub fn create_cancellation_chunk(
     model_ollama_name: &str,
     duration: Duration,
-    tokens_generated_estimate: u64,
+    prompt_tokens_estimate: u64,
+    output_tokens_estimate: u64,
     is_chat_endpoint: bool,
 ) -> Value {
     // Ollama's spec only documents `done_reason: stop | length`; "cancelled" is not a value
@@ -316,11 +339,8 @@ pub fn create_cancellation_chunk(
     // Buffered tool-call fragments are dropped: at cancel time they may be
     // half-assembled (empty name, truncated args) and emitting those is worse
     // than emitting nothing.
-    let timing = TimingInfo::from_stream_chunks(
-        duration,
-        tokens_generated_estimate,
-        Some(tokens_generated_estimate),
-    );
+    let timing =
+        TimingInfo::from_stream_chunks(duration, prompt_tokens_estimate, output_tokens_estimate);
 
     let mut chunk =
         create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
@@ -345,7 +365,12 @@ pub fn create_cancellation_chunk(
 pub struct FinalChunkParams<'a> {
     pub model_name: &'a str,
     pub duration: Duration,
-    pub chunk_count: u64,
+    /// Length-proportional estimate from the request input (LM Studio's SSE
+    /// chunks carry no usage block to read a real count from).
+    pub prompt_tokens_estimate: u64,
+    /// Length-proportional estimate from the streamed output text — tracks
+    /// tokens, unlike the SSE chunk count it replaced.
+    pub output_tokens_estimate: u64,
     pub is_chat: bool,
     pub done_reason: Option<&'a str>,
 }
@@ -354,7 +379,11 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     // LM Studio's SSE chunks carry no `usage` and `stream_options.include_usage`
     // is not in its supported parameter list, so real per-token timings are unavailable
     // on the streaming path. Wall-clock heuristics are the only option until upstream adds it.
-    let timing = TimingInfo::from_stream_chunks(params.duration, params.chunk_count, None);
+    let timing = TimingInfo::from_stream_chunks(
+        params.duration,
+        params.prompt_tokens_estimate,
+        params.output_tokens_estimate,
+    );
 
     // Never carries tool_calls: real Ollama's final done:true chunk is empty and
     // accumulating clients would double-execute anything repeated here.

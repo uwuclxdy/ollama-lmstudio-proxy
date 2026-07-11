@@ -1,16 +1,15 @@
 //! Short-circuit handlers for promptless/messageless `/api/generate` and
-//! `/api/chat` requests: `keep_alive: 0` unloads on both endpoints; a
-//! promptless `/api/generate` with `keep_alive != 0` warms (`/api/chat` has
-//! no warm-only equivalent yet — a messageless chat request still 400s via
-//! the regular required-field validation; parity is a possible follow-up).
+//! `/api/chat` requests: `keep_alive: 0` unloads on both endpoints; an empty
+//! payload with `keep_alive != 0` warms on both (upstream api.md documents
+//! the "Load a model" sample for each).
 //!
 //! Per the Ollama spec (`api-docs/ollama/api/generate.md` and `chat.md`), both
 //! `GenerateRequest` and `ChatRequest` only require the `model` field. The
 //! documented invocation `{"model":"x","keep_alive":0}` is an unload-only
 //! request: no inference is performed, the model is unloaded, and a single
-//! `done:true` response chunk is returned. `generate.md`'s "Load model" sample
-//! (`{"model":"x"}`, no `keep_alive:0`) is the mirror case, generate-only: a
-//! load/warm no-op with no inference, `done_reason:"load"`.
+//! `done:true` response chunk is returned. The "Load model" sample
+//! (`{"model":"x"}` / `{"model":"x","messages":[]}`, no `keep_alive:0`) is the
+//! mirror case: a load/warm no-op with no inference, `done_reason:"load"`.
 //!
 //! This module builds the response envelope and emits it in either NDJSON
 //! (stream:true) or single-JSON (stream:false) form. The actual unload is
@@ -21,10 +20,10 @@
 //! A body is "unload-only" when `keep_alive == 0` AND the per-endpoint payload
 //! field is missing or empty (generate: `prompt`; chat: `messages`) — this
 //! applies to both endpoints (`is_generate_unload_only`/`is_chat_unload_only`).
-//! "Warm-only" is `is_generate_warm_only` alone: the same empty-`prompt`
-//! condition but `keep_alive != 0`. With a non-empty payload the request
-//! still flows through the regular inference path and the unload races the
-//! inference response — see the existing `keep_alive_zero_accepted`
+//! "Warm-only" is the same empty-payload condition with `keep_alive != 0`
+//! (`is_generate_warm_only`/`is_chat_warm_only`). With a non-empty payload the
+//! request still flows through the regular inference path and the unload races
+//! the inference response — see the existing `keep_alive_zero_accepted`
 //! integration tests.
 //!
 //! Unload's `done_reason` is omitted: `api-docs/ollama/api/generate.md` and
@@ -170,10 +169,24 @@ pub fn is_generate_warm_only(body: &Value, keep_alive_seconds: Option<i64>) -> b
     }
 }
 
-pub struct GenerateWarmOnlyCall<'a> {
+/// Chat: warm-only when `messages` is missing or an empty array AND
+/// `keep_alive != 0` — the chat twin of `is_generate_warm_only`.
+pub fn is_chat_warm_only(body: &Value, keep_alive_seconds: Option<i64>) -> bool {
+    if matches!(keep_alive_seconds, Some(0)) {
+        return false;
+    }
+    match body.get("messages") {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(arr)) => arr.is_empty(),
+        _ => false,
+    }
+}
+
+pub struct WarmOnlyCall<'a> {
     pub context: &'a RequestContext<'a>,
     pub model_resolver: Arc<ModelResolver>,
     pub ollama_model_name: &'a str,
+    pub is_chat: bool,
     pub stream: bool,
     pub cancellation_token: CancellationToken,
 }
@@ -188,13 +201,14 @@ pub struct GenerateWarmOnlyCall<'a> {
 /// inference request) — a ceiling shared with `/api/show`'s identical
 /// unconditional-warm call; a future TTL-aware warm would need to thread
 /// `keep_alive_seconds` into a post-warm `spawn_model_unload_if_needed`.
-pub async fn respond_generate_warm_only(
-    call: GenerateWarmOnlyCall<'_>,
+pub async fn respond_warm_only(
+    call: WarmOnlyCall<'_>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let GenerateWarmOnlyCall {
+    let WarmOnlyCall {
         context,
         model_resolver,
         ollama_model_name,
+        is_chat,
         stream,
         cancellation_token,
     } = call;
@@ -211,7 +225,7 @@ pub async fn respond_generate_warm_only(
 
     trigger_model_loading_for_ollama(context, ollama_model_name, cancellation_token).await?;
 
-    let payload = build_warm_chunk(ollama_model_name);
+    let payload = build_warm_chunk(ollama_model_name, is_chat);
 
     if stream {
         stream_status_messages(
@@ -224,15 +238,29 @@ pub async fn respond_generate_warm_only(
 }
 
 /// Live Ollama 0.31.1 omits every duration/eval field for a load-only
-/// response and includes only `model`, `created_at`, `response`, `done`, and
-/// a real `done_reason:"load"` — unlike `build_done_chunk`'s unload envelope,
-/// which zero-fills those fields and omits `done_reason` entirely.
-fn build_warm_chunk(ollama_model_name: &str) -> Value {
-    json!({
+/// response and includes only `model`, `created_at`, the endpoint's empty
+/// payload field, `done`, and a real `done_reason:"load"` — unlike
+/// `build_done_chunk`'s unload envelope, which zero-fills those fields and
+/// omits `done_reason` entirely. Chat carries an empty assistant `message`
+/// (upstream chat.md "Load a model" sample); generate an empty `response`.
+fn build_warm_chunk(ollama_model_name: &str, is_chat: bool) -> Value {
+    let mut payload = json!({
         "model": ollama_model_name,
         "created_at": chrono::Utc::now().to_rfc3339(),
-        "response": "",
         "done": true,
         "done_reason": "load",
-    })
+    });
+
+    if let Some(obj) = payload.as_object_mut() {
+        if is_chat {
+            obj.insert(
+                "message".to_string(),
+                json!({"role": "assistant", "content": ""}),
+            );
+        } else {
+            obj.insert("response".to_string(), json!(""));
+        }
+    }
+
+    payload
 }

@@ -1655,3 +1655,73 @@ async fn chat_stream_parallel_same_name_tool_calls_emitted_once_in_order() {
         "final chunk must not repeat tool_calls: {final_chunk}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v0 streaming stats: token counts derive from text lengths, not chunk counts
+// ---------------------------------------------------------------------------
+//
+// LM Studio's v0 SSE carries no usage block, so both counts are
+// length-proportional estimates (chars * 0.25, ceil). The old behavior — a
+// hardcoded prompt_eval_count:10 and eval_count = SSE chunk count — must not
+// come back.
+
+#[tokio::test]
+async fn chat_stream_stats_estimate_from_text_lengths_not_chunk_count() {
+    let p = spawn_proxy().await;
+
+    // Two content deltas of 4 chars each -> 8 output chars -> estimate 2.
+    // One SSE chunk per delta means chunk count (2) also equals 2 here, so a
+    // third empty-ish delta is added: chunks=3 but chars stay 8.
+    let body = sse_body(&[
+        r#"{"choices":[{"delta":{"content":"abcd"}}]}"#,
+        r#"{"choices":[{"delta":{"content":"efgh"}}]}"#,
+        r#"{"choices":[{"delta":{"content":""}}]}"#,
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                        "architecture": "llama", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": 8192, "loaded_instances": [],
+                        "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    // 400-char prompt -> estimate ceil(400 * 0.25) = 100.
+    let prompt = "x".repeat(400);
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{ "role": "user", "content": prompt }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat stream");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+    let last = chunks.last().expect("final chunk");
+    assert_eq!(last["done"], true);
+    assert_eq!(
+        last["prompt_eval_count"], 100,
+        "prompt count must derive from the request text length"
+    );
+    assert_eq!(
+        last["eval_count"], 2,
+        "eval count must derive from streamed chars, not chunk count"
+    );
+
+    p.mock.verify().await;
+}

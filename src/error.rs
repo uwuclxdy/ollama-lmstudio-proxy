@@ -94,6 +94,46 @@ impl fmt::Display for ProxyError {
     }
 }
 
+/// Map an HTTP status to Anthropic's documented error `type` literal.
+///
+/// The Anthropic surface (`/v1/messages*`) expects
+/// `{"type":"error","error":{"type":...,"message":...}}` — SDKs branch on the
+/// inner `type`, so unknown statuses collapse to the generic `api_error`.
+pub fn anthropic_error_type(status_code: u16) -> &'static str {
+    match status_code {
+        400 => "invalid_request_error",
+        401 => "authentication_error",
+        403 => "permission_error",
+        404 => "not_found_error",
+        413 => "request_too_large",
+        429 => "rate_limit_error",
+        529 => "overloaded_error",
+        _ => "api_error",
+    }
+}
+
+/// Build the Anthropic error envelope for a status + message pair.
+pub fn anthropic_error_body(status_code: u16, message: &str) -> serde_json::Value {
+    json!({
+        "type": "error",
+        "error": {
+            "type": anthropic_error_type(status_code),
+            "message": message,
+        }
+    })
+}
+
+impl ProxyError {
+    /// Render this error in Anthropic's error envelope instead of the Ollama
+    /// `{"error":msg}` shape, for errors surfacing on `/v1/messages*`.
+    pub fn into_anthropic_response(self) -> Response {
+        let status =
+            StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let body = Json(anthropic_error_body(self.status_code, &self.message));
+        (status, body).into_response()
+    }
+}
+
 impl Error for ProxyError {}
 
 impl IntoResponse for ProxyError {

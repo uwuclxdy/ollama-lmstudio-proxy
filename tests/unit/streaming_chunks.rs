@@ -345,7 +345,7 @@ fn assert_six_timings(chunk: &Value) {
 
 #[test]
 fn cancellation_chunk_chat_has_empty_content() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 10, 7, true);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -366,7 +366,7 @@ fn cancellation_chunk_chat_has_empty_content() {
 
 #[test]
 fn cancellation_chunk_generate_has_empty_response() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 10, 3, false);
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(true));
     assert!(
         c.get("done_reason").is_none(),
@@ -383,7 +383,7 @@ fn cancellation_chunk_generate_has_empty_response() {
 
 #[test]
 fn cancellation_chunk_zero_tokens_still_empty_content() {
-    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, true);
+    let chat = create_cancellation_chunk("m", Duration::from_millis(10), 0, 0, true);
     let chat_content = chat
         .get("message")
         .and_then(|m| m.get("content"))
@@ -392,7 +392,7 @@ fn cancellation_chunk_zero_tokens_still_empty_content() {
     assert_eq!(chat_content, "");
     assert!(chat.get("done_reason").is_none());
 
-    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, false);
+    let generate = create_cancellation_chunk("m", Duration::from_millis(10), 0, 0, false);
     let generate_response = generate.get("response").and_then(|v| v.as_str()).unwrap();
     assert_eq!(generate_response, "");
     assert!(generate.get("done_reason").is_none());
@@ -402,7 +402,7 @@ fn cancellation_chunk_zero_tokens_still_empty_content() {
 fn cancellation_chunk_chat_never_carries_tool_calls() {
     // Buffered fragments may be half-assembled at cancel time (empty name,
     // truncated args); the cancellation chunk drops them.
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 7, true);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 10, 7, true);
     let msg = c
         .get("message")
         .expect("chat cancellation must carry a message");
@@ -415,7 +415,7 @@ fn cancellation_chunk_chat_never_carries_tool_calls() {
 
 #[test]
 fn cancellation_chunk_generate_never_has_tool_calls() {
-    let c = create_cancellation_chunk("m", Duration::from_millis(50), 3, false);
+    let c = create_cancellation_chunk("m", Duration::from_millis(50), 10, 3, false);
     assert!(c.get("message").is_none(), "generate has no message");
     assert!(
         c.get("tool_calls").is_none(),
@@ -432,7 +432,8 @@ fn final_chunk_chat_no_done_reason_omits_field_with_timings() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(120),
-        chunk_count: 4,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 4,
         is_chat: true,
         done_reason: None,
     });
@@ -451,7 +452,8 @@ fn final_chunk_chat_propagates_done_reason_length() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(10),
-        chunk_count: 1,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 1,
         is_chat: true,
         done_reason: Some("length"),
     });
@@ -466,7 +468,8 @@ fn final_chunk_generate_omits_context_and_emits_timings() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(80),
-        chunk_count: 6,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 6,
         is_chat: false,
         done_reason: None,
     });
@@ -488,7 +491,8 @@ fn final_chunk_generate_propagates_done_reason_length() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(10),
-        chunk_count: 1,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 1,
         is_chat: false,
         done_reason: Some("length"),
     });
@@ -624,7 +628,8 @@ fn final_chunk_never_carries_tool_calls() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(50),
-        chunk_count: 2,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 2,
         is_chat: true,
         done_reason: None,
     });
@@ -745,7 +750,8 @@ fn final_chunk_translates_tool_calls_to_stop() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(10),
-        chunk_count: 1,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 1,
         is_chat: true,
         done_reason: Some("tool_calls"),
     });
@@ -761,7 +767,8 @@ fn final_chunk_omits_done_reason_for_unknown_value() {
     let c = create_final_chunk(FinalChunkParams {
         model_name: "m",
         duration: Duration::from_millis(10),
-        chunk_count: 1,
+        prompt_tokens_estimate: 10,
+        output_tokens_estimate: 1,
         is_chat: true,
         done_reason: Some("weird_value"),
     });
