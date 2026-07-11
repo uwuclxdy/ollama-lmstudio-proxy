@@ -185,7 +185,14 @@ fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map
         .get("max_tokens")
         .or_else(|| options.get("num_predict"))
     {
-        params.insert("max_tokens".to_string(), max_tokens.clone());
+        // Ollama's num_predict -1 (infinite) / -2 (fill context) are "no limit"
+        // sentinels with no LM Studio equivalent; the backend 400s on a negative
+        // max_tokens ("must be greater than 0"), so omit the field entirely
+        // rather than forward a value that gets rejected.
+        let is_no_limit = max_tokens.as_i64().is_some_and(|n| n < 0);
+        if !is_no_limit {
+            params.insert("max_tokens".to_string(), max_tokens.clone());
+        }
     }
 
     // `num_ctx` is NOT emitted here: LM Studio's chat body ignores

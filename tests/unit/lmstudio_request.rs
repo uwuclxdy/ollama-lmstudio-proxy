@@ -542,6 +542,30 @@ fn num_predict_maps_to_max_tokens_when_max_tokens_absent() {
 }
 
 #[test]
+fn negative_num_predict_omits_max_tokens() {
+    // -1 (infinite) / -2 (fill context) are "no limit" sentinels; a negative
+    // max_tokens is rejected by LM Studio, so the field must be omitted.
+    for sentinel in [-1, -2] {
+        let options = json!({ "num_predict": sentinel });
+        let params = map_ollama_to_lmstudio_params(Some(&options), None);
+        assert!(
+            params.get("max_tokens").is_none(),
+            "num_predict:{sentinel} must not forward a negative max_tokens, got {params:?}"
+        );
+    }
+}
+
+#[test]
+fn negative_max_tokens_omitted_too() {
+    let options = json!({ "max_tokens": -1 });
+    let params = map_ollama_to_lmstudio_params(Some(&options), None);
+    assert!(
+        params.get("max_tokens").is_none(),
+        "a negative max_tokens must be omitted, got {params:?}"
+    );
+}
+
+#[test]
 fn repeat_penalty_forwarded_when_alone() {
     let options = json!({ "repeat_penalty": 1.1 });
     let params = map_ollama_to_lmstudio_params(Some(&options), None);
