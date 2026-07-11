@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
+use crate::api::ollama::resolution::resolve_model_target;
 use crate::api::retry::with_retry_and_cancellation;
 use crate::constants::{LOG_PREFIX_INFO, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
@@ -91,9 +92,18 @@ pub async fn handle_lmstudio_passthrough(
                     && let Some(model_name) =
                         body_json.get("model").and_then(|m: &Value| m.as_str())
                 {
-                    let resolved_model = model_resolver
-                        .resolve_model_name(model_name, context.client, cancellation_token.clone())
-                        .await?;
+                    // Shared virtual-aware resolution so a `/api/copy` alias maps
+                    // to its target_model_id, matching the /api handlers. The
+                    // passthrough forwards the body otherwise verbatim, so only
+                    // the model identifier is rewritten — virtual metadata
+                    // (system prompt, template, …) is a /api translation concern.
+                    let (resolved_model, _) = resolve_model_target(
+                        &context,
+                        &model_resolver,
+                        model_name,
+                        cancellation_token.clone(),
+                    )
+                    .await?;
                     resolved_model_name = Some(resolved_model.clone());
                     if let Some(obj) = body_json.as_object_mut() {
                         obj.insert("model".to_string(), Value::String(resolved_model));
@@ -101,15 +111,20 @@ pub async fn handle_lmstudio_passthrough(
                 }
 
                 // /v1/models/{id} carries the model in the URL path, not the
-                // body — resolve an Ollama alias there too. Resolution failure
-                // forwards the original segment so the backend's own error
-                // (not a proxy 404) reaches the client, matching exact-id calls.
+                // body — resolve an Ollama name or a `/api/copy` alias there too.
+                // Resolution failure forwards the original segment so the
+                // backend's own error (not a proxy 404) reaches the client,
+                // matching exact-id calls.
                 if let Some(path_model) = endpoint
                     .strip_prefix("/v1/models/")
                     .filter(|rest| !rest.is_empty())
-                    && let Ok(resolved_model) = model_resolver
-                        .resolve_model_name(path_model, context.client, cancellation_token.clone())
-                        .await
+                    && let Ok((resolved_model, _)) = resolve_model_target(
+                        &context,
+                        &model_resolver,
+                        path_model,
+                        cancellation_token.clone(),
+                    )
+                    .await
                 {
                     endpoint = format!("/v1/models/{}", resolved_model);
                 }

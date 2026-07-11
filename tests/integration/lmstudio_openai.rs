@@ -696,3 +696,90 @@ async fn openai_request_authorization_header_forwarded() {
 
     assert_eq!(resp.status(), 200);
 }
+
+// ── Virtual alias resolution on the /v1 passthrough ──────────────────────────
+//
+// A `/api/copy` alias must resolve on /v1 just like an Ollama-style short name:
+// the alias maps to its `target_model_id` before the request reaches the backend.
+// The passthrough forwards the client body otherwise verbatim, so only the model
+// identifier is rewritten — virtual metadata (system prompt, etc.) is a /api
+// concern, not a raw /v1 translation.
+
+/// Seed a `/api/copy` alias `alias` -> `target_key` against the mounted catalog.
+async fn create_copy_alias(p: &crate::common::TestProxy, alias: &str, target_key: &str) {
+    let resp = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({ "source": target_key, "destination": alias }))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert_eq!(resp.status(), 200, "alias creation must succeed");
+}
+
+#[tokio::test]
+async fn openai_chat_completions_resolves_virtual_alias_in_body() {
+    let p = spawn_proxy().await;
+    let target = "lmstudio-community/meta-llama-3.1-8b";
+    mount_native_models(&p, target).await;
+    create_copy_alias(&p, "my-alias", target).await;
+
+    // Backend must receive the RESOLVED target id, not the alias.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(json!({ "model": target })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-alias",
+            "object": "chat.completion",
+            "choices": [{ "message": { "role": "assistant", "content": "ok" } }]
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "my-alias",
+            "messages": [{ "role": "user", "content": "Hello" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /v1/chat/completions alias");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["object"], "chat.completion");
+}
+
+#[tokio::test]
+async fn openai_models_path_resolves_virtual_alias() {
+    let p = spawn_proxy().await;
+    let target = "lmstudio-community/meta-llama-3.1-8b";
+    mount_native_models(&p, target).await;
+    create_copy_alias(&p, "my-alias", target).await;
+
+    // Backend must receive the RESOLVED path segment, not the alias.
+    Mock::given(method("GET"))
+        .and(path(format!("/v1/models/{}", target)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": target,
+            "object": "model"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models/my-alias"))
+        .send()
+        .await
+        .expect("GET /v1/models alias");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(body["id"], target);
+}
