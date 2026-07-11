@@ -307,10 +307,12 @@ pub async fn handle_streaming_response(
 /// timeout structure, but the native wire format uses named events
 /// (`event: <type>\ndata: <json>`) instead of bare `data:` lines. Each SSE block
 /// is parsed with [`parse_native_sse_message`] and dispatched via
-/// [`map_native_event`]: deltas emit intermediate Ollama chunks, `error` fails
-/// the stream with a bare error line, and `chat.end` drives the final timing
-/// chunk from the native `stats` block. Native is always chat-shaped, so chunk
-/// recovery (OpenAI-specific) is intentionally skipped.
+/// [`map_native_event`]: deltas emit intermediate Ollama chunks, a recoverable
+/// `error` event is buffered and folded into the final chunk's `warning` (only a
+/// stream that dies without `chat.end` surfaces it as a terminal error line), and
+/// `chat.end` drives the final timing chunk from the native `stats` block. Native
+/// is always chat-shaped, so chunk recovery (OpenAI-specific) is intentionally
+/// skipped.
 /// Request-derived extras for the native stream's final chunk: the output cap
 /// feeding the `done_reason` heuristic, the dropped-field warning, and the
 /// input-length token estimate for stats fallbacks.
@@ -354,10 +356,10 @@ pub async fn handle_native_streaming_response(
         let mut chat_end: Option<NativeChatEnd> = None;
         // `model_load.end` load time, used when the chat.end stats omit theirs.
         let mut observed_load_seconds: Option<f64> = None;
-        // A native `error` event is recoverable (chat.end still follows with
-        // whatever was generated); remember it so a stream that then dies
-        // WITHOUT a chat.end doesn't fabricate a final done:true chunk.
-        let mut had_error_event = false;
+        // Native `error` events are recoverable (chat.end still follows with
+        // whatever was generated); buffer their messages so they fold into the
+        // final chunk's `warning` instead of a terminal error line.
+        let mut error_messages: Vec<String> = Vec::new();
 
         let stream_result = 'stream_loop: loop {
             tokio::select! {
@@ -426,16 +428,15 @@ pub async fn handle_native_streaming_response(
                                             break 'stream_loop Ok(());
                                         }
                                         NativeEvent::Error(err) => {
-                                            // Recoverable per the streaming-events doc: surface the
-                                            // error line but keep reading — chat.end still follows
-                                            // with the stats block and any content generated after.
+                                            // The Ollama `{"error":…}` line is a terminal sentinel:
+                                            // clients raise and stop iterating the moment they parse it.
+                                            // A native error is recoverable (chat.end still follows with
+                                            // whatever was generated), so buffer it and fold it into the
+                                            // final chunk's `warning`; only a stream that dies without a
+                                            // chat.end emits it as a terminal line.
                                             let message = err.to_message();
                                             log::error!("native stream error: {}", message);
-                                            had_error_event = true;
-                                            let error_chunk = crate::streaming::chunks::create_error_chunk(&message);
-                                            if !send_chunk(&tx, &error_chunk).await {
-                                                break 'stream_loop Ok(());
-                                            }
+                                            error_messages.push(message);
                                         }
                                         NativeEvent::ModelLoaded(seconds) => {
                                             observed_load_seconds = Some(seconds);
@@ -468,34 +469,38 @@ pub async fn handle_native_streaming_response(
             }
         };
 
-        // After an error event, only a real chat.end may produce the final
-        // chunk — a stream that died post-error must not fabricate done:true
-        // (mirrors the v0 path's "error line ends the stream" contract).
-        let may_finalize = !had_error_event || chat_end.is_some();
-        if stream_result.is_ok() && !token_clone.is_cancelled() && may_finalize {
-            // Same contract as the v0 path: assembled tool calls in one
-            // done:false chunk, final chunk tool-free.
-            if let Some(tool_calls) = chunk_state.take_tool_calls() {
-                let tool_chunk = create_ollama_streaming_chunk(
+        if stream_result.is_ok() && !token_clone.is_cancelled() {
+            if chat_end.is_none() && !error_messages.is_empty() {
+                // A recoverable error that never reached chat.end is now
+                // genuinely terminal: emit the Ollama error sentinel and no
+                // fabricated done:true (mirrors the v0 path's contract).
+                send_error_and_close(&tx, &error_messages.join("; ")).await;
+            } else {
+                // Same contract as the v0 path: assembled tool calls in one
+                // done:false chunk, final chunk tool-free.
+                if let Some(tool_calls) = chunk_state.take_tool_calls() {
+                    let tool_chunk = create_ollama_streaming_chunk(
+                        &model_clone_for_task,
+                        "",
+                        true,
+                        false,
+                        Some(&tool_calls),
+                        "",
+                    );
+                    chunk_count += 1;
+                    send_chunk(&tx, &tool_chunk).await;
+                }
+                let final_chunk = build_native_final_chunk(
                     &model_clone_for_task,
-                    "",
-                    true,
-                    false,
-                    Some(&tool_calls),
-                    "",
+                    chat_end.as_ref(),
+                    start_time,
+                    streamed_chars,
+                    observed_load_seconds,
+                    &finalize,
+                    &error_messages,
                 );
-                chunk_count += 1;
-                send_chunk(&tx, &tool_chunk).await;
+                send_chunk_and_close_channel(&tx, final_chunk).await;
             }
-            let final_chunk = build_native_final_chunk(
-                &model_clone_for_task,
-                chat_end.as_ref(),
-                start_time,
-                streamed_chars,
-                observed_load_seconds,
-                &finalize,
-            );
-            send_chunk_and_close_channel(&tx, final_chunk).await;
         }
 
         log_timed(
@@ -525,6 +530,7 @@ fn build_native_final_chunk(
     streamed_chars: usize,
     observed_load_seconds: Option<f64>,
     finalize: &NativeFinalizeOptions,
+    recovered_errors: &[String],
 ) -> Value {
     let output_tokens_estimate = estimate_tokens_from_bytes(streamed_chars);
     let mut chunk = match chat_end {
@@ -572,10 +578,25 @@ fn build_native_final_chunk(
         }),
     };
 
-    if let Some(warning) = &finalize.warning
+    // Fold the dropped-field notice and any recovered mid-stream error into one
+    // `warning`. A recovered native error can't be a terminal `{"error"}` line
+    // (chat.end proved the request finished), so it rides along here instead.
+    let recovered_notice = (!recovered_errors.is_empty()).then(|| {
+        format!(
+            "recovered from mid-stream error: {}",
+            recovered_errors.join("; ")
+        )
+    });
+    let combined_warning = match (&finalize.warning, &recovered_notice) {
+        (Some(drop), Some(rec)) => format!("{drop}; {rec}"),
+        (Some(drop), None) => drop.clone(),
+        (None, Some(rec)) => rec.clone(),
+        (None, None) => String::new(),
+    };
+    if !combined_warning.is_empty()
         && let Some(obj) = chunk.as_object_mut()
     {
-        obj.insert("warning".to_string(), json!(warning));
+        obj.insert("warning".to_string(), json!(combined_warning));
     }
 
     chunk
