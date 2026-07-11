@@ -503,6 +503,128 @@ async fn create_with_messages_stream_true_warns_before_success() {
 }
 
 #[tokio::test]
+async fn create_with_template_stream_false_includes_warning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "tmpl-inert:v1",
+            "from": "llama3.2:3b",
+            "template": "{{ .Prompt }}",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with template");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    let warning = body.get("warning").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        warning.to_lowercase().contains("template"),
+        "a stored TEMPLATE must surface an inert-template warning; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_adapters_stream_false_includes_warning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "adapter-inert:v1",
+            "from": "llama3.2:3b",
+            "adapters": { "my-lora": "sha256:abc" },
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with adapters");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    let warning = body.get("warning").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        warning.to_lowercase().contains("adapter"),
+        "a stored ADAPTER must surface an inert-adapter warning; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_template_stream_true_warns_before_success() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "tmpl-inert-stream:v1",
+            "from": "llama3.2:3b",
+            "template": "{{ .Prompt }}",
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/create stream with template");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            serde_json::from_str(l)
+                .unwrap_or_else(|e| panic!("invalid JSON chunk: {e}; line='{l}'"))
+        })
+        .collect();
+
+    assert_eq!(
+        lines.last().unwrap()["status"].as_str(),
+        Some("success"),
+        "last create chunk must still be status:success; got {lines:?}"
+    );
+    let has_template_warning = lines.iter().any(|chunk| {
+        chunk["status"]
+            .as_str()
+            .is_some_and(|s| s.to_lowercase().contains("template"))
+    });
+    assert!(
+        has_template_warning,
+        "streamed create with a template should emit a template-warning status line before success; got {lines:?}"
+    );
+}
+
+#[tokio::test]
 async fn create_without_messages_response_unchanged() {
     let p = spawn_proxy().await;
 

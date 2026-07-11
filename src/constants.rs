@@ -55,6 +55,10 @@ pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
 /// Warning messages
 pub const WARNING_MESSAGES_NOT_APPLIED: &str =
     "MESSAGE history is stored but not applied by the LM Studio backend";
+pub const WARNING_TEMPLATE_NOT_APPLIED: &str =
+    "TEMPLATE is stored but not applied by the LM Studio backend";
+pub const WARNING_ADAPTERS_NOT_APPLIED: &str =
+    "ADAPTER is stored but not applied by the LM Studio backend";
 
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";

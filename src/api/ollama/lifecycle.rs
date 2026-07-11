@@ -6,7 +6,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
-use crate::constants::{LOG_PREFIX_SUCCESS, WARNING_MESSAGES_NOT_APPLIED};
+use crate::constants::{
+    LOG_PREFIX_SUCCESS, WARNING_ADAPTERS_NOT_APPLIED, WARNING_MESSAGES_NOT_APPLIED,
+    WARNING_TEMPLATE_NOT_APPLIED,
+};
 use crate::error::ProxyError;
 use crate::http::json_response;
 use crate::logging::{log_request, log_timed};
@@ -144,20 +147,35 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
-    // `messages` is stored in virtual-model metadata but never read back on
-    // inference (LM Studio has no Modelfile/template engine to seed turns
-    // into) — warn server-side and flag the client rather than staying
-    // silent about the no-op.
-    let messages_seeded = body
+    // `messages`, `template` and `adapters` are stored in virtual-model
+    // metadata but never reach inference: LM Studio has no Modelfile engine to
+    // seed turns, no template-override, and no LoRA-adapter load surface. Warn
+    // server-side and flag the client rather than staying silent about the
+    // no-op.
+    let mut warnings: Vec<&str> = Vec::new();
+    if body
         .get("messages")
         .and_then(|m| m.as_array())
-        .is_some_and(|arr| !arr.is_empty());
-    if messages_seeded {
-        log::warn!(
-            "create '{}': {}",
-            new_model_name,
-            WARNING_MESSAGES_NOT_APPLIED
-        );
+        .is_some_and(|arr| !arr.is_empty())
+    {
+        warnings.push(WARNING_MESSAGES_NOT_APPLIED);
+    }
+    if body
+        .get("template")
+        .and_then(|t| t.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        warnings.push(WARNING_TEMPLATE_NOT_APPLIED);
+    }
+    if body.get("adapters").is_some_and(|a| match a {
+        Value::Object(map) => !map.is_empty(),
+        Value::Array(arr) => !arr.is_empty(),
+        _ => false,
+    }) {
+        warnings.push(WARNING_ADAPTERS_NOT_APPLIED);
+    }
+    for warning in &warnings {
+        log::warn!("create '{}': {}", new_model_name, warning);
     }
 
     // LM Studio has no API for creating real models; the proxy implements
@@ -221,8 +239,8 @@ pub async fn handle_ollama_create(
             json!({"status": "creating alias"}),
             json!({"status": "writing manifest"}),
         ];
-        if messages_seeded {
-            statuses.push(json!({"status": format!("warning: {WARNING_MESSAGES_NOT_APPLIED}")}));
+        for warning in &warnings {
+            statuses.push(json!({"status": format!("warning: {warning}")}));
         }
         statuses.push(json!({"status": "success"}));
         log_handler_io("create", None, None);
@@ -230,8 +248,8 @@ pub async fn handle_ollama_create(
     }
 
     let mut response = json!({"status": "success"});
-    if messages_seeded {
-        response["warning"] = json!(WARNING_MESSAGES_NOT_APPLIED);
+    if !warnings.is_empty() {
+        response["warning"] = json!(warnings.join("; "));
     }
     log_handler_io("create", None, Some(&response));
     Ok(json_response(&response))
