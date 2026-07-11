@@ -580,7 +580,12 @@ fn show_response_model_info_has_general_keys_and_arch_context_length() {
     // native() quantizes as Q4_K_M; real Ollama maps that to file_type 15
     // (api-docs/ollama/api-reference/show-model-details.md:64,100).
     assert_eq!(mi["general.file_type"], json!(15));
-    assert_eq!(mi["general.quantization_version"], json!(2));
+    // quantization_version is a GGUF metadata field the LM Studio record does
+    // not expose, so it is omitted rather than fabricated as a constant `2`.
+    assert!(
+        mi.get("general.quantization_version").is_none(),
+        "quantization_version is not derivable and must be omitted; got {mi}"
+    );
     assert_eq!(mi["llama.context_length"], json!(4096));
 }
 

@@ -520,7 +520,9 @@ impl ModelInfo {
         if let Some(count) = crate::model::param_count::parse_parameter_count(&params.size_string) {
             map.insert("general.parameter_count".into(), json!(count));
         }
-        map.insert("general.quantization_version".into(), json!(2));
+        // `general.quantization_version` is a GGUF metadata field the LM Studio
+        // record does not expose; omit it rather than fabricate a constant `2`
+        // (same emit-only-real-data rule as `modified_at`).
         map.insert(
             format!("{}.context_length", self.arch),
             json!(self.max_context_length),
