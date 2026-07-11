@@ -166,11 +166,13 @@ async fn web_fetch_resolves_links_against_post_redirect_url() {
         .await;
     Mock::given(method("GET"))
         .and(path("/dir2/end"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            r#"<html><head><title>End</title></head><body><a href="child">c</a></body></html>"#
-                .as_bytes(),
-            "text/html",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                r#"<html><head><title>End</title></head><body><a href="child">c</a></body></html>"#
+                    .as_bytes(),
+                "text/html",
+            ),
+        )
         .mount(&p.mock)
         .await;
 
