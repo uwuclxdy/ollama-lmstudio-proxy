@@ -160,3 +160,56 @@ async fn images_generations_backend_error_propagates() {
     let body: serde_json::Value = resp.json().await.expect("json body");
     assert_eq!(body["error"]["type"], "invalid_request_error");
 }
+
+// ── stream:true + backend non-2xx — real status, never a fabricated 200 SSE ──
+
+#[tokio::test]
+async fn passthrough_stream_backend_4xx_keeps_status_not_fake_sse() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "meta/llama-3.2").await;
+
+    // The backend rejects a bad stream:true request with a plain JSON 400 (no
+    // SSE framing) — the exact shape a non-SSE upstream error takes.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "type": "error",
+            "error": { "type": "invalid_request_error", "message": "max_tokens must be positive" }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/messages"))
+        .json(&json!({
+            "model": "llama-3.2",
+            "stream": true,
+            "max_tokens": -5,
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .send()
+        .await
+        .expect("POST /v1/messages stream:true");
+
+    // Must surface the real 400, never a fabricated 200 text/event-stream.
+    assert_eq!(
+        resp.status(),
+        400,
+        "a non-2xx backend response to a stream:true passthrough must keep its status"
+    );
+    let ctype = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        !ctype.contains("text/event-stream"),
+        "a backend error must not be wrapped in an SSE stream; got content-type '{ctype}'"
+    );
+    let body: serde_json::Value = resp.json().await.expect("json error body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+
+    p.mock.verify().await;
+}

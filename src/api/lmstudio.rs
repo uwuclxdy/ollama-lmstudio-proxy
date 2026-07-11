@@ -238,6 +238,14 @@ async fn route_response(
     cancellation_token: CancellationToken,
 ) -> Result<axum::response::Response, ProxyError> {
     if is_streaming {
+        // A non-2xx status on a stream:true request means the backend sent a
+        // plain JSON error, not an SSE stream. Wrapping it in a fabricated 200
+        // text/event-stream strips the real status and breaks every SSE client
+        // (raw JSON, no data:/event: framing). Forward the status + body
+        // verbatim, mirroring the v0 path's reject_pre_stream_error guard.
+        if !response.status().is_success() {
+            return forward_raw_response(response).await;
+        }
         if LogConfig::get().debug_enabled {
             log::debug!("passthrough response: (streaming)");
         }
