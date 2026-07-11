@@ -85,17 +85,42 @@ pub async fn handle_web_fetch(
         ));
     }
 
-    let html = read_body_capped(response, &final_url).await?;
+    // Capture the content-type before the response body is consumed: only HTML
+    // gets html→markdown conversion. Running htmd on a JSON or plain-text body
+    // backslash-escapes it into unusable content. A missing content-type is
+    // treated as HTML (most web pages that omit it are), so only an explicit
+    // non-HTML type passes through unchanged.
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_html = content_type.is_empty()
+        || content_type.contains("text/html")
+        || content_type.contains("xhtml");
 
-    let title = extract_title(&html).unwrap_or_default();
+    let body_text = read_body_capped(response, &final_url).await?;
+
+    if !is_html {
+        // Non-HTML (json, plain text, csv, ...): return the body verbatim with
+        // no title/links to extract from a non-markup payload.
+        return Ok(json_response(&json!({
+            "title": "",
+            "content": body_text,
+            "links": [],
+        })));
+    }
+
+    let title = extract_title(&body_text).unwrap_or_default();
     // Skip script/style/noscript so their raw CSS/JS never leaks into the
     // markdown (htmd keeps their text content otherwise).
     let content = htmd::HtmlToMarkdownBuilder::new()
         .skip_tags(vec!["script", "style", "noscript"])
         .build()
-        .convert(&html)
+        .convert(&body_text)
         .unwrap_or_default();
-    let links = extract_links(&html, &final_url);
+    let links = extract_links(&body_text, &final_url);
 
     Ok(json_response(&json!({
         "title": title,
@@ -160,6 +185,21 @@ pub async fn handle_web_search(
             502,
         )
     })?;
+
+    // Validate the Ollama shape before forwarding: a misconfigured provider that
+    // returns another shape (an error object, a bare array, `{data:[...]}`, ...)
+    // would otherwise reach the client verbatim and break it silently.
+    let shape_ok = value
+        .get("results")
+        .and_then(|r| r.as_array())
+        .is_some_and(|arr| arr.iter().all(Value::is_object));
+    if !shape_ok {
+        return Err(ProxyError::new(
+            "web_search: provider response is not Ollama-shaped (expected {results:[{title,url,content}]})".to_string(),
+            502,
+        ));
+    }
+
     Ok(json_response(&value))
 }
 

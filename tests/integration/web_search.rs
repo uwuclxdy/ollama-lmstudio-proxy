@@ -190,3 +190,40 @@ async fn web_search_clamps_max_results_to_10() {
     assert_eq!(resp.status(), 200);
     p.mock.verify().await;
 }
+
+#[tokio::test]
+async fn web_search_wrong_shape_returns_502() {
+    let p = spawn_proxy_with_search().await;
+    // Provider returns a non-Ollama shape; the proxy must not forward it verbatim.
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": ["not", "ollama", "shaped"] })),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({ "query": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/web_search wrong shape");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        502,
+        "a wrong-shaped provider response must be rejected as 502"
+    );
+    let body: Value = resp.json().await.expect("json error body");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase()
+            .contains("shape"),
+        "502 must describe the shape mismatch; got {body}"
+    );
+}

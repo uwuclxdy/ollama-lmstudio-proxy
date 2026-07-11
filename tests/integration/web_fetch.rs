@@ -23,7 +23,7 @@ async fn web_fetch_returns_title_content_and_links() {
     let p = spawn_proxy().await;
     Mock::given(method("GET"))
         .and(path("/page"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(PAGE_HTML))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PAGE_HTML.as_bytes(), "text/html"))
         .mount(&p.mock)
         .await;
 
@@ -166,8 +166,10 @@ async fn web_fetch_resolves_links_against_post_redirect_url() {
         .await;
     Mock::given(method("GET"))
         .and(path("/dir2/end"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"<html><head><title>End</title></head><body><a href="child">c</a></body></html>"#,
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<html><head><title>End</title></head><body><a href="child">c</a></body></html>"#
+                .as_bytes(),
+            "text/html",
         ))
         .mount(&p.mock)
         .await;
@@ -191,5 +193,39 @@ async fn web_fetch_resolves_links_against_post_redirect_url() {
     assert!(
         links.contains(&format!("{}/dir2/child", p.mock.uri())),
         "relative link must resolve against the post-redirect URL (/dir2/), got: {links:?}"
+    );
+}
+
+#[tokio::test]
+async fn web_fetch_json_body_returned_verbatim_not_markdownified() {
+    let p = spawn_proxy().await;
+    let json_payload = r#"{"a":1,"b":["x","y"],"c":"a\\path"}"#;
+    Mock::given(method("GET"))
+        .and(path("/data.json"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(json_payload.as_bytes(), "application/json"),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_fetch"))
+        .json(&json!({ "url": format!("{}/data.json", p.mock.uri()) }))
+        .send()
+        .await
+        .expect("POST /api/web_fetch json");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["content"].as_str().expect("content string"),
+        json_payload,
+        "a non-HTML body must pass through verbatim, not html→markdown escaped; got {body}"
+    );
+    assert_eq!(body["title"], json!(""));
+    assert!(
+        body["links"].as_array().expect("links array").is_empty(),
+        "non-HTML body has no links to extract; got {body}"
     );
 }
