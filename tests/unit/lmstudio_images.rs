@@ -27,6 +27,41 @@ fn strips_existing_data_prefix_before_sniffing() {
 }
 
 #[test]
+fn remote_url_not_forwarded_verbatim_ssrf_guard() {
+    // A remote URL must NOT be forwarded verbatim: the backend would fetch it,
+    // turning a client-supplied address into an SSRF. It stays inert (wrapped),
+    // so no fetch happens. Ollama images are base64, not URLs.
+    for url in [
+        "http://169.254.169.254/latest/meta-data/",
+        "https://example.com/cat.png",
+    ] {
+        let out = image_data_url(url);
+        assert_ne!(
+            out, url,
+            "a remote URL must not be forwarded verbatim: {url}"
+        );
+        assert!(
+            out.starts_with("data:"),
+            "a remote URL is neutralised into an inert data: value; got {out}"
+        );
+    }
+}
+
+#[test]
+fn data_url_forwarded_unchanged() {
+    let url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA";
+    assert_eq!(image_data_url(url), url);
+}
+
+#[test]
+fn bare_base64_gets_wrapped() {
+    assert_eq!(
+        image_data_url("iVBORw0KGgoAAAANSUhEUgAA"),
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA"
+    );
+}
+
+#[test]
 fn vision_messages_embed_image_in_content_array() {
     let images = json!(["iVBORw0KGgoAAAA"]);
     let messages = build_vision_chat_messages(None, "describe", Some(&images));

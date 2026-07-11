@@ -9,6 +9,11 @@ use serde_json::{Value, json};
 /// If the caller already passed a full data URL, it is returned unchanged;
 /// otherwise the MIME type is sniffed from the base64 magic prefix.
 pub fn image_data_url(base64_data: &str) -> String {
+    // Ollama images are base64-encoded, not URLs. A bare base64 payload is
+    // wrapped as a data URL; an existing data URL is forwarded unchanged. A
+    // remote `http(s)://` URL is deliberately NOT forwarded: the backend would
+    // fetch it, turning a client-supplied address into an SSRF (metadata
+    // endpoints, loopback, LAN). It stays inert here (wrapped, never fetched).
     if base64_data.starts_with("data:") {
         return base64_data.to_string();
     }
