@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::constants::{
     LOG_PREFIX_SUCCESS, WARNING_ADAPTERS_NOT_APPLIED, WARNING_MESSAGES_NOT_APPLIED,
-    WARNING_TEMPLATE_NOT_APPLIED,
+    WARNING_PARSER_NOT_APPLIED, WARNING_RENDERER_NOT_APPLIED, WARNING_TEMPLATE_NOT_APPLIED,
 };
 use crate::error::ProxyError;
 use crate::http::json_response;
@@ -147,9 +147,10 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
-    // `messages`, `template` and `adapters` are stored in virtual-model
-    // metadata but never reach inference: LM Studio has no Modelfile engine to
-    // seed turns, no template-override, and no LoRA-adapter load surface. Warn
+    // `messages`, `template`, `adapters`, `renderer` and `parser` are stored in
+    // virtual-model metadata but never reach inference: LM Studio has no
+    // Modelfile engine to seed turns, no template-override, no LoRA-adapter load
+    // surface, and no custom prompt-renderer/response-parser hooks. Warn
     // server-side and flag the client rather than staying silent about the
     // no-op.
     let mut warnings: Vec<&str> = Vec::new();
@@ -173,6 +174,20 @@ pub async fn handle_ollama_create(
         _ => false,
     }) {
         warnings.push(WARNING_ADAPTERS_NOT_APPLIED);
+    }
+    if body
+        .get("renderer")
+        .and_then(|r| r.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        warnings.push(WARNING_RENDERER_NOT_APPLIED);
+    }
+    if body
+        .get("parser")
+        .and_then(|p| p.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        warnings.push(WARNING_PARSER_NOT_APPLIED);
     }
     for warning in &warnings {
         log::warn!("create '{}': {}", new_model_name, warning);

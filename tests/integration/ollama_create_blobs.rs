@@ -573,6 +573,102 @@ async fn create_with_adapters_stream_false_includes_warning() {
 }
 
 #[tokio::test]
+async fn create_with_renderer_parser_stream_false_includes_warnings() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "render-inert:v1",
+            "from": "llama3.2:3b",
+            "renderer": "harmony",
+            "parser": "harmony",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with renderer and parser");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    let warning = body
+        .get("warning")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    assert!(
+        warning.contains("renderer"),
+        "a stored RENDERER must surface an inert-renderer warning; got {body}"
+    );
+    assert!(
+        warning.contains("parser"),
+        "a stored PARSER must surface an inert-parser warning; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_renderer_stream_true_warns_before_success() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "render-inert-stream:v1",
+            "from": "llama3.2:3b",
+            "renderer": "harmony",
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/create stream with renderer");
+    assert_eq!(resp.status(), 200);
+
+    let text = resp.text().await.expect("body text");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            serde_json::from_str(l)
+                .unwrap_or_else(|e| panic!("invalid JSON chunk: {e}; line='{l}'"))
+        })
+        .collect();
+
+    assert_eq!(
+        lines.last().unwrap()["status"].as_str(),
+        Some("success"),
+        "last create chunk must still be status:success; got {lines:?}"
+    );
+    let has_renderer_warning = lines.iter().any(|chunk| {
+        chunk["status"].as_str().is_some_and(|s| {
+            s.to_lowercase().contains("warning") && s.to_lowercase().contains("renderer")
+        })
+    });
+    assert!(
+        has_renderer_warning,
+        "streamed create with a renderer should emit a renderer-warning status line before success; got {lines:?}"
+    );
+}
+
+#[tokio::test]
 async fn create_with_template_stream_true_warns_before_success() {
     let p = spawn_proxy().await;
 

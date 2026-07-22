@@ -19,6 +19,8 @@ pub struct VirtualModelMetadata {
     pub license: Option<Value>,
     pub adapters: Option<Value>,
     pub messages: Option<Vec<Value>>,
+    pub renderer: Option<String>,
+    pub parser: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +67,14 @@ impl VirtualModelStore {
 
         if let Some(messages) = body.get("messages").and_then(|m| m.as_array()).cloned() {
             metadata.messages = Some(messages);
+        }
+
+        if let Some(renderer) = body.get("renderer").and_then(|v| v.as_str()) {
+            metadata.renderer = Some(renderer.to_string());
+        }
+
+        if let Some(parser) = body.get("parser").and_then(|v| v.as_str()) {
+            metadata.parser = Some(parser.to_string());
         }
 
         metadata

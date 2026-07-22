@@ -59,6 +59,10 @@ pub const WARNING_TEMPLATE_NOT_APPLIED: &str =
     "TEMPLATE is stored but not applied by the LM Studio backend";
 pub const WARNING_ADAPTERS_NOT_APPLIED: &str =
     "ADAPTER is stored but not applied by the LM Studio backend";
+pub const WARNING_RENDERER_NOT_APPLIED: &str =
+    "RENDERER is stored but not applied by the LM Studio backend";
+pub const WARNING_PARSER_NOT_APPLIED: &str =
+    "PARSER is stored but not applied by the LM Studio backend";
 
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";

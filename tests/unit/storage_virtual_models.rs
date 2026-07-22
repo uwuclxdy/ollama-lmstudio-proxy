@@ -22,6 +22,8 @@ fn build_metadata_empty_body_no_base() {
     assert!(meta.license.is_none());
     assert!(meta.adapters.is_none());
     assert!(meta.messages.is_none());
+    assert!(meta.renderer.is_none());
+    assert!(meta.parser.is_none());
 }
 
 #[test]
@@ -32,7 +34,9 @@ fn build_metadata_all_fields_populated() {
         "parameters": {"temperature": 0.7},
         "license": "MIT",
         "adapters": [],
-        "messages": [{"role": "user", "content": "hi"}]
+        "messages": [{"role": "user", "content": "hi"}],
+        "renderer": "harmony",
+        "parser": "harmony"
     });
     let meta = VirtualModelStore::build_metadata_from_request(&body, None);
     assert_eq!(meta.system_prompt.as_deref(), Some("be concise"));
@@ -41,6 +45,37 @@ fn build_metadata_all_fields_populated() {
     assert!(meta.license.is_some());
     assert!(meta.adapters.is_some());
     assert_eq!(meta.messages.as_ref().map(|m| m.len()), Some(1));
+    assert_eq!(meta.renderer.as_deref(), Some("harmony"));
+    assert_eq!(meta.parser.as_deref(), Some("harmony"));
+}
+
+#[test]
+fn build_metadata_renderer_parser_stored_and_base_preserved() {
+    let base = VirtualModelMetadata {
+        renderer: Some("inherited-renderer".to_string()),
+        parser: Some("inherited-parser".to_string()),
+        ..VirtualModelMetadata::default()
+    };
+    // Empty body keeps the inherited renderer/parser from the source alias.
+    let kept = VirtualModelStore::build_metadata_from_request(&json!({}), Some(base.clone()));
+    assert_eq!(kept.renderer.as_deref(), Some("inherited-renderer"));
+    assert_eq!(kept.parser.as_deref(), Some("inherited-parser"));
+
+    // A body value overrides the inherited one.
+    let overridden = VirtualModelStore::build_metadata_from_request(
+        &json!({"renderer": "new-renderer"}),
+        Some(base),
+    );
+    assert_eq!(overridden.renderer.as_deref(), Some("new-renderer"));
+    assert_eq!(overridden.parser.as_deref(), Some("inherited-parser"));
+}
+
+#[test]
+fn build_metadata_renderer_parser_non_string_ignored() {
+    let body = json!({"renderer": 42, "parser": ["not-a-string"]});
+    let meta = VirtualModelStore::build_metadata_from_request(&body, None);
+    assert!(meta.renderer.is_none());
+    assert!(meta.parser.is_none());
 }
 
 #[test]
