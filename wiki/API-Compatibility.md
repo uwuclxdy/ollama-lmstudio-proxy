@@ -59,9 +59,10 @@ in the README.
 
 - `/api/create` and `/api/copy` manage aliases stored under
   `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback:
-  `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Metadata such as
-  `system`, `template`, `parameters`, `license`, `adapters`, and `messages` is
-  merged into subsequent requests.
+  `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Alias metadata
+  (`system`, `template`, `parameters`, `license`, `adapters`, `messages`,
+  `renderer`, `parser`) is recorded on the alias. `system` and `parameters`
+  reach inference; the rest are stored but stay inert on the LM Studio backend.
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio
   metadata plus alias info when present.
 - `/api/pull` streams LM Studio catalog downloads (or blocks when
