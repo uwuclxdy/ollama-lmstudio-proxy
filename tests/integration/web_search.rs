@@ -227,3 +227,122 @@ async fn web_search_wrong_shape_returns_502() {
         "502 must describe the shape mismatch; got {body}"
     );
 }
+
+#[tokio::test]
+async fn web_search_result_missing_field_returns_502() {
+    let p = spawn_proxy_with_search().await;
+    // The container is a well-formed `{results:[{...}]}`, but an item is
+    // missing a documented field — this must not pass as a container check alone.
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{ "foo": 1 }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({ "query": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/web_search missing field");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        502,
+        "an item missing title/url/content must be rejected as 502"
+    );
+    let body: Value = resp.json().await.expect("json error body");
+    let msg = body["error"].as_str().unwrap_or_default().to_lowercase();
+    assert!(
+        msg.contains("results[0]") && msg.contains("title"),
+        "502 must name the failing index and field; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn web_search_result_wrong_type_field_returns_502() {
+    let p = spawn_proxy_with_search().await;
+    // Field present but wrong type (`content: null`) is a distinct failure mode
+    // from a missing key — a check that only tests presence would miss this.
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{ "title": "x", "url": "y", "content": null }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({ "query": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/web_search wrong-type field");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        502,
+        "a non-string documented field must be rejected as 502"
+    );
+    let body: Value = resp.json().await.expect("json error body");
+    let msg = body["error"].as_str().unwrap_or_default().to_lowercase();
+    assert!(
+        msg.contains("results[0]") && msg.contains("content"),
+        "502 must name the failing index and field; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn web_search_extra_fields_in_result_still_pass() {
+    let p = spawn_proxy_with_search().await;
+    // A provider returning MORE than the documented three fields is fine; only
+    // a missing/wrong-typed documented field must be rejected.
+    let provider_body = json!({
+        "results": [
+            { "title": "Ollama", "url": "https://ollama.com/", "content": "text", "score": 0.9 }
+        ]
+    });
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&provider_body))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({ "query": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/web_search extra fields");
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, provider_body);
+}
+
+#[tokio::test]
+async fn web_search_empty_results_stays_200() {
+    let p = spawn_proxy_with_search().await;
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_search"))
+        .json(&json!({ "query": "no hits" }))
+        .send()
+        .await
+        .expect("POST /api/web_search empty results");
+    assert_eq!(
+        resp.status(),
+        200,
+        "an empty results array is a legitimate no-hits response"
+    );
+}

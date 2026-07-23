@@ -187,20 +187,39 @@ pub async fn handle_web_search(
     })?;
 
     // Validate the Ollama shape before forwarding: a misconfigured provider that
-    // returns another shape (an error object, a bare array, `{data:[...]}`, ...)
-    // would otherwise reach the client verbatim and break it silently.
-    let shape_ok = value
-        .get("results")
-        .and_then(|r| r.as_array())
-        .is_some_and(|arr| arr.iter().all(Value::is_object));
-    if !shape_ok {
+    // returns another shape (an error object, a bare array, `{data:[...]}`, an
+    // item missing a documented field, ...) would otherwise reach the client
+    // verbatim and break it silently, since Ollama clients read title/url/content
+    // straight off each result with no shape check of their own.
+    if let Err(reason) = validate_web_search_results(&value) {
         return Err(ProxyError::new(
-            "web_search: provider response is not Ollama-shaped (expected {results:[{title,url,content}]})".to_string(),
+            format!(
+                "web_search: provider response is not Ollama-shaped ({reason}); expected {{results:[{{title,url,content}}]}}"
+            ),
             502,
         ));
     }
 
     Ok(json_response(&value))
+}
+
+/// Check `value` against Ollama's documented `web_search` response shape
+/// (`api-docs/ollama/capabilities/web-search.md`): `results` must be an array,
+/// and each element must carry `title`/`url`/`content` as strings (extra keys
+/// are fine; an empty array is a legitimate no-hits response).
+fn validate_web_search_results(value: &Value) -> Result<(), String> {
+    let results = value
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or("missing or non-array 'results'")?;
+    for (i, item) in results.iter().enumerate() {
+        for field in ["title", "url", "content"] {
+            if !item.get(field).is_some_and(Value::is_string) {
+                return Err(format!("results[{i}].{field} is missing or not a string"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// GET `start`, following up to [`MAX_REDIRECTS`] redirects manually. When
