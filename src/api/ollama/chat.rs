@@ -74,7 +74,6 @@ pub async fn handle_ollama_chat(
             keep_alive_seconds,
             is_chat: true,
             stream,
-            start_time,
             cancellation_token,
         })
         .await;

@@ -2059,3 +2059,85 @@ async fn chat_keep_alive_zero_no_messages_streaming_returns_ndjson_done_chunk() 
     assert_no_chat_inference_calls(&p).await;
     assert!(wait_for_unload_call(&p).await);
 }
+
+// Upstream `docs/api.md`'s chat-Unload sample carries
+// `"done_reason":"unload"` and no duration/eval fields; this pins the
+// unload-only envelope against that sample for both wire formats.
+fn assert_unload_envelope_matches_upstream(chunk: &Value) {
+    assert_eq!(chunk["done_reason"], "unload");
+    for field in [
+        "total_duration",
+        "load_duration",
+        "prompt_eval_count",
+        "prompt_eval_duration",
+        "eval_count",
+        "eval_duration",
+    ] {
+        assert!(
+            chunk.get(field).is_none(),
+            "unload response must not fabricate {field}: {chunk}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn chat_keep_alive_zero_unload_envelope_matches_upstream_non_streaming() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "keep_alive": 0,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive:0 no messages");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_unload_envelope_matches_upstream(&body);
+    assert!(wait_for_unload_call(&p).await);
+}
+
+#[tokio::test]
+async fn chat_keep_alive_zero_unload_envelope_matches_upstream_streaming() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/models/unload"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1..)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "keep_alive": 0,
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive:0 stream");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let final_chunk = chunks.last().expect("at least one chunk");
+    assert_unload_envelope_matches_upstream(final_chunk);
+    assert!(wait_for_unload_call(&p).await);
+}

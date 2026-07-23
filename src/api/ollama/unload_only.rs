@@ -26,14 +26,18 @@
 //! the inference response — see the existing `keep_alive_zero_accepted`
 //! integration tests.
 //!
-//! Unload's `done_reason` is omitted: `api-docs/ollama/api/generate.md` and
-//! `chat.md` only document `stop | length`, and the project's policy (see
-//! `src/streaming/chunks.rs`) is to omit unknown reasons rather than fabricate
-//! one. Warm is the documented exception — live Ollama 0.31.1 emits a real
-//! `done_reason:"load"` for this case, so `build_warm_chunk` sends it.
+//! Unload's `done_reason:"unload"` comes from upstream ollama's `docs/api.md`,
+//! mirrored at `api-docs/ollama/repo/api.md` (the docs-site `llms.txt` that
+//! feeds the rest of `api-docs/ollama/` does not list that page) — both the
+//! generate and chat "Unload a model" samples carry it, and neither carries
+//! any duration/eval field, matching `build_done_chunk` below.
+//!
+//! Warm's `done_reason:"load"` is that same doc's chat sample verbatim; its
+//! generate sample omits the field, but live Ollama 0.31.1 emits a real
+//! `done_reason:"load"` for generate too, so `build_warm_chunk` sends it
+//! unconditionally for both endpoints.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -53,7 +57,6 @@ pub struct UnloadOnlyCall<'a> {
     pub keep_alive_seconds: Option<i64>,
     pub is_chat: bool,
     pub stream: bool,
-    pub start_time: Instant,
     pub cancellation_token: CancellationToken,
 }
 
@@ -69,7 +72,6 @@ pub async fn respond_unload_only(
         keep_alive_seconds,
         is_chat,
         stream,
-        start_time,
         cancellation_token,
     } = call;
 
@@ -89,7 +91,7 @@ pub async fn respond_unload_only(
         0,
     );
 
-    let payload = build_done_chunk(ollama_model_name, is_chat, start_time);
+    let payload = build_done_chunk(ollama_model_name, is_chat);
 
     if stream {
         stream_status_messages(
@@ -101,19 +103,12 @@ pub async fn respond_unload_only(
     }
 }
 
-fn build_done_chunk(ollama_model_name: &str, is_chat: bool, start_time: Instant) -> Value {
-    let total_duration_ns = start_time.elapsed().as_nanos() as u64;
-
+fn build_done_chunk(ollama_model_name: &str, is_chat: bool) -> Value {
     let mut payload = json!({
         "model": ollama_model_name,
         "created_at": chrono::Utc::now().to_rfc3339(),
         "done": true,
-        "total_duration": total_duration_ns,
-        "load_duration": 0u64,
-        "prompt_eval_count": 0u64,
-        "prompt_eval_duration": 0u64,
-        "eval_count": 0u64,
-        "eval_duration": 0u64,
+        "done_reason": "unload",
     });
 
     if let Some(obj) = payload.as_object_mut() {
@@ -239,10 +234,10 @@ pub async fn respond_warm_only(
 
 /// Live Ollama 0.31.1 omits every duration/eval field for a load-only
 /// response and includes only `model`, `created_at`, the endpoint's empty
-/// payload field, `done`, and a real `done_reason:"load"` — unlike
-/// `build_done_chunk`'s unload envelope, which zero-fills those fields and
-/// omits `done_reason` entirely. Chat carries an empty assistant `message`
-/// (upstream chat.md "Load a model" sample); generate an empty `response`.
+/// payload field, `done`, and a real `done_reason:"load"` — the same shape
+/// `build_done_chunk`'s unload envelope emits, with `done_reason:"unload"`
+/// instead. Chat carries an empty assistant `message` (upstream chat.md
+/// "Load a model" sample); generate an empty `response`.
 fn build_warm_chunk(ollama_model_name: &str, is_chat: bool) -> Value {
     let mut payload = json!({
         "model": ollama_model_name,

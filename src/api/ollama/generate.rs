@@ -53,7 +53,6 @@ pub async fn handle_ollama_generate(
             keep_alive_seconds,
             is_chat: false,
             stream,
-            start_time,
             cancellation_token,
         })
         .await;
