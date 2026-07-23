@@ -4,6 +4,11 @@
 #
 #   - api-docs/ollama/<path>           ← https://docs.ollama.com/<path>
 #         paths listed in OLLAMA_ACTIVE
+#   - api-docs/ollama/repo/<name>      ← ollama/ollama@main:docs/<name>
+#         names listed in OLLAMA_REPO_ACTIVE, for pages the site omits.
+#         No "docs" path segment here on purpose: the global gitignore
+#         excludes any directory of that name, so a mirrored docs/ tree
+#         would be fetched every run and never committed.
 #   - api-docs/future/ollama/<path>    ← https://docs.ollama.com/<path>
 #         paths reachable from llms.txt but neither active nor denied
 #   - api-docs/lmstudio/<path>         ← lmstudio-ai/docs@main:<path>
@@ -30,6 +35,7 @@ set -euo pipefail
 
 OLLAMA_BASE="https://docs.ollama.com"
 OLLAMA_LLMS_TXT="$OLLAMA_BASE/llms.txt"
+OLLAMA_REPO_RAW="https://raw.githubusercontent.com/ollama/ollama/main/docs"
 LMS_REPO="https://github.com/lmstudio-ai/docs.git"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,6 +75,13 @@ OLLAMA_ACTIVE=(
     context-length.md
     modelfile.md
     openapi.yaml
+)
+
+# Ollama: pages that exist only in the source repo's docs/ tree. The docs-site
+# llms.txt does not list api.md, yet it is the sole source for the Load/Unload
+# response bodies (`done_reason: "load"|"unload"`) the proxy has to match.
+OLLAMA_REPO_ACTIVE=(
+    api.md
 )
 
 # Ollama: irrelevant to a translation proxy. Never fetched.
@@ -212,6 +225,13 @@ for path in "${ollama_paths[@]}"; do
     else
         ollama_future=$((ollama_future + 1))
     fi
+done
+
+for path in "${OLLAMA_REPO_ACTIVE[@]}"; do
+    target="$OLLAMA_DIR/repo/$path"
+    mkdir -p "$(dirname "$target")"
+    curl -fsSL --retry 3 --retry-delay 2 "$OLLAMA_REPO_RAW/$path" -o "$target"
+    ollama_active=$((ollama_active + 1))
 done
 
 echo "  ollama: $ollama_active active, $ollama_future future"
