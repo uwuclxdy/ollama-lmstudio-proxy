@@ -297,6 +297,59 @@ async fn tags_orphan_alias_omits_modified_at() {
 }
 
 #[tokio::test]
+async fn tags_live_resolving_alias_omits_modified_at() {
+    let p = spawn_proxy().await;
+
+    // Target stays present in LM Studio for the whole test — the alias
+    // resolves live, distinct from `tags_orphan_alias_omits_modified_at`
+    // (target removed) and the native-model case above.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2:3b",
+                "llama",
+                false,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let copy = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": "live-alias:latest"}))
+        .send()
+        .await
+        .expect("POST /api/copy");
+    assert!(
+        !copy.status().is_server_error(),
+        "copy failed: {}",
+        copy.status()
+    );
+
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let entry = body["models"]
+        .as_array()
+        .expect("models array")
+        .iter()
+        .find(|m| m["name"].as_str() == Some("live-alias:latest"))
+        .unwrap_or_else(|| panic!("live-resolving alias must appear in tags; got {body}"));
+    assert!(
+        entry.get("modified_at").is_none(),
+        "a live-resolving alias must omit modified_at like every other tags entry; got {entry}"
+    );
+}
+
+#[tokio::test]
 async fn tags_virtual_model_created_via_copy_appears_in_list() {
     let p = spawn_proxy().await;
 

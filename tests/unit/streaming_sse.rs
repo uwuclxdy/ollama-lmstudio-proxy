@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde_json::json;
 
 use crate::constants::{SSE_DATA_PREFIX, SSE_DONE_MESSAGE, SSE_MESSAGE_BOUNDARY};
@@ -407,4 +409,152 @@ fn native_frame_is_named_error_event_with_native_type() {
     assert_eq!(data["type"], json!("error"));
     assert_eq!(data["error"]["type"], json!("internal_error"));
     assert_eq!(data["error"]["message"], json!("boom"));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// handle_passthrough_streaming_response — wiring at each frame_error call site
+//
+// `frame_error`/`from_endpoint` above are pure functions already covered; these
+// drive the real function end-to-end (a real `reqwest::Response` from a raw
+// one-shot TCP server) so a call site reverted to a bare ollama-shaped string
+// instead of `protocol.frame_error(...)` would be caught.
+// ════════════════════════════════════════════════════════════════════════════
+
+use crate::constants::{ERROR_CANCELLED, ERROR_TIMEOUT};
+use crate::streaming::sse::handle_passthrough_streaming_response;
+use tokio_util::sync::CancellationToken;
+
+/// One-shot raw TCP responder: accepts a single connection, drains the
+/// request, then hands the socket to `write_response` — which controls
+/// exactly what bytes (and when) the client sees. Used to manufacture a real
+/// `reqwest::Response` backed by a stalled or truncated body, which no
+/// wiremock `ResponseTemplate` can produce.
+async fn spawn_raw_response<F, Fut>(write_response: F) -> reqwest::Response
+where
+    F: FnOnce(tokio::net::TcpStream) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send,
+{
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("local_addr");
+
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut buf = vec![0u8; 4096];
+        let _ = stream.read(&mut buf).await; // drain the request
+        write_response(stream).await;
+    });
+
+    reqwest::Client::new()
+        .get(format!("http://{}/", addr))
+        .send()
+        .await
+        .expect("GET raw one-shot server")
+}
+
+async fn write_minimal_200(mut stream: tokio::net::TcpStream) {
+    use tokio::io::AsyncWriteExt;
+    let _ = stream
+        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}")
+        .await;
+}
+
+/// Declares a body but sends none of it before closing — hyper detects the
+/// socket closing before content-length is satisfied and surfaces an
+/// incomplete-message error on the body stream. Sending zero body bytes (not
+/// just fewer than declared) keeps this a pure error with no raw passthrough
+/// chunk ahead of it to pollute the frame the test parses.
+async fn write_truncated_body(mut stream: tokio::net::TcpStream) {
+    use tokio::io::AsyncWriteExt;
+    let _ = stream
+        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 10000\r\n\r\n")
+        .await;
+    let _ = stream.shutdown().await;
+}
+
+/// Sends only headers, then stalls well past the caller's `stream_timeout_seconds`.
+async fn write_then_stall(mut stream: tokio::net::TcpStream) {
+    use tokio::io::AsyncWriteExt;
+    let _ = stream
+        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\n")
+        .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// Collect a streamed axum response body and parse it as a single SSE frame
+/// via `parse_frame` above.
+async fn collect_frame(response: axum::response::Response) -> (Option<String>, serde_json::Value) {
+    use http_body_util::BodyExt;
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    let text = String::from_utf8(bytes.to_vec()).expect("utf8 frame");
+    parse_frame(&text)
+}
+
+#[tokio::test]
+async fn passthrough_cancel_wires_real_frame_error() {
+    // Pre-cancel: `tokio::select! { biased; ... }` polls the cancellation arm
+    // first on every iteration, so an already-cancelled token deterministically
+    // wins the very first loop iteration regardless of the mocked response.
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let response = spawn_raw_response(write_minimal_200).await;
+    let result =
+        handle_passthrough_streaming_response(response, PassthroughProtocol::Anthropic, token, 60)
+            .await
+            .expect("cancelled passthrough stream must still build a response");
+
+    let (event, data) = collect_frame(result).await;
+    assert_eq!(event.as_deref(), Some("error"));
+    assert_eq!(data["error"]["type"], json!("api_error"));
+    assert_eq!(data["error"]["message"], json!(ERROR_CANCELLED));
+}
+
+#[tokio::test]
+async fn passthrough_midstream_error_wires_real_frame_error() {
+    let response = spawn_raw_response(write_truncated_body).await;
+    let result = handle_passthrough_streaming_response(
+        response,
+        PassthroughProtocol::NativeV1,
+        CancellationToken::new(),
+        60,
+    )
+    .await
+    .expect("mid-stream network error must still build a response");
+
+    let (event, data) = collect_frame(result).await;
+    assert_eq!(event.as_deref(), Some("error"));
+    assert_eq!(data["error"]["type"], json!("internal_error"));
+    let message = data["error"]["message"].as_str().expect("message string");
+    assert!(
+        message.starts_with("streaming error: "),
+        "mid-stream network error must be wrapped as 'streaming error: ...'; got {message}"
+    );
+}
+
+#[tokio::test]
+async fn passthrough_timeout_wires_real_frame_error() {
+    let response = spawn_raw_response(write_then_stall).await;
+    let result = handle_passthrough_streaming_response(
+        response,
+        PassthroughProtocol::OpenAi,
+        CancellationToken::new(),
+        1, // stream_timeout_seconds — well under the 2s stall above
+    )
+    .await
+    .expect("timed-out passthrough stream must still build a response");
+
+    let (event, data) = collect_frame(result).await;
+    assert_eq!(event, None, "OpenAI SSE uses bare data: lines");
+    assert_eq!(data["error"]["message"], json!(ERROR_TIMEOUT));
+    assert_eq!(data["error"]["type"], json!("server_error"));
 }

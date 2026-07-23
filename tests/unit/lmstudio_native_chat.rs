@@ -117,6 +117,34 @@ fn request_prefers_max_tokens_over_num_predict() {
 }
 
 #[test]
+fn request_omits_max_output_tokens_for_negative_sentinels() {
+    // Ollama's negative num_predict/max_tokens sentinels (-1 infinite, -2 fill
+    // context) mean "no limit" — the builder must omit max_output_tokens
+    // entirely rather than forward a negative value LM Studio would reject.
+    // Distinct from `requested_output_limit`, which feeds the done_reason
+    // heuristic and already has its own negative-sentinel test.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+
+    let body = build(&messages, Some(&json!({"num_predict": -1})), None);
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "num_predict:-1 must omit max_output_tokens; got {body}"
+    );
+
+    let body = build(&messages, Some(&json!({"num_predict": -2})), None);
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "num_predict:-2 must omit max_output_tokens; got {body}"
+    );
+
+    let body = build(&messages, Some(&json!({"max_tokens": -1})), None);
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "max_tokens:-1 must omit max_output_tokens; got {body}"
+    );
+}
+
+#[test]
 fn request_normalizes_reasoning_levels() {
     let messages = json!([{ "role": "user", "content": "hi" }]);
 

@@ -390,3 +390,82 @@ async fn embeddings_base64_transcoded_from_backend_floats() {
 
     p.mock.verify().await;
 }
+
+#[tokio::test]
+async fn embeddings_base64_encoding_format_not_forwarded_to_backend() {
+    // `body_partial_json` above only checks listed keys are present — it would
+    // pass even if encoding_format leaked through. Pin the absence directly by
+    // inspecting the exact body wiremock received.
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "nomic/embed-text").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "object": "embedding", "index": 0, "embedding": [1.0, -0.5] }],
+            "model": "nomic/embed-text",
+            "usage": { "prompt_tokens": 2, "total_tokens": 2 }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    p.client
+        .post(p.url("/v1/embeddings"))
+        .json(&json!({
+            "model": "nomic/embed-text",
+            "input": "hi",
+            "encoding_format": "base64"
+        }))
+        .send()
+        .await
+        .expect("POST /v1/embeddings base64");
+
+    let requests = p.mock.received_requests().await.expect("recorded requests");
+    let sent = requests
+        .iter()
+        .find(|r| r.url.path() == "/v1/embeddings")
+        .expect("an embeddings request reached the backend");
+    let body: serde_json::Value = serde_json::from_slice(&sent.body).expect("request body json");
+    assert!(
+        body.get("encoding_format").is_none(),
+        "encoding_format must be stripped before forwarding; got {body}"
+    );
+}
+
+// ── GET /v1/models/{segment}: unresolvable alias forwards unchanged ─────────
+
+#[tokio::test]
+async fn models_path_segment_unresolvable_forwards_original_segment() {
+    let p = spawn_proxy().await;
+    mount_native_models(&p, "meta/llama-3.2").await;
+
+    // "totally-unknown-model" matches nothing in the catalog above, so
+    // resolve_model_target errs. The proxy must forward the ORIGINAL segment
+    // unchanged (no rewrite) and let the backend's own error surface — a
+    // resolved/rewritten path would miss this mock and never verify.
+    Mock::given(method("GET"))
+        .and(path("/v1/models/totally-unknown-model"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": { "message": "model not found" }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models/totally-unknown-model"))
+        .send()
+        .await
+        .expect("GET /v1/models/{unresolvable}");
+
+    assert_eq!(
+        resp.status(),
+        404,
+        "backend's own error for the unresolved segment must surface unchanged"
+    );
+
+    p.mock.verify().await;
+}
