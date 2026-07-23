@@ -65,5 +65,8 @@ in the README.
   reach inference; the rest are stored but stay inert on the LM Studio backend.
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio
   metadata plus alias info when present.
+- A `virtual_models.json` that fails to parse is renamed aside to
+  `virtual_models.json.corrupt` (counting up `.1`, `.2` on repeat) before the proxy
+  continues with an empty alias set. The original bytes stay recoverable by hand.
 - `/api/pull` streams LM Studio catalog downloads (or blocks when
   `"stream": false`); optional `quantization` and `source` fields are forwarded.
