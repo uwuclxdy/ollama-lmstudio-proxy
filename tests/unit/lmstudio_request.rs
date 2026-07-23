@@ -1057,3 +1057,225 @@ fn structured_object_nested_optional_omits_strict() {
         "a nested optional field must drop strict; got {out}"
     );
 }
+
+#[test]
+fn structured_object_any_of_optional_omits_strict() {
+    // Pydantic's `Optional[X]` compiles to `anyOf:[{...}, {"type":"null"}]`; the
+    // walker must open every anyOf branch, not just top-level `properties`.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "pet": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": { "name": {"type": "string"}, "age": {"type": "integer"} },
+                        "required": ["name"]
+                    },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": ["pet"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an optional field hidden inside an anyOf branch must drop strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_ref_field_omits_strict() {
+    // A `$ref` node is never resolved here, so it can't be proven all-required.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "owner": { "$ref": "#/$defs/Owner" }
+        },
+        "required": ["owner"],
+        "$defs": {
+            "Owner": {
+                "type": "object",
+                "properties": { "name": {"type": "string"} },
+                "required": []
+            }
+        }
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an unresolved $ref must drop strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_array_items_optional_omits_strict() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "pets": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": { "name": {"type": "string"}, "age": {"type": "integer"} },
+                    "required": ["name"]
+                }
+            }
+        },
+        "required": ["pets"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an optional field on an array item schema must drop strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_all_required_including_any_of_keeps_strict() {
+    // Guard against over-correcting into never sending strict: a genuinely
+    // all-required schema, including one that fans out through anyOf, must
+    // still keep it.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "pet": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": { "name": {"type": "string"} },
+                        "required": ["name"]
+                    },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": ["pet"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert_eq!(
+        out["json_schema"]["strict"],
+        json!(true),
+        "an all-required anyOf schema keeps strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_additional_properties_false_all_required_keeps_strict() {
+    // Pydantic's `model_config = ConfigDict(extra="forbid")` emits
+    // `additionalProperties: false` alongside a fully-required schema. A
+    // boolean value declares no properties either way and must not by
+    // itself block strict.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "animal": {"type": "string"},
+            "age": {"type": "integer"}
+        },
+        "required": ["name", "animal", "age"],
+        "additionalProperties": false
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert_eq!(
+        out["json_schema"]["strict"],
+        json!(true),
+        "additionalProperties:false with all-required properties must keep strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_additional_properties_schema_optional_omits_strict() {
+    // Pydantic's `dict[str, Model]` compiles to `additionalProperties` holding
+    // a schema (a `$ref` here, or an inline object schema); unlike the
+    // boolean form, a schema value is a nested object schema by the same
+    // standard as any `properties` value or `items`, so an optional field
+    // hiding inside it must still drop strict.
+    let schema = json!({
+        "type": "object",
+        "properties": { "name": {"type": "string"} },
+        "required": ["name"],
+        "additionalProperties": {
+            "type": "object",
+            "properties": { "value": {"type": "string"}, "note": {"type": "string"} },
+            "required": ["value"]
+        }
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an optional field inside an object-valued additionalProperties must drop strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_prefix_items_all_required_keeps_strict() {
+    // pydantic's `coords: tuple[int, str]` compiles to a `prefixItems` pair
+    // with no optional field anywhere; gating on presence rather than
+    // walking it would forfeit strict for this ordinary, common shape.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "coords": {
+                "type": "array",
+                "prefixItems": [ { "type": "integer" }, { "type": "string" } ]
+            }
+        },
+        "required": ["coords"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert_eq!(
+        out["json_schema"]["strict"],
+        json!(true),
+        "an all-required prefixItems schema keeps strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_prefix_items_optional_omits_strict() {
+    // A tuple position can itself be an object schema with an optional
+    // field; every prefixItems position applies simultaneously, so it must
+    // be proven the same way an anyOf/oneOf/allOf branch is.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "coords": {
+                "type": "array",
+                "prefixItems": [
+                    { "type": "integer" },
+                    {
+                        "type": "object",
+                        "properties": { "label": {"type": "string"}, "note": {"type": "string"} },
+                        "required": ["label"]
+                    }
+                ]
+            }
+        },
+        "required": ["coords"]
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "an optional field inside a prefixItems position must drop strict; got {out}"
+    );
+}
+
+#[test]
+fn structured_object_not_field_omits_strict() {
+    // `not` is schema-valued and describes a forbidden shape, not walked
+    // anywhere; per the function's own "unwalked -> unproven" policy its
+    // mere presence must drop strict even though the declared properties
+    // are otherwise all required.
+    let schema = json!({
+        "type": "object",
+        "properties": { "name": {"type": "string"} },
+        "required": ["name"],
+        "not": { "required": ["forbidden_field"] }
+    });
+    let out = convert_structured_format(&schema).expect("object schema converts");
+    assert!(
+        out["json_schema"].get("strict").is_none(),
+        "a schema carrying `not` must drop strict; got {out}"
+    );
+}

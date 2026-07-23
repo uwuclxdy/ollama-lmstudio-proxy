@@ -316,15 +316,81 @@ fn convert_structured_format(format_value: &Value) -> Option<Value> {
     }
 }
 
+/// JSON-Schema keywords whose value is itself a schema (or holds one) that
+/// this walker does not open: `$ref`/`$dynamicRef` point elsewhere and are
+/// never resolved here; the rest (`patternProperties`, `propertyNames`,
+/// `contains`, `not`, `dependentSchemas`, `if`/`then`/`else`) can each carry a
+/// nested `properties`/`required` pair this function never sees. `strict` is
+/// an optimization: declining to prove safety only skips an enforcement, it
+/// never causes a bad request, so any node carrying one of these keywords
+/// counts as unproven rather than safe.
+///
+/// `contains`/`not` stay gated rather than walked even though their value is
+/// a schema: `contains` is existential (at least one array item must match)
+/// and `not` describes a forbidden, not an alternate valid, shape, so
+/// proving either nested schema all-required says nothing sound about the
+/// outer schema, unlike `prefixItems`/`items` where every position applies
+/// simultaneously.
+///
+/// `additionalProperties`/`unevaluatedProperties`/`unevaluatedItems` are not
+/// here: unlike the keywords above, their value can be a plain boolean, which
+/// declares no properties either way and would make this list fail closed on
+/// the common fully-closed case (pydantic `extra="forbid"` ->
+/// `additionalProperties: false` with every field required). When their
+/// value IS a schema (pydantic's `dict[str, Model]` ->
+/// `additionalProperties: {"$ref": ...}`), it is a nested object schema by
+/// the same standard as any `properties` value or `items`, so it is walked
+/// below instead of gated on presence.
+///
+/// `prefixItems` (2020-12's tuple-validation keyword, replacing draft-07's
+/// array-form `items`) is also not here for the same reason as `items`: its
+/// value is always an array of per-position schemas that all apply
+/// simultaneously, so it is walked alongside `anyOf`/`oneOf`/`allOf` below
+/// rather than gated on presence.
+const UNPROVEN_SCHEMA_KEYWORDS: &[&str] = &[
+    "$ref",
+    "$dynamicRef",
+    "patternProperties",
+    "propertyNames",
+    "contains",
+    "not",
+    "dependentSchemas",
+    "if",
+    "then",
+    "else",
+];
+
+/// Keywords covering keys not named in `properties`, whose value can be
+/// either a boolean (proves nothing, ignored) or a schema (a nested object
+/// schema that must be proven). Recursing unconditionally handles both: the
+/// non-object base case of `all_properties_required` already treats a
+/// boolean value as trivially safe, exactly the "ignore" a boolean warrants.
+const SCHEMA_VALUED_EXTRA_KEYWORDS: &[&str] = &[
+    "additionalProperties",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+];
+
 /// Whether `strict:true` is safe for this json-schema. LM Studio's strict mode
 /// requires every declared property to also appear in its object's `required`
-/// list (recursively), so a schema with an optional field must not be sent
-/// strict or the backend 400s. Nodes without `properties` (leaf types, arrays)
-/// impose no constraint; property subschemas and array `items` are checked too.
+/// list, recursively through every subschema position the schema can express
+/// one in: `properties` values, `items` (both the single-schema and
+/// draft-07 tuple-array forms), `prefixItems`, each `anyOf`/`oneOf`/`allOf`
+/// branch, and the schema-valued form of `SCHEMA_VALUED_EXTRA_KEYWORDS`. A
+/// position this function cannot walk (see `UNPROVEN_SCHEMA_KEYWORDS`) makes
+/// the whole node unproven, not safe by default, so a schema expressing
+/// optionality through some other keyword can't slip through as all-required.
 fn all_properties_required(schema: &Value) -> bool {
     let Some(map) = schema.as_object() else {
         return true;
     };
+
+    if UNPROVEN_SCHEMA_KEYWORDS
+        .iter()
+        .any(|&k| map.contains_key(k))
+    {
+        return false;
+    }
 
     if let Some(props) = map.get("properties").and_then(|p| p.as_object()) {
         let required: std::collections::HashSet<&str> = map
@@ -340,10 +406,30 @@ fn all_properties_required(schema: &Value) -> bool {
         }
     }
 
-    if let Some(items) = map.get("items")
-        && !all_properties_required(items)
-    {
-        return false;
+    if let Some(items) = map.get("items") {
+        let items_safe = match items.as_array() {
+            Some(tuple_schemas) => tuple_schemas.iter().all(all_properties_required),
+            None => all_properties_required(items),
+        };
+        if !items_safe {
+            return false;
+        }
+    }
+
+    for keyword in ["anyOf", "oneOf", "allOf", "prefixItems"] {
+        if let Some(branches) = map.get(keyword).and_then(|v| v.as_array())
+            && !branches.iter().all(all_properties_required)
+        {
+            return false;
+        }
+    }
+
+    for keyword in SCHEMA_VALUED_EXTRA_KEYWORDS {
+        if let Some(value) = map.get(*keyword)
+            && !all_properties_required(value)
+        {
+            return false;
+        }
     }
 
     true
