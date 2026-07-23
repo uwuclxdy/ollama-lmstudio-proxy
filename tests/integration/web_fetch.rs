@@ -231,3 +231,75 @@ async fn web_fetch_json_body_returned_verbatim_not_markdownified() {
         "non-HTML body has no links to extract; got {body}"
     );
 }
+
+// Regression: `is_html` matches on `contains("text/html")`, not equality, so a
+// charset parameter must not fall through to the verbatim non-HTML path.
+#[tokio::test]
+async fn web_fetch_html_with_charset_param_is_markdownified() {
+    let p = spawn_proxy().await;
+    Mock::given(method("GET"))
+        .and(path("/charset"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(PAGE_HTML.as_bytes(), "text/html; charset=utf-8"),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_fetch"))
+        .json(&json!({ "url": format!("{}/charset", p.mock.uri()) }))
+        .send()
+        .await
+        .expect("POST /api/web_fetch charset");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["title"], json!("Test & Page"));
+    let content = body["content"].as_str().expect("content string");
+    assert!(
+        !content.contains("<h1>"),
+        "'text/html; charset=utf-8' must still be html->markdown converted, not passed through raw: {content}"
+    );
+    assert!(
+        content.contains("Heading"),
+        "markdown content missing: {content}"
+    );
+}
+
+// Regression: a missing Content-Type header takes the `content_type.is_empty()`
+// branch of `is_html`, which is currently reached by no test.
+#[tokio::test]
+async fn web_fetch_missing_content_type_is_markdownified() {
+    let p = spawn_proxy().await;
+    Mock::given(method("GET"))
+        .and(path("/no-content-type"))
+        // Empty mime means wiremock sets NO Content-Type header at all (see
+        // `ResponseTemplate::generate_response`, which skips the insert when
+        // the mime string is empty) — not "wrong mime", genuinely absent.
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PAGE_HTML.as_bytes(), ""))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/web_fetch"))
+        .json(&json!({ "url": format!("{}/no-content-type", p.mock.uri()) }))
+        .send()
+        .await
+        .expect("POST /api/web_fetch no content-type");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["title"], json!("Test & Page"));
+    let content = body["content"].as_str().expect("content string");
+    assert!(
+        !content.contains("<h1>"),
+        "an absent content-type header must still be html->markdown converted: {content}"
+    );
+    assert!(
+        content.contains("Heading"),
+        "markdown content missing: {content}"
+    );
+}
