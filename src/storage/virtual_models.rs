@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -93,9 +93,16 @@ impl VirtualModelStore {
 
         let map = if path.exists() {
             match std::fs::read(&path) {
-                Ok(bytes) if !bytes.is_empty() => {
-                    serde_json::from_slice(&bytes).unwrap_or_default()
-                }
+                Ok(bytes) if !bytes.is_empty() => match serde_json::from_slice(&bytes) {
+                    Ok(map) => map,
+                    Err(parse_error) => {
+                        // Falling back to an empty map without quarantining the file would let
+                        // the next alias write (create_alias/upsert_alias/delete) atomically
+                        // rename an empty store over it, destroying every alias permanently.
+                        Self::quarantine_unparseable(&path, &parse_error)?;
+                        HashMap::new()
+                    }
+                },
                 Ok(_) => HashMap::new(),
                 Err(e) => {
                     return Err(ProxyError::internal_server_error(&format!(
@@ -113,6 +120,42 @@ impl VirtualModelStore {
             path,
             entries: RwLock::new(map),
         })
+    }
+
+    /// Renames an unparseable store file out of the way so it survives the next
+    /// persist, and logs the failure. Backup names count up from `.json.corrupt`
+    /// so a repeat failure never overwrites an earlier backup.
+    fn quarantine_unparseable(
+        path: &Path,
+        parse_error: &serde_json::Error,
+    ) -> Result<(), ProxyError> {
+        let mut backup_path = path.with_extension("json.corrupt");
+        let mut suffix = 0u32;
+        while backup_path.exists() {
+            suffix += 1;
+            backup_path = path.with_extension(format!("json.corrupt.{suffix}"));
+        }
+
+        // Logged before the rename attempt: the diagnostic must reach the log even if the
+        // rename itself fails, since that's the double-failure case an operator needs most.
+        log::error!(
+            "load: {} failed to deserialize ({}); backing up to {}",
+            path.display(),
+            parse_error,
+            backup_path.display()
+        );
+
+        std::fs::rename(path, &backup_path).map_err(|e| {
+            ProxyError::internal_server_error(&format!(
+                "load: failed to back up unparseable store {} to {} (parse error: {}): {}",
+                path.display(),
+                backup_path.display(),
+                parse_error,
+                e
+            ))
+        })?;
+
+        Ok(())
     }
 
     fn canonical(model_name: &str) -> Cow<'_, str> {

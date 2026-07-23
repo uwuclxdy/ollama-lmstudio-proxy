@@ -146,23 +146,85 @@ fn load_creates_parent_directory() {
 }
 
 #[test]
-fn load_corrupt_json_returns_empty_store() {
+fn load_corrupt_json_backs_up_original_bytes_and_returns_empty_store() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("vm.json");
-    std::fs::write(&path, b"not valid json at all!!!").unwrap();
-    let store = VirtualModelStore::load(path).unwrap();
+    let corrupt_bytes: &[u8] = b"not valid json at all!!!";
+    std::fs::write(&path, corrupt_bytes).unwrap();
+
+    let store = VirtualModelStore::load(path.clone()).unwrap();
     let rt = tokio::runtime::Runtime::new().unwrap();
     assert!(rt.block_on(store.list()).is_empty());
+
+    assert!(
+        !path.exists(),
+        "corrupt file must be renamed away, not left in place"
+    );
+    let backup_path = path.with_extension("json.corrupt");
+    let backup_bytes =
+        std::fs::read(&backup_path).expect("corrupt file should be backed up deterministically");
+    assert_eq!(backup_bytes, corrupt_bytes);
 }
 
 #[test]
-fn load_empty_file_returns_empty_store() {
+fn load_corrupt_json_does_not_clobber_an_existing_backup() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("vm.json");
+    let first_backup = path.with_extension("json.corrupt");
+    std::fs::write(&first_backup, b"first corrupt payload").unwrap();
+    std::fs::write(&path, b"second corrupt payload").unwrap();
+
+    let _store = VirtualModelStore::load(path.clone()).unwrap();
+
+    assert_eq!(
+        std::fs::read(&first_backup).unwrap(),
+        b"first corrupt payload",
+        "pre-existing backup must survive untouched"
+    );
+    let second_backup = path.with_extension("json.corrupt.1");
+    assert_eq!(
+        std::fs::read(&second_backup).unwrap(),
+        b"second corrupt payload"
+    );
+}
+
+#[tokio::test]
+async fn alias_write_after_corrupt_load_does_not_destroy_the_backup() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("vm.json");
+    let corrupt_bytes: &[u8] = b"{not json";
+    std::fs::write(&path, corrupt_bytes).unwrap();
+
+    let store = VirtualModelStore::load(path.clone()).unwrap();
+    store
+        .create_alias(
+            "alias",
+            "src".to_string(),
+            "tgt".to_string(),
+            default_metadata(),
+        )
+        .await
+        .unwrap();
+
+    let backup_path = path.with_extension("json.corrupt");
+    assert_eq!(
+        std::fs::read(&backup_path).unwrap(),
+        corrupt_bytes,
+        "persisting a new alias must not touch the quarantined backup"
+    );
+    let persisted = std::fs::read_to_string(&path).unwrap();
+    assert!(persisted.contains("\"alias\""));
+}
+
+#[test]
+fn load_empty_file_returns_empty_store_without_spurious_backup() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("vm.json");
     std::fs::write(&path, b"").unwrap();
-    let store = VirtualModelStore::load(path).unwrap();
+    let store = VirtualModelStore::load(path.clone()).unwrap();
     let rt = tokio::runtime::Runtime::new().unwrap();
     assert!(rt.block_on(store.list()).is_empty());
+    assert!(!path.with_extension("json.corrupt").exists());
 }
 
 // --- create_alias, upsert_alias, get, list, delete ---
