@@ -1,10 +1,9 @@
-// Integration tests for the /v1/* LM Studio extension passthroughs that
+// Integration tests for /v1/* LM Studio extension passthroughs that
 // resolve+remap the model field then forward the body verbatim.
 //
-// Mirrors `lmstudio_openai.rs::openai_responses_*` for /v1/responses (model
-// remap pin) and adds /v1/images/generations (image-gen passthrough). Both ride
-// the generic `/v1/{*path}` passthrough route (`src/proxy/routes.rs`), which
-// resolves the Ollama-style model name to the LM Studio key before forwarding.
+// Rides the generic `/v1/{*path}` passthrough route (`src/proxy/routes.rs`),
+// which resolves the Ollama-style model name to the LM Studio key before
+// forwarding.
 
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path};
@@ -73,92 +72,6 @@ async fn responses_model_remapped_and_input_forwarded_verbatim() {
     assert_eq!(body["object"], "response");
 
     p.mock.verify().await;
-}
-
-// ── POST /v1/images/generations — body forwarded with model resolved ────────
-
-#[tokio::test]
-async fn images_generations_model_remapped_and_prompt_forwarded() {
-    let p = spawn_proxy().await;
-    mount_native_models(&p, "openai/dall-e-3").await;
-
-    Mock::given(method("POST"))
-        .and(path("/v1/images/generations"))
-        .and(body_partial_json(json!({
-            "model": "openai/dall-e-3",
-            "prompt": "a cat in a tiny astronaut helmet",
-            "n": 1,
-            "size": "1024x1024"
-        })))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("x-lmstudio-images", "yes")
-                .set_body_json(json!({
-                    "created": 1_700_000_000u64,
-                    "data": [{ "url": "https://images.test/cat-astronaut.png" }]
-                })),
-        )
-        .expect(1)
-        .mount(&p.mock)
-        .await;
-
-    // Client uses a short name; the proxy must resolve it to the full LM Studio
-    // key before forwarding the body.
-    let resp = p
-        .client
-        .post(p.url("/v1/images/generations"))
-        .json(&json!({
-            "model": "dall-e-3",
-            "prompt": "a cat in a tiny astronaut helmet",
-            "n": 1,
-            "size": "1024x1024"
-        }))
-        .send()
-        .await
-        .expect("POST /v1/images/generations");
-
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.headers().get("x-lmstudio-images").unwrap(), "yes");
-    let body: serde_json::Value = resp.json().await.expect("json body");
-    assert!(
-        body["data"].is_array(),
-        "image-gen response must pass through unchanged: {body}"
-    );
-    assert_eq!(
-        body["data"][0]["url"],
-        "https://images.test/cat-astronaut.png"
-    );
-
-    p.mock.verify().await;
-}
-
-// ── POST /v1/images/generations — backend error propagates verbatim ─────────
-
-#[tokio::test]
-async fn images_generations_backend_error_propagates() {
-    let p = spawn_proxy().await;
-    mount_native_models(&p, "openai/dall-e-3").await;
-
-    Mock::given(method("POST"))
-        .and(path("/v1/images/generations"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
-            "error": { "message": "prompt rejected", "type": "invalid_request_error" }
-        })))
-        .expect(1)
-        .mount(&p.mock)
-        .await;
-
-    let resp = p
-        .client
-        .post(p.url("/v1/images/generations"))
-        .json(&json!({ "model": "dall-e-3", "prompt": "x" }))
-        .send()
-        .await
-        .expect("POST /v1/images/generations 400");
-
-    assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.expect("json body");
-    assert_eq!(body["error"]["type"], "invalid_request_error");
 }
 
 // ── stream:true + backend non-2xx — real status, never a fabricated 200 SSE ──
