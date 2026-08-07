@@ -77,6 +77,29 @@ pub fn body_looks_like_json(body: &[u8]) -> bool {
     trimmed.starts_with('{') || trimmed.starts_with('[')
 }
 
+/// Extract an `i64` from a JSON value, accepting float representations
+/// (e.g. `4096.0` from Python/HA clients).  Returns `None` for non-numbers,
+/// non-finite floats, or values outside `i64` range.  Floats truncate toward
+/// zero, matching Go's `time.Duration` unmarshal behaviour.
+pub fn json_as_i64(value: &Value) -> Option<i64> {
+    let num = value.as_number()?;
+    if let Some(i) = num.as_i64() {
+        return Some(i);
+    }
+    if let Some(u) = num.as_u64() {
+        return i64::try_from(u).ok();
+    }
+    let f = num.as_f64()?;
+    if !f.is_finite() {
+        return None;
+    }
+    let truncated = f.trunc();
+    if truncated < i64::MIN as f64 || truncated > i64::MAX as f64 {
+        return None;
+    }
+    Some(truncated as i64)
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/http_body.rs"]
 mod tests;

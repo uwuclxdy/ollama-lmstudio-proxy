@@ -330,6 +330,26 @@ fn requested_output_limit_ignores_negative_sentinels() {
 }
 
 #[test]
+fn requested_output_limit_accepts_integral_float() {
+    assert_eq!(
+        requested_output_limit(Some(&json!({"num_predict": 8.0}))),
+        Some(8)
+    );
+    assert_eq!(
+        requested_output_limit(Some(&json!({"max_tokens": 16.0}))),
+        Some(16)
+    );
+}
+
+#[test]
+fn requested_output_limit_accepts_negative_float_sentinel() {
+    assert_eq!(
+        requested_output_limit(Some(&json!({"num_predict": -1.0}))),
+        None
+    );
+}
+
+#[test]
 fn dropped_fields_detected_and_warned() {
     let body = json!({
         "model": "m",

@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::config::RuntimeConfig;
 use crate::constants::{LM_STUDIO_MODELS_LOAD, LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD};
-use crate::http::CancellableRequest;
+use crate::http::{CancellableRequest, json_as_i64};
 use crate::model::types::NativeModelsResponse;
 
 /// Build the body for `POST /api/v1/models/load` from the current runtime flags
@@ -55,8 +55,9 @@ pub fn build_load_config_body(
 pub fn extract_num_ctx(options: Option<&Value>) -> Option<u64> {
     options
         .and_then(|o| o.get("num_ctx"))
-        .and_then(|v| v.as_u64())
+        .and_then(json_as_i64)
         .filter(|n| *n > 0)
+        .map(|n| n as u64)
 }
 
 /// Resolve the context window to enforce: a per-request `num_ctx` wins, else the
@@ -313,12 +314,28 @@ mod tests {
     }
 
     #[test]
-    fn extract_num_ctx_rejects_absent_zero_negative_and_non_integer() {
+    fn extract_num_ctx_accepts_integral_float() {
+        assert_eq!(
+            extract_num_ctx(Some(&json!({ "num_ctx": 4096.0 }))),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn extract_num_ctx_truncates_fractional_float() {
+        assert_eq!(
+            extract_num_ctx(Some(&json!({ "num_ctx": 4096.9 }))),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn extract_num_ctx_rejects_absent_zero_negative_and_non_number() {
         assert_eq!(extract_num_ctx(None), None);
         assert_eq!(extract_num_ctx(Some(&json!({}))), None);
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 0 }))), None);
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": -1 }))), None);
-        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 1.5 }))), None);
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": -1.0 }))), None);
         assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": "4096" }))), None);
     }
 

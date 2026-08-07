@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use serde_json::{Value, json};
 
+use crate::http::json_as_i64;
+
 pub enum LMStudioRequestType<'a> {
     Chat { messages: &'a Value, stream: bool },
     Completion { prompt: Cow<'a, str>, stream: bool },
@@ -189,7 +191,7 @@ fn map_token_limits(ollama_options: Option<&Value>, params: &mut serde_json::Map
         // sentinels with no LM Studio equivalent; the backend 400s on a negative
         // max_tokens ("must be greater than 0"), so omit the field entirely
         // rather than forward a value that gets rejected.
-        let is_no_limit = max_tokens.as_i64().is_some_and(|n| n < 0);
+        let is_no_limit = json_as_i64(max_tokens).is_some_and(|n| n < 0);
         if !is_no_limit {
             params.insert("max_tokens".to_string(), max_tokens.clone());
         }

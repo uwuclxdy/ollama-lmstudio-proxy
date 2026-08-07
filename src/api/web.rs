@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::error::ProxyError;
-use crate::http::json_response;
+use crate::http::{json_as_i64, json_response};
 
 const WEB_FETCH_TIMEOUT_SECONDS: u64 = 30;
 /// Max redirect hops to follow manually (each one is SSRF-revalidated).
@@ -157,7 +157,9 @@ pub async fn handle_web_search(
     // Ollama's web-search spec: max_results defaults to 5, capped at 10.
     let max_results = body
         .get("max_results")
-        .and_then(|v| v.as_u64())
+        .and_then(json_as_i64)
+        .filter(|n| *n >= 0)
+        .map(|n| n as u64)
         .unwrap_or(5)
         .clamp(1, 10);
 

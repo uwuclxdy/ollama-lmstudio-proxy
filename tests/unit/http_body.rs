@@ -213,3 +213,37 @@ fn prepare_request_body_with_none_and_empty_bytes_returns_none() {
     );
     assert!(!prepared.is_json);
 }
+
+// ── json_as_i64 ──────────────────────────────────────────────────────────────
+
+#[test]
+fn json_as_i64_positive_integer() {
+    assert_eq!(json_as_i64(&json!(300)), Some(300));
+}
+
+#[test]
+fn json_as_i64_negative_integer() {
+    assert_eq!(json_as_i64(&json!(-1)), Some(-1));
+}
+
+#[test]
+fn json_as_i64_integral_float() {
+    assert_eq!(json_as_i64(&json!(300.0)), Some(300));
+}
+
+#[test]
+fn json_as_i64_truncates_fractional_float() {
+    assert_eq!(json_as_i64(&json!(299.9)), Some(299));
+}
+
+#[test]
+fn json_as_i64_negative_float() {
+    assert_eq!(json_as_i64(&json!(-1.0)), Some(-1));
+}
+
+#[test]
+fn json_as_i64_rejects_non_number() {
+    assert_eq!(json_as_i64(&json!("300")), None);
+    assert_eq!(json_as_i64(&json!(null)), None);
+    assert_eq!(json_as_i64(&json!(true)), None);
+}

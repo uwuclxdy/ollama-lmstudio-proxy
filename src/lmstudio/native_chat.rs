@@ -23,6 +23,7 @@ use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 
+use crate::http::json_as_i64;
 use crate::lmstudio::request::normalize_reasoning;
 use crate::lmstudio::response::{TimingInfo, convert_tool_calls_to_ollama};
 
@@ -108,7 +109,7 @@ fn apply_native_sampling(ollama_options: Option<&Value>, body: &mut Map<String, 
     if let Some(max_tokens) = options
         .get("max_tokens")
         .or_else(|| options.get("num_predict"))
-        && max_tokens.as_i64().is_none_or(|n| n >= 0)
+        && json_as_i64(max_tokens).is_none_or(|n| n >= 0)
     {
         body.insert("max_output_tokens".to_string(), max_tokens.clone());
     }
@@ -252,8 +253,8 @@ pub fn requested_output_limit(options: Option<&Value>) -> Option<u64> {
     let options = options?;
     options
         .get("max_tokens")
-        .or_else(|| options.get("num_predict"))?
-        .as_i64()
+        .or_else(|| options.get("num_predict"))
+        .and_then(json_as_i64)
         .filter(|n| *n > 0)
         .map(|n| n as u64)
 }
