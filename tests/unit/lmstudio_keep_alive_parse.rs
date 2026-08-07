@@ -108,3 +108,31 @@ fn keep_alive_requests_unload_false_for_negative() {
 fn keep_alive_requests_unload_false_for_none() {
     assert!(!keep_alive_requests_unload(None));
 }
+
+#[test]
+fn integral_float_truncates_to_seconds() {
+    // Home Assistant / Python clients send 30.0, not 30.
+    assert_eq!(parse(json!(30.0)), Some(30));
+}
+
+#[test]
+fn fractional_float_truncates() {
+    assert_eq!(parse(json!(299.9)), Some(299));
+}
+
+#[test]
+fn sub_second_float_clamps_to_one() {
+    // 0.5 must NOT truncate to 0 (which would trigger unload).
+    assert_eq!(parse(json!(0.5)), Some(1));
+}
+
+#[test]
+fn zero_float_unloads() {
+    assert_eq!(parse(json!(0.0)), Some(0));
+}
+
+#[test]
+fn negative_float_normalizes_to_minus_one() {
+    assert_eq!(parse(json!(-1.0)), Some(-1));
+    assert_eq!(parse(json!(-3600.5)), Some(-1));
+}

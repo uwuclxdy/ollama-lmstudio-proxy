@@ -49,6 +49,28 @@ fn parse_numeric(num: &serde_json::Number) -> Result<Option<i64>, ProxyError> {
             "keep_alive value exceeds supported range",
         ));
     }
+    // Float-valued keep_alive (e.g. 30.0 from Home Assistant / Python clients).
+    // Ollama itself accepts float64; truncate to whole seconds and clamp any
+    // positive sub-second value up to 1 so it can't accidentally trigger unload.
+    if let Some(float) = num.as_f64() {
+        if !float.is_finite() {
+            return Err(ProxyError::bad_request(
+                "keep_alive must be a finite number",
+            ));
+        }
+        if float > 0.0 && float < 1.0 {
+            return Ok(Some(1));
+        }
+        if float < 0.0 {
+            return Ok(Some(FOREVER_SENTINEL));
+        }
+        if float > i64::MAX as f64 {
+            return Err(ProxyError::bad_request(
+                "keep_alive value exceeds supported range",
+            ));
+        }
+        return Ok(Some(normalize(float.trunc() as i64)));
+    }
     Err(ProxyError::bad_request("keep_alive must be integral"))
 }
 
