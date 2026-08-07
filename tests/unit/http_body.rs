@@ -232,8 +232,8 @@ fn json_as_i64_integral_float() {
 }
 
 #[test]
-fn json_as_i64_truncates_fractional_float() {
-    assert_eq!(json_as_i64(&json!(299.9)), Some(299));
+fn json_as_i64_rejects_fractional_float() {
+    assert_eq!(json_as_i64(&json!(299.9)), None);
 }
 
 #[test]
@@ -246,4 +246,10 @@ fn json_as_i64_rejects_non_number() {
     assert_eq!(json_as_i64(&json!("300")), None);
     assert_eq!(json_as_i64(&json!(null)), None);
     assert_eq!(json_as_i64(&json!(true)), None);
+}
+
+#[test]
+fn json_as_i64_rejects_above_i64_max() {
+    // 2^63 — i64::MAX as f64 rounds up to exactly this value
+    assert_eq!(json_as_i64(&json!(9223372036854775808.0_f64)), None);
 }

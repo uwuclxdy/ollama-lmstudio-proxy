@@ -77,10 +77,10 @@ pub fn body_looks_like_json(body: &[u8]) -> bool {
     trimmed.starts_with('{') || trimmed.starts_with('[')
 }
 
-/// Extract an `i64` from a JSON value, accepting float representations
-/// (e.g. `4096.0` from Python/HA clients).  Returns `None` for non-numbers,
-/// non-finite floats, or values outside `i64` range.  Floats truncate toward
-/// zero, matching Go's `time.Duration` unmarshal behaviour.
+/// Extract an `i64` from a JSON value, accepting integral float
+/// representations (e.g. `4096.0` from Python/HA clients).  Fractional
+/// floats (`1.5`) yield `None`.  Returns `None` for non-numbers,
+/// non-finite floats, or values outside `i64` range.
 pub fn json_as_i64(value: &Value) -> Option<i64> {
     let num = value.as_number()?;
     if let Some(i) = num.as_i64() {
@@ -90,14 +90,14 @@ pub fn json_as_i64(value: &Value) -> Option<i64> {
         return i64::try_from(u).ok();
     }
     let f = num.as_f64()?;
-    if !f.is_finite() {
+    if !f.is_finite() || f.fract() != 0.0 {
         return None;
     }
-    let truncated = f.trunc();
-    if truncated < i64::MIN as f64 || truncated > i64::MAX as f64 {
+    // `i64::MAX as f64` rounds up to 2^63, so `>=` catches it correctly.
+    if f < i64::MIN as f64 || f >= i64::MAX as f64 {
         return None;
     }
-    Some(truncated as i64)
+    Some(f as i64)
 }
 
 #[cfg(test)]

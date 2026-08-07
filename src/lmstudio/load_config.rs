@@ -51,7 +51,8 @@ pub fn build_load_config_body(
 }
 
 /// Pull a usable `num_ctx` (positive integer) out of merged Ollama options.
-/// Absent, non-integer, or non-positive values yield `None`.
+/// Accepts integral floats (e.g. `4096.0`); absent, fractional, or
+/// non-positive values yield `None`.
 pub fn extract_num_ctx(options: Option<&Value>) -> Option<u64> {
     options
         .and_then(|o| o.get("num_ctx"))
@@ -322,11 +323,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_num_ctx_truncates_fractional_float() {
-        assert_eq!(
-            extract_num_ctx(Some(&json!({ "num_ctx": 4096.9 }))),
-            Some(4096)
-        );
+    fn extract_num_ctx_rejects_fractional_float() {
+        assert_eq!(extract_num_ctx(Some(&json!({ "num_ctx": 1.5 }))), None);
     }
 
     #[test]
