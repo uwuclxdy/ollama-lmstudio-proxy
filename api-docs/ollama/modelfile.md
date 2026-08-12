@@ -109,12 +109,8 @@ FROM <model name>:<tag>
 FROM llama3.2
 ```
 
-<Card title="Base Models" href="https://github.com/ollama/ollama#model-library">
-  A list of available base models
-</Card>
-
-<Card title="Base Models" href="https://ollama.com/library">
-  Additional models can be found at
+<Card title="Model library" href="https://ollama.com/library">
+  Browse available models
 </Card>
 
 #### Build from a Safetensors model
@@ -154,7 +150,7 @@ PARAMETER <parameter> <parametervalue>
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------- |
 | num\_ctx            | Sets the size of the context window used to generate the next token. (Default: 2048)                                                                                                                                                                                                                                                                                            | int        | num\_ctx 4096         |
 | repeat\_last\_n     | Sets how far back for the model to look back to prevent repetition. (Default: 64, 0 = disabled, -1 = num\_ctx)                                                                                                                                                                                                                                                                  | int        | repeat\_last\_n 64    |
-| repeat\_penalty     | Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly, while a lower value (e.g., 0.9) will be more lenient. (Default: 1.1)                                                                                                                                                                                             | float      | repeat\_penalty 1.1   |
+| repeat\_penalty     | Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly, while a lower value (e.g., 0.9) will be more lenient. (Default: 1.0, disabled)                                                                                                                                                                                   | float      | repeat\_penalty 1.1   |
 | temperature         | The temperature of the model. Increasing the temperature will make the model answer more creatively. (Default: 0.8)                                                                                                                                                                                                                                                             | float      | temperature 0.7       |
 | seed                | Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt. (Default: 0)                                                                                                                                                                                                               | int        | seed 42               |
 | stop                | Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text and return. Multiple stop patterns may be set by specifying multiple separate `stop` parameters in a modelfile.                                                                                                                                                              | string     | stop "AI assistant:"  |
