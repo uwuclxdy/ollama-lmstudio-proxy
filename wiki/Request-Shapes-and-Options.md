@@ -51,4 +51,4 @@ model is loaded.
 | `raw` | _none_ | Disables system-prompt injection in generate requests |
 | `keep_alive` | `ttl` | Seconds (int) or duration string (`"5m"`); `0` unloads the model immediately |
 | `tool_choice` | `tool_choice` | Forwarded on `/api/chat` (OpenAI-compat path) when `tools` is also present. Not forwarded without tools, and not on the `--use-native-chat` path (the native schema has no slot; the response carries a `warning` field naming the dropped fields) |
-| `integrations` | `integrations` | **Native path only** (`--use-native-chat`). Array of MCP tool specs forwarded verbatim. See [MCP Integrations](MCP-Integrations). |
+| `integrations` | `integrations` | **Native path only** (`--use-native-chat`, or `--native-chat-streaming` on a streaming request). Array of MCP tool specs forwarded verbatim. See [MCP Integrations](MCP-Integrations). |

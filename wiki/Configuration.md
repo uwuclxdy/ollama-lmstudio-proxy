@@ -1,9 +1,8 @@
 # ⚙️ Configuration
 
-Requires LM Studio **0.3.6+**.
+Requires LM Studio **0.4.0+**. Model listing, loading, unloading, downloads: all of it rides the `/api/v1` REST API that release introduced.
 
-All settings are passed as CLI flags. `--log-level` also reads the `RUST_LOG`
-environment variable. Other flags that read env vars are noted in the table below.
+Every setting is a CLI flag. Where a flag reads an environment variable too, the table names it.
 
 ## CLI flags
 
@@ -11,13 +10,16 @@ environment variable. Other flags that read env vars are noted in the table belo
 |------|---------|-------------|
 | `--listen` | `0.0.0.0:11434` | Server bind address |
 | `--lmstudio-url` | `http://localhost:1234` | LM Studio URL |
-| `--log-level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace`; also reads `RUST_LOG` |
+| `--log-level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace` (`RUST_LOG` env) |
 | `--load-timeout-seconds` | `15` | Model loading wait timeout in seconds (after trigger) |
 | `--model-resolution-cache-ttl-seconds` | `300` | Cache TTL for model resolution |
 | `--max-buffer-size` | `262144` | Initial buffer size for SSE message assembly (bytes) |
 | `--enable-chunk-recovery` | `false` | Enable partial chunk recovery for streams |
 | `--lmstudio-token` | _none_ | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); sent on backend requests, overridden by a caller-supplied `Authorization` |
-| `--use-native-chat` | `false` | Experimental: route `/api/chat` through native `/api/v1/chat` for richer reasoning events and accurate stats |
+| `--api-key` | _none_ | Inbound credential gate (`OLLAMA_API_KEY` env). Unset means the proxy is open. When set, every request needs `Authorization: Bearer <key>` or `x-api-key: <key>`; `GET /api/version` and CORS preflight stay open |
+| `--use-native-chat` | `false` | Route `/api/chat` through native `/api/v1/chat` for richer reasoning events, MCP tools, and accurate stats |
+| `--native-chat-streaming` | `false` | Same routing for streaming `/api/chat` only; non-streaming stays on the v0 path |
+| `--auto-evict` | `false` | Unload every other model's instances before loading a requested one (mirrors Ollama's single-model default). Single-tenant setups only: one client's load evicts another's |
 | `--flash-attention` | `false` | Experimental: enable flash attention when loading models via `/api/v1/models/load` |
 | `--offload-kv-cache` | `false` | Experimental: offload KV cache to GPU when loading models via `/api/v1/models/load` |
 | `--eval-batch-size` | _none_ | Experimental: set eval batch size when loading models via `/api/v1/models/load` |
@@ -27,12 +29,18 @@ environment variable. Other flags that read env vars are noted in the table belo
 | `--search-url` | _none_ | Search provider endpoint for `/api/web_search`; unset returns 501 (`SEARCH_URL` env) |
 | `--search-api-key` | _none_ | Bearer token sent to the search provider (`SEARCH_API_KEY` env) |
 
+## Native chat mode
+
+`--use-native-chat` routes every `/api/chat` request through LM Studio's `/api/v1/chat`. `--native-chat-streaming` routes the streaming ones only; the rest stay on the v0 path.
+
+The native path adds per-event reasoning deltas, real streaming token stats, [MCP integrations](MCP-Integrations). Its schema has no slot for `tools`, `tool_choice`, `format`: a request carrying any of them gets a `warning` field naming what the proxy dropped.
+
+## Update check
+
+One background call to the GitHub releases API on startup, throttled to once per 24h by a cache file. A newer tag logs at `warn`, a failure at `debug`. No flag disables it.
+
 ## Experimental flags
 
-`--use-native-chat`, `--flash-attention`, `--offload-kv-cache`, and
-`--eval-batch-size` are experimental. The first routes chat through LM Studio's
-native endpoint (see [MCP Integrations](MCP-Integrations)); the other three tune
-`/api/v1/models/load`. Leave them off unless you know you need them.
+`--flash-attention`, `--offload-kv-cache`, `--eval-batch-size` tune `/api/v1/models/load`. Leave them off by default.
 
-`--allow-private-fetch` disables the SSRF guard on `/api/web_fetch`; only use it
-when you need to fetch from localhost or a local network (e.g. testing).
+`--allow-private-fetch` disables the SSRF guard on `/api/web_fetch`. Use it only to fetch from localhost or a local network (e.g. testing).
