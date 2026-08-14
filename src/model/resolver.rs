@@ -84,7 +84,7 @@ impl ModelResolver {
                 if e.message.contains("404") || e.message.contains("not found") {
                     Err(ProxyError::new(
                         format!(
-                            "LM Studio native API not available. Please update to LM Studio 0.3.6+. Original error: {}",
+                            "LM Studio native API not available. Please update to LM Studio 0.4.0+. Original error: {}",
                             e.message
                         ),
                         503,
@@ -112,7 +112,7 @@ impl ModelResolver {
         if !response.status().is_success() {
             return Err(ProxyError::new(
                 format!(
-                    "native API error ({}): {}. Ensure LM Studio 0.3.6+ is installed",
+                    "native API error ({}): {}. Ensure LM Studio 0.4.0+ is installed",
                     response.status(),
                     ERROR_LM_STUDIO_UNAVAILABLE
                 ),
@@ -122,7 +122,7 @@ impl ModelResolver {
 
         let native_response = response.json::<NativeModelsResponse>().await.map_err(|e| {
             ProxyError::internal_server_error(&format!(
-                "invalid JSON from {}: {}. Ensure LM Studio 0.3.6+ is running",
+                "invalid JSON from {}: {}. Ensure LM Studio 0.4.0+ is running",
                 LM_STUDIO_NATIVE_MODELS, e
             ))
         })?;
