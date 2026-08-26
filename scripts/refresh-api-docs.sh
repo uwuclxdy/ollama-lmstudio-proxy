@@ -3,7 +3,11 @@
 # Refresh the upstream-mirrored API docs under "api-docs/".
 #
 #   - api-docs/ollama/<path>           ← https://docs.ollama.com/<path>
-#         paths listed in OLLAMA_ACTIVE
+#         paths listed in OLLAMA_ACTIVE. llms.txt mixes absolute and
+#         root-relative links; both are parsed. Paths the site lists but does
+#         not serve yet (404/410) are skipped with a warning, so one dead
+#         listing cannot block the refresh; ACTIVE paths are additionally
+#         guarded to exist on disk at the end.
 #   - api-docs/ollama/repo/<name>      ← ollama/ollama@main:docs/<name>
 #         names listed in OLLAMA_REPO_ACTIVE, for pages the site omits.
 #         No "docs" path segment here on purpose: the global gitignore
@@ -33,10 +37,11 @@
 
 set -euo pipefail
 
-OLLAMA_BASE="https://docs.ollama.com"
+# Sources are env-overridable so the whole flow can run against local stubs.
+OLLAMA_BASE="${OLLAMA_BASE:-https://docs.ollama.com}"
 OLLAMA_LLMS_TXT="$OLLAMA_BASE/llms.txt"
-OLLAMA_REPO_RAW="https://raw.githubusercontent.com/ollama/ollama/main/docs"
-LMS_REPO="https://github.com/lmstudio-ai/docs.git"
+OLLAMA_REPO_RAW="${OLLAMA_REPO_RAW:-https://raw.githubusercontent.com/ollama/ollama/main/docs}"
+LMS_REPO="${LMS_REPO:-https://github.com/lmstudio-ai/docs.git}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -191,8 +196,8 @@ echo "→ fetching ollama llms.txt"
 curl -fsSL --retry 3 --retry-delay 2 "$OLLAMA_LLMS_TXT" -o "$tmpdir/llms.txt"
 
 mapfile -t ollama_paths < <(
-    grep -oE "\\(${OLLAMA_BASE}/[^)]+\\)" "$tmpdir/llms.txt" \
-        | sed -E "s#^\\(${OLLAMA_BASE}/##; s#\\)\$##" \
+    grep -oE "\\((${OLLAMA_BASE}/|/)[^)]+\\)" "$tmpdir/llms.txt" \
+        | sed -E "s#^\\(${OLLAMA_BASE}/##; s#^\\(/##; s#\\)\$##" \
         | sort -u
 )
 
@@ -203,9 +208,14 @@ fi
 
 ollama_active=0
 ollama_future=0
-ollama_future_paths=()
 
 for path in "${ollama_paths[@]}"; do
+    # A link path is untrusted input; refuse traversal and absolute forms
+    # before it reaches mkdir, curl -o, or rm -f.
+    if [[ "$path" == /* || "/$path/" == *"/../"* ]]; then
+        echo "warn: refusing unsafe path '$path' from llms.txt" >&2
+        continue
+    fi
     if contains "$path" "${OLLAMA_DENY[@]}"; then
         continue
     fi
@@ -216,10 +226,28 @@ for path in "${ollama_paths[@]}"; do
         target="$OLLAMA_DIR/$path"
     else
         target="$FUTURE_OLLAMA_DIR/$path"
-        ollama_future_paths+=("$path")
     fi
     mkdir -p "$(dirname "$target")"
-    curl -fsSL --retry 3 --retry-delay 2 "$OLLAMA_BASE/$path" -o "$target"
+    # llms.txt can list pages the site does not serve yet. 404/410 skips
+    # with a warning; any other failure aborts the run, so a transient
+    # blip never deletes a mirror by failing its fetch.
+    if ! code="$(curl -sSL --retry 3 --retry-delay 2 -o "$target" \
+                     -w '%{http_code}' "$OLLAMA_BASE/$path")"; then
+        echo "error: fetch failed for '$OLLAMA_BASE/$path'" >&2
+        exit 1
+    fi
+    case "$code" in
+        2??) ;;
+        404|410)
+            echo "warn: '$OLLAMA_BASE/$path' listed in llms.txt but HTTP $code; skipped" >&2
+            rm -f "$target"
+            continue
+            ;;
+        *)
+            echo "error: HTTP $code for '$OLLAMA_BASE/$path'" >&2
+            exit 1
+            ;;
+    esac
     if [[ "$target" == "$OLLAMA_DIR/"* ]]; then
         ollama_active=$((ollama_active + 1))
     else
@@ -270,6 +298,25 @@ for path in "${lms_paths[@]}"; do
 done
 
 echo "  lmstudio: $lms_active active, $lms_future future"
+
+# Every ACTIVE doc must have landed on disk. Without this, a parse miss or a
+# dead upstream link deletes a mirror silently: the wipe above runs first,
+# and the PR then reads as an upstream removal.
+missing=()
+for path in "${OLLAMA_ACTIVE[@]}"; do
+    [[ -f "$OLLAMA_DIR/$path" ]] || missing+=("ollama/$path")
+done
+for path in "${OLLAMA_REPO_ACTIVE[@]}"; do
+    [[ -f "$OLLAMA_DIR/repo/$path" ]] || missing+=("ollama/repo/$path")
+done
+for path in "${LMS_ACTIVE[@]}"; do
+    [[ -f "$LMS_DIR/$path" ]] || missing+=("lmstudio/$path")
+done
+if (( ${#missing[@]} > 0 )); then
+    echo "error: active docs missing after refresh:" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    exit 1
+fi
 
 if (( ollama_future > 0 || lms_future > 0 )); then
     echo "ℹ future/ contains $((ollama_future + lms_future)) doc(s) not yet implemented"
