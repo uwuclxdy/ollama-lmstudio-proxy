@@ -9,7 +9,7 @@ Vision models accept images alongside text so the model can describe, classify, 
 ## Quick start
 
 ```shell theme={"system"}
-ollama run gemma4 ./image.png whats in this image?
+ollama run gemma4 ./image.png what is in this image?
 ```
 
 ## Usage with Ollama's API
