@@ -238,9 +238,12 @@ components:
         prompt_eval_count:
           type: integer
           description: Number of input tokens in the prompt
+        prompt_eval_cached_count:
+          type: integer
+          description: Number of prompt tokens read from the cache
         prompt_eval_duration:
           type: integer
-          description: Time spent evaluating the prompt in nanoseconds
+          description: Time spent evaluating uncached prompt tokens in nanoseconds
         eval_count:
           type: integer
           description: Number of output tokens generated in the response
@@ -284,9 +287,12 @@ components:
         prompt_eval_count:
           type: integer
           description: Number of input tokens in the prompt
+        prompt_eval_cached_count:
+          type: integer
+          description: Number of prompt tokens read from the cache
         prompt_eval_duration:
           type: integer
-          description: Time spent evaluating the prompt in nanoseconds
+          description: Time spent evaluating uncached prompt tokens in nanoseconds
         eval_count:
           type: integer
           description: Number of output tokens generated in the response
