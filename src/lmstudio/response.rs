@@ -8,7 +8,12 @@ use crate::constants::{
 };
 use crate::streaming::chunks::resolve_done_reason;
 
-/// Timing information for Ollama responses
+/// Timing information for Ollama responses.
+///
+/// `prompt_eval_cached_count` is deliberately not modeled: LM Studio reports
+/// no cache metric. Upstream Ollama itself omits the key when its runner
+/// reports none (`PromptEvalCachedCount *int` with `omitempty`), so every
+/// response path omits it rather than fabricating a count.
 #[derive(Debug, Clone)]
 pub struct TimingInfo {
     pub total_duration: u64,

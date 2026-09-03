@@ -461,6 +461,29 @@ fn chat_response_contains_full_ollama_shape() {
     }
 }
 
+/// LM Studio reports no cache metric, so the key stays omitted (see `TimingInfo`).
+#[test]
+fn responses_omit_prompt_eval_cached_count() {
+    let lm = json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+    });
+    let chat = ResponseTransformer::convert_to_ollama_chat(&lm, "m", 1, Instant::now());
+    assert!(
+        chat.get("prompt_eval_cached_count").is_none(),
+        "chat response must not fabricate a cache count: {chat}"
+    );
+
+    let generate = ResponseTransformer::convert_to_ollama_generate(&lm, "m", "q", Instant::now());
+    assert!(
+        generate.get("prompt_eval_cached_count").is_none(),
+        "generate response must not fabricate a cache count: {generate}"
+    );
+}
+
 #[test]
 fn chat_response_uses_usage_counts_when_present() {
     let lm = json!({
@@ -840,7 +863,12 @@ fn embeddings_response_shape_matches_ollama_embed_spec() {
     for key in ["total_duration", "load_duration", "prompt_eval_count"] {
         assert!(result.get(key).is_some(), "{key} must be present per spec");
     }
-    for key in ["prompt_eval_duration", "eval_count", "eval_duration"] {
+    for key in [
+        "prompt_eval_duration",
+        "prompt_eval_cached_count",
+        "eval_count",
+        "eval_duration",
+    ] {
         assert!(
             result.get(key).is_none(),
             "{key} must NOT be present on /api/embed (got {result})"

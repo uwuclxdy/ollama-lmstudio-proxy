@@ -229,6 +229,8 @@ fn convert_maps_message_and_reasoning_output() {
     // Timing mapped from the native stats block.
     assert_eq!(out["prompt_eval_count"], json!(329));
     assert_eq!(out["eval_count"], json!(268));
+    // LM Studio reports no cache metric, so the key stays omitted.
+    assert!(out.get("prompt_eval_cached_count").is_none(), "got {out}");
 }
 
 #[test]

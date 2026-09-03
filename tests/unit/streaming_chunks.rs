@@ -341,6 +341,13 @@ fn assert_six_timings(chunk: &Value) {
             chunk
         );
     }
+
+    // LM Studio reports no cache metric; real Ollama omits the key when its
+    // runner reports none. Never fabricate it.
+    assert!(
+        chunk.get("prompt_eval_cached_count").is_none(),
+        "prompt_eval_cached_count must be omitted (got {chunk})"
+    );
 }
 
 #[test]

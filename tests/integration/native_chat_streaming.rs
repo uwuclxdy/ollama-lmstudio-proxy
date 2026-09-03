@@ -278,6 +278,11 @@ async fn native_stream_error_event_recovers_through_chat_end() {
         "final chunk carries real stats"
     );
     assert_eq!(last["eval_count"], 2);
+    // LM Studio reports no cache metric, so the key stays omitted.
+    assert!(
+        last.get("prompt_eval_cached_count").is_none(),
+        "final chunk must not fabricate a cache count: {last}"
+    );
     // The recovered error is folded verbatim into the final chunk's warning.
     assert!(
         last["warning"]
