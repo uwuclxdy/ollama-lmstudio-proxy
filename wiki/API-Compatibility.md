@@ -27,9 +27,9 @@ endpoint is translated to its native equivalent.
 
 ## Error codes
 
-Upstream LM Studio `429` (rate limited) and `502` (bad gateway) pass through
-unchanged; other upstream-unreachable failures map to `503`. Proxy-side validation
-errors return `400`, and a model missing from LM Studio returns `404`.
+Upstream LM Studio `429` (rate limited) and `502` (bad gateway) pass through unchanged; other upstream-unreachable failures map to `503`. Proxy-side validation errors return `400`, a model missing from LM Studio returns `404`, and a request body over 16 MiB returns `413`.
+
+Every error the proxy raises is JSON in the endpoint's own envelope, `{"error":msg}` on the Ollama surface. That covers requests refused before any handler reads them, such as an oversized body or an undecodable path or query string.
 
 ## Verbatim passthrough
 
@@ -44,8 +44,7 @@ before forwarding. A few compatibility shims apply on top:
   `json_schema` envelope LM Studio accepts.
 - `encoding_format: "base64"` on `/v1/embeddings` is honored by the proxy
   (LM Studio always returns floats; the proxy re-encodes them).
-- Proxy-generated errors on `/v1/messages` use Anthropic's
-  `{"type":"error","error":{...}}` envelope, including auth rejections.
+- Proxy-generated errors on `/v1/messages` use Anthropic's `{"type":"error","error":{...}}` envelope, auth rejections and pre-handler refusals (oversized body, undecodable path or query) included.
 - Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
   protocol: `event: error` for Anthropic, `event: response.failed` for
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
