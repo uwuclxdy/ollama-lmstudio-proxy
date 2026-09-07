@@ -2,11 +2,12 @@ pub(crate) use std::error::Error;
 use std::fmt;
 
 use axum::Json;
+use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, QueryRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
-use crate::constants::ERROR_CANCELLED;
+use crate::constants::{ERROR_BODY_TOO_LARGE, ERROR_CANCELLED};
 
 /// Error type for the proxy server
 #[derive(Debug, Clone)]
@@ -79,6 +80,21 @@ impl ProxyError {
         }
     }
 
+    /// Build the error for a request the web framework refused to extract.
+    ///
+    /// `detail` is the framework's own body text, which names the offending
+    /// header, field or path param; the 413 wording stays the proxy's own
+    /// because "failed to buffer the request body" describes the server's
+    /// machinery rather than what the client sent.
+    fn extraction_rejected(status: StatusCode, detail: String) -> Self {
+        let message = if status == StatusCode::PAYLOAD_TOO_LARGE {
+            ERROR_BODY_TOO_LARGE.to_string()
+        } else {
+            detail
+        };
+        Self::new(message, status.as_u16())
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.status_code == 499
     }
@@ -88,10 +104,32 @@ impl ProxyError {
     }
 }
 
+/// Extraction rejections render themselves as framework-native `text/plain`,
+/// which reaches the client before any handler runs and so escapes every
+/// surface's error envelope. Converting them to `ProxyError` keeps one error
+/// type behind every response the proxy emits.
+macro_rules! rejection_into_proxy_error {
+    ($($rejection:ty),+ $(,)?) => {$(
+        impl From<$rejection> for ProxyError {
+            fn from(rejection: $rejection) -> Self {
+                Self::extraction_rejected(rejection.status(), rejection.body_text())
+            }
+        }
+    )+};
+}
+
+rejection_into_proxy_error!(BytesRejection, JsonRejection, PathRejection, QueryRejection);
+
 impl fmt::Display for ProxyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ProxyError {}: {}", self.status_code, self.message)
     }
+}
+
+/// Whether a request path belongs to the Anthropic-compatible surface, whose
+/// errors wear Anthropic's envelope instead of Ollama's.
+pub fn is_anthropic_surface(path: &str) -> bool {
+    path.starts_with("/v1/messages")
 }
 
 /// Map an HTTP status to Anthropic's documented error `type` literal.
@@ -143,7 +181,12 @@ impl IntoResponse for ProxyError {
         let body = Json(json!({
             "error": self.message,
         }));
-        (status, body).into_response()
+        let mut response = (status, body).into_response();
+        // Carried so a surface that wants another envelope can re-render the
+        // error after the fact; an extraction rejection has no handler to
+        // choose the envelope in. Extensions never reach the wire.
+        response.extensions_mut().insert(self);
+        response
     }
 }
 

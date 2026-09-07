@@ -51,6 +51,7 @@ pub const ERROR_RAW_WITH_IMAGES: &str =
 pub const ERROR_TIMEOUT: &str = "Stream timeout";
 pub const ERROR_CANCELLED: &str = "Request cancelled by client";
 pub const ERROR_LM_STUDIO_UNAVAILABLE: &str = "LM Studio not available";
+pub const ERROR_BODY_TOO_LARGE: &str = "request body too large";
 
 /// Warning messages
 pub const WARNING_MESSAGES_NOT_APPLIED: &str =

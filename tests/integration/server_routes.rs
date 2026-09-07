@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
-use crate::common::spawn_proxy;
+use crate::common::{TestProxy, spawn_proxy};
 
 // ---------------------------------------------------------------------------
 // Original tests (preserved)
@@ -469,33 +469,135 @@ async fn unknown_route_404_has_json_error_body() {
 // Body size limit — 413 Payload Too Large
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn oversized_body_returns_413() {
-    let p = spawn_proxy().await;
-    // MAX_JSON_BODY_SIZE_BYTES = 16 MiB; send 17 MiB
-    let big_body = vec![b'x'; 17 * 1024 * 1024];
-    // Windows may surface the server-side rejection as a mid-stream connection
-    // abort rather than a clean 413 response: the server closes the socket
-    // after writing the response while the client is still pushing the body.
-    // Either outcome proves the limit was enforced.
+/// POST a body over `MAX_JSON_BODY_SIZE_BYTES` (16 MiB) and hand back the
+/// response. Windows may surface the server-side rejection as a mid-stream
+/// connection abort rather than a clean 413: the server closes the socket after
+/// writing the response while the client is still pushing the body. That proves
+/// the limit was enforced but carries no body to inspect, so it yields `None`.
+async fn post_oversized_body(p: &TestProxy, path: &str) -> Option<reqwest::Response> {
     match p
         .client
-        .post(p.url("/api/chat"))
+        .post(p.url(path))
         .header("content-type", "application/json")
-        .body(big_body)
+        .body(vec![b'x'; 17 * 1024 * 1024])
         .send()
         .await
     {
-        Ok(resp) => assert_eq!(
-            resp.status(),
-            413,
-            "body exceeding MAX_JSON_BODY_SIZE_BYTES must return 413"
-        ),
-        Err(e) => assert!(
-            e.is_request() || e.is_body(),
-            "expected 413 or connection error from oversized body; got: {e}"
-        ),
+        Ok(resp) => Some(resp),
+        Err(e) => {
+            assert!(
+                e.is_request() || e.is_body(),
+                "expected 413 or connection error from oversized body; got: {e}"
+            );
+            None
+        }
     }
+}
+
+#[tokio::test]
+async fn oversized_body_returns_413_in_ollama_envelope() {
+    let p = spawn_proxy().await;
+    let Some(resp) = post_oversized_body(&p, "/api/chat").await else {
+        return;
+    };
+    assert_eq!(
+        resp.status(),
+        413,
+        "body exceeding MAX_JSON_BODY_SIZE_BYTES must return 413"
+    );
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+        "extraction rejections must not fall back to the framework's text/plain shape"
+    );
+    let body: Value = resp.json().await.expect("413 body must be JSON");
+    assert_eq!(body, json!({ "error": "request body too large" }));
+}
+
+#[tokio::test]
+async fn oversized_body_on_anthropic_surface_returns_413_in_anthropic_envelope() {
+    let p = spawn_proxy().await;
+    let Some(resp) = post_oversized_body(&p, "/v1/messages").await else {
+        return;
+    };
+    assert_eq!(resp.status(), 413, "the limit applies to every route");
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+        "extraction rejections must not fall back to the framework's text/plain shape"
+    );
+    let body: Value = resp.json().await.expect("413 body must be JSON");
+    assert_eq!(
+        body,
+        json!({
+            "type": "error",
+            "error": { "type": "request_too_large", "message": "request body too large" }
+        })
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Path-param extraction rejection — same envelope split
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn undecodable_path_param_returns_400_in_ollama_envelope() {
+    let p = spawn_proxy().await;
+    // %FF is not valid UTF-8, so the router's path param never deserializes.
+    // POST (not HEAD) so the error body survives to the client.
+    let resp = p
+        .client
+        .post(p.url("/api/blobs/%FF"))
+        .body("blob")
+        .send()
+        .await
+        .expect("POST /api/blobs/%FF");
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json")
+    );
+    let body: Value = resp.json().await.expect("400 body must be JSON");
+    // axum owns this rejection's wording, so pin the envelope and the param it
+    // names: an axum bump must not read as a proxy regression.
+    let obj = body
+        .as_object()
+        .expect("ollama error envelope is an object");
+    assert_eq!(obj.len(), 1);
+    let msg = obj["error"].as_str().expect("`error` carries a string");
+    assert!(msg.contains("digest"), "message must name the param: {msg}");
+}
+
+#[tokio::test]
+async fn undecodable_path_param_on_anthropic_surface_returns_anthropic_envelope() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/v1/messages/%FF"))
+        .body("{}")
+        .send()
+        .await
+        .expect("POST /v1/messages/%FF");
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("400 body must be JSON");
+    // axum owns this rejection's wording, so pin the envelope and the param it
+    // names: an axum bump must not read as a proxy regression.
+    let obj = body
+        .as_object()
+        .expect("anthropic error envelope is an object");
+    assert_eq!(obj.len(), 2);
+    assert_eq!(obj["type"], "error");
+    let err = obj["error"].as_object().expect("`error` is an object");
+    assert_eq!(err.len(), 2);
+    assert_eq!(err["type"], "invalid_request_error");
+    let msg = err["message"].as_str().expect("`message` carries a string");
+    assert!(msg.contains("path"), "message must name the param: {msg}");
 }
 
 // ---------------------------------------------------------------------------

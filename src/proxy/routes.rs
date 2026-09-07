@@ -1,26 +1,30 @@
 use std::sync::Arc;
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, FromRequest, Path, Query, Request, State};
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::extract::{DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, Request, State};
+use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{delete, get, head, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use http::HeaderMap;
+use http::request::Parts;
 use serde_json::Value;
 
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
 use crate::api::{RequestContext, lmstudio, ollama, web};
 use crate::constants::MAX_JSON_BODY_SIZE_BYTES;
-use crate::error::ProxyError;
+use crate::error::{ProxyError, is_anthropic_surface};
 use crate::http::json_response;
 use crate::proxy::ProxyServer;
 
 pub type AppState = Arc<ProxyServer>;
 
-/// JSON body extractor that surfaces parse errors as ProxyError::bad_request
-/// (a JSON `{"error": ..., "status": 400}` response), matching the Ollama-shaped
-/// error envelope the proxy uses everywhere else.
+// Every handler argument below is extracted through one of these wrappers, so a
+// request the framework refuses to extract fails as a `ProxyError` and wears the
+// surface's own error envelope instead of the framework's `text/plain` shape.
+
+/// JSON body, rejecting as `ProxyError`.
 pub struct JsonBody<T>(pub T);
 
 impl<S, T> FromRequest<S> for JsonBody<T>
@@ -32,21 +36,72 @@ where
     type Rejection = ProxyError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        use axum::response::IntoResponse;
-        match Json::<T>::from_request(req, state).await {
-            Ok(Json(value)) => Ok(JsonBody(value)),
-            Err(rejection) => {
-                let status = rejection.status();
-                let message = match status.as_u16() {
-                    413 => "request body too large".to_string(),
-                    _ => format!(
-                        "invalid request body: {}",
-                        rejection.into_response().status()
-                    ),
-                };
-                Err(ProxyError::new(message, status.as_u16()))
-            }
-        }
+        Ok(JsonBody(Json::<T>::from_request(req, state).await?.0))
+    }
+}
+
+/// Raw request body, rejecting as `ProxyError` (this is where the body limit
+/// bites on the passthrough routes).
+pub struct BodyBytes(pub Bytes);
+
+impl<S> FromRequest<S> for BodyBytes
+where
+    S: Send + Sync,
+{
+    type Rejection = ProxyError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Ok(BodyBytes(Bytes::from_request(req, state).await?))
+    }
+}
+
+/// Route path params, rejecting as `ProxyError`.
+pub struct PathParams<T>(pub T);
+
+impl<S, T> FromRequestParts<S> for PathParams<T>
+where
+    S: Send + Sync,
+    Path<T>: FromRequestParts<S, Rejection = PathRejection>,
+{
+    type Rejection = ProxyError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Ok(PathParams(
+            Path::<T>::from_request_parts(parts, state).await?.0,
+        ))
+    }
+}
+
+/// Query-string params, rejecting as `ProxyError`.
+pub struct QueryParams<T>(pub T);
+
+impl<S, T> FromRequestParts<S> for QueryParams<T>
+where
+    S: Send + Sync,
+    Query<T>: FromRequestParts<S, Rejection = QueryRejection>,
+{
+    type Rejection = ProxyError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Ok(QueryParams(
+            Query::<T>::from_request_parts(parts, state).await?.0,
+        ))
+    }
+}
+
+/// Re-render proxy errors on the Anthropic surface in Anthropic's envelope:
+/// its SDKs branch on `error.type` and read the Ollama `{"error":msg}` shape as
+/// a malformed response. This runs as a layer because an extraction rejection
+/// has no handler to make the choice in.
+async fn anthropic_error_envelope(req: Request, next: Next) -> Response {
+    let anthropic = is_anthropic_surface(req.uri().path());
+    let response = next.run(req).await;
+    if !anthropic {
+        return response;
+    }
+    match response.extensions().get::<ProxyError>() {
+        Some(error) => error.clone().into_anthropic_response(),
+        None => response,
     }
 }
 
@@ -106,6 +161,7 @@ pub fn create_router(server: AppState) -> Router {
         .method_not_allowed_fallback(method_not_allowed_handler)
         .fallback(not_found_handler)
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_SIZE_BYTES as usize))
+        .layer(axum::middleware::from_fn(anthropic_error_envelope))
         .with_state(server)
 }
 
@@ -310,7 +366,7 @@ async fn ps_handler(State(s): State<AppState>) -> Result<Response, ProxyError> {
 
 async fn blob_head_handler(
     State(s): State<AppState>,
-    Path(digest): Path<String>,
+    PathParams(digest): PathParams<String>,
 ) -> Result<Response, ProxyError> {
     let context = create_context(&s);
     ollama::handle_blob_head(context, digest).await
@@ -318,7 +374,7 @@ async fn blob_head_handler(
 
 async fn blob_upload_handler(
     State(s): State<AppState>,
-    Path(digest): Path<String>,
+    PathParams(digest): PathParams<String>,
     request: Request,
 ) -> Result<Response, ProxyError> {
     let context = create_context(&s);
@@ -328,11 +384,11 @@ async fn blob_upload_handler(
 
 async fn passthrough_v1(
     State(s): State<AppState>,
-    Path(path): Path<String>,
-    Query(query): Query<Vec<(String, String)>>,
+    PathParams(path): PathParams<String>,
+    QueryParams(query): QueryParams<Vec<(String, String)>>,
     method: http::Method,
     headers: HeaderMap,
-    body: Bytes,
+    BodyBytes(body): BodyBytes,
 ) -> Result<Response, ProxyError> {
     let full_path = format!("/v1/{}", path);
     let query_string = encode_query(&query);
@@ -341,11 +397,11 @@ async fn passthrough_v1(
 
 async fn passthrough_native_versioned(
     State(s): State<AppState>,
-    Path((version, path)): Path<(String, String)>,
-    Query(query): Query<Vec<(String, String)>>,
+    PathParams((version, path)): PathParams<(String, String)>,
+    QueryParams(query): QueryParams<Vec<(String, String)>>,
     method: http::Method,
     headers: HeaderMap,
-    body: Bytes,
+    BodyBytes(body): BodyBytes,
 ) -> Result<Response, ProxyError> {
     if !version.starts_with('v') {
         return Err(ProxyError::not_found("endpoint not found"));
@@ -357,11 +413,11 @@ async fn passthrough_native_versioned(
 
 async fn passthrough_native_version_root(
     State(s): State<AppState>,
-    Path(version): Path<String>,
-    Query(query): Query<Vec<(String, String)>>,
+    PathParams(version): PathParams<String>,
+    QueryParams(query): QueryParams<Vec<(String, String)>>,
     method: http::Method,
     headers: HeaderMap,
-    body: Bytes,
+    BodyBytes(body): BodyBytes,
 ) -> Result<Response, ProxyError> {
     if !version.starts_with('v') {
         return Err(ProxyError::not_found("endpoint not found"));
@@ -379,9 +435,8 @@ async fn forward_passthrough(
     headers: HeaderMap,
     query: Option<String>,
 ) -> Result<Response, ProxyError> {
-    let is_anthropic_surface = full_path.starts_with("/v1/messages");
     let context = create_context(&s);
-    let result = lmstudio::handle_lmstudio_passthrough(
+    lmstudio::handle_lmstudio_passthrough(
         context,
         s.model_resolver.clone(),
         lmstudio::LmStudioPassthroughRequest {
@@ -394,14 +449,7 @@ async fn forward_passthrough(
         s.shutdown.child_token(),
         s.config.load_timeout_seconds,
     )
-    .await;
-
-    // Proxy-generated errors on the Anthropic surface must wear Anthropic's
-    // envelope; the global IntoResponse emits the Ollama {"error":msg} shape.
-    match result {
-        Err(e) if is_anthropic_surface => Ok(e.into_anthropic_response()),
-        other => other,
-    }
+    .await
 }
 
 fn encode_query(pairs: &[(String, String)]) -> Option<String> {

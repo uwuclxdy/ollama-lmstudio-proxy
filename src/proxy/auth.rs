@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use subtle::ConstantTimeEq;
 
-const UNAUTHORIZED_BODY: &str = r#"{"error":"unauthorized"}"#;
+use crate::error::{ProxyError, is_anthropic_surface};
 
 /// Inbound Bearer API-key gate. When the configured key is `None` the gate is a
 /// pure no-op (fully open). When set, inbound requests must carry
@@ -80,21 +80,12 @@ fn extract_api_key(value: Option<&HeaderValue>) -> Option<&str> {
 }
 
 fn unauthorized(path: &str) -> Response {
-    // Anthropic SDKs on /v1/messages* parse {"type":"error","error":{...}};
-    // the Ollama {"error":msg} shape reads as a malformed response to them.
-    if path.starts_with("/v1/messages") {
-        let body = crate::error::anthropic_error_body(401, "unauthorized").to_string();
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::CONTENT_TYPE, "application/json")],
-            body,
-        )
-            .into_response();
+    // The gate sits outside the router, so it picks its own envelope; every
+    // error raised inside the router goes through the router's envelope layer.
+    let error = ProxyError::new("unauthorized".to_string(), 401);
+    if is_anthropic_surface(path) {
+        error.into_anthropic_response()
+    } else {
+        error.into_response()
     }
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::CONTENT_TYPE, "application/json")],
-        UNAUTHORIZED_BODY,
-    )
-        .into_response()
 }
