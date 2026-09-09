@@ -65,28 +65,36 @@ pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy
         false,
         false,
         15,
+        false,
     )
     .await
+}
+
+/// Boot the production router with a response-rebuilding layer stacked
+/// OUTSIDE the whole production stack, so any response extension an inner
+/// error render carries is dropped before the client sees the body.
+pub async fn spawn_proxy_with_rebuild_layer() -> TestProxy {
+    spawn_proxy_inner(true, false, false, true, None, false, false, 15, true).await
 }
 
 /// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
 /// `/api/chat` routes through LM Studio's native endpoint instead of the
 /// OpenAI-compat `/api/v0/chat/completions`.
 pub async fn spawn_proxy_with_native() -> TestProxy {
-    spawn_proxy_inner(true, true, false, true, None, false, false, 15).await
+    spawn_proxy_inner(true, true, false, true, None, false, false, 15, false).await
 }
 
 /// Boot a proxy with the `/api/web_search` configured to forward to the mock
 /// server's `/search` endpoint (with a bearer key). Mount a POST `/search`
 /// mock to drive it.
 pub async fn spawn_proxy_with_search() -> TestProxy {
-    spawn_proxy_inner(true, false, true, true, None, false, false, 15).await
+    spawn_proxy_inner(true, false, true, true, None, false, false, 15, false).await
 }
 
 /// Boot a proxy with the web_fetch SSRF guard ENABLED (private/loopback targets
 /// rejected) — i.e. `--allow-private-fetch` off.
 pub async fn spawn_proxy_strict_ssrf() -> TestProxy {
-    spawn_proxy_inner(true, false, false, false, None, false, false, 15).await
+    spawn_proxy_inner(true, false, false, false, None, false, false, 15, false).await
 }
 
 /// Boot a proxy requiring an inbound `Authorization: Bearer <api_key>` on every
@@ -102,6 +110,7 @@ pub async fn spawn_proxy_with_api_key(api_key: &str) -> TestProxy {
         false,
         false,
         15,
+        false,
     )
     .await
 }
@@ -110,13 +119,13 @@ pub async fn spawn_proxy_with_api_key(api_key: &str) -> TestProxy {
 /// (`stream:true`) routes through native `/api/v1/chat`, non-streaming stays on
 /// the OpenAI-compat `/api/v0/chat/completions` path.
 pub async fn spawn_proxy_with_native_streaming() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, true, false, 15).await
+    spawn_proxy_inner(true, false, false, true, None, true, false, 15, false).await
 }
 
 /// Boot a proxy with `--auto-evict` on: proactively evicts other loaded models
 /// before inference when the target model is not yet loaded.
 pub async fn spawn_proxy_with_auto_evict() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, false, true, 15).await
+    spawn_proxy_inner(true, false, false, true, None, false, true, 15, false).await
 }
 
 /// Boot a proxy with a custom `load_timeout_seconds` — useful for tests that
@@ -132,6 +141,7 @@ pub async fn spawn_proxy_with_load_timeout(load_timeout_seconds: u64) -> TestPro
         false,
         false,
         load_timeout_seconds,
+        false,
     )
     .await
 }
@@ -149,6 +159,7 @@ async fn spawn_proxy_inner(
     native_chat_streaming: bool,
     auto_evict: bool,
     load_timeout_seconds: u64,
+    rebuild_outer_layer: bool,
 ) -> TestProxy {
     ensure_runtime_initialized(enable_chunk_recovery);
 
@@ -196,6 +207,24 @@ async fn spawn_proxy_inner(
             ollama_lmstudio_proxy::proxy::auth::api_key_gate,
         ))
         .layer(cors_layer());
+    let app = if rebuild_outer_layer {
+        use axum::response::IntoResponse;
+
+        app.layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                // Rebuild every response: fresh status + headers + body frame,
+                // so any extension the inner error render carried is dropped.
+                let inner = next.run(req).await;
+                let status = inner.status();
+                let body = axum::body::to_bytes(inner.into_body(), usize::MAX)
+                    .await
+                    .expect("read inner body");
+                (status, body).into_response()
+            },
+        ))
+    } else {
+        app
+    };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, Request, State};
-use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{delete, get, head, post};
 use axum::{Json, Router};
@@ -14,7 +13,7 @@ use serde_json::Value;
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
 use crate::api::{RequestContext, lmstudio, ollama, web};
 use crate::constants::MAX_JSON_BODY_SIZE_BYTES;
-use crate::error::{ProxyError, is_anthropic_surface};
+use crate::error::ProxyError;
 use crate::http::json_response;
 use crate::proxy::ProxyServer;
 
@@ -36,7 +35,13 @@ where
     type Rejection = ProxyError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Ok(JsonBody(Json::<T>::from_request(req, state).await?.0))
+        let path = req.uri().path().to_string();
+        Ok(JsonBody(
+            Json::<T>::from_request(req, state)
+                .await
+                .map_err(|rejection| ProxyError::from(rejection).on_anthropic_surface_if(&path))?
+                .0,
+        ))
     }
 }
 
@@ -51,7 +56,10 @@ where
     type Rejection = ProxyError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Ok(BodyBytes(Bytes::from_request(req, state).await?))
+        let path = req.uri().path().to_string();
+        Ok(BodyBytes(Bytes::from_request(req, state).await.map_err(
+            |rejection| ProxyError::from(rejection).on_anthropic_surface_if(&path),
+        )?))
     }
 }
 
@@ -66,8 +74,12 @@ where
     type Rejection = ProxyError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let path = parts.uri.path().to_string();
         Ok(PathParams(
-            Path::<T>::from_request_parts(parts, state).await?.0,
+            Path::<T>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ProxyError::from(rejection).on_anthropic_surface_if(&path))?
+                .0,
         ))
     }
 }
@@ -83,25 +95,13 @@ where
     type Rejection = ProxyError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let path = parts.uri.path().to_string();
         Ok(QueryParams(
-            Query::<T>::from_request_parts(parts, state).await?.0,
+            Query::<T>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ProxyError::from(rejection).on_anthropic_surface_if(&path))?
+                .0,
         ))
-    }
-}
-
-/// Re-render proxy errors on the Anthropic surface in Anthropic's envelope:
-/// its SDKs branch on `error.type` and read the Ollama `{"error":msg}` shape as
-/// a malformed response. This runs as a layer because an extraction rejection
-/// has no handler to make the choice in.
-async fn anthropic_error_envelope(req: Request, next: Next) -> Response {
-    let anthropic = is_anthropic_surface(req.uri().path());
-    let response = next.run(req).await;
-    if !anthropic {
-        return response;
-    }
-    match response.extensions().get::<ProxyError>() {
-        Some(error) => error.clone().into_anthropic_response(),
-        None => response,
     }
 }
 
@@ -161,16 +161,16 @@ pub fn create_router(server: AppState) -> Router {
         .method_not_allowed_fallback(method_not_allowed_handler)
         .fallback(not_found_handler)
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_SIZE_BYTES as usize))
-        .layer(axum::middleware::from_fn(anthropic_error_envelope))
         .with_state(server)
 }
 
-async fn not_found_handler() -> ProxyError {
-    ProxyError::not_found("endpoint not found")
+async fn not_found_handler(request: Request) -> ProxyError {
+    ProxyError::not_found("endpoint not found").on_anthropic_surface_if(request.uri().path())
 }
 
-async fn method_not_allowed_handler() -> ProxyError {
+async fn method_not_allowed_handler(request: Request) -> ProxyError {
     ProxyError::new("method not allowed".to_string(), 405)
+        .on_anthropic_surface_if(request.uri().path())
 }
 
 fn create_context(s: &Arc<ProxyServer>) -> RequestContext<'_> {
@@ -435,6 +435,10 @@ async fn forward_passthrough(
     headers: HeaderMap,
     query: Option<String>,
 ) -> Result<Response, ProxyError> {
+    // Single funnel for every passthrough error: the endpoint path is the
+    // surface evidence, so the envelope choice is stamped here rather than
+    // re-derived from response extensions by an outer layer.
+    let surface_path = full_path.clone();
     let context = create_context(&s);
     lmstudio::handle_lmstudio_passthrough(
         context,
@@ -450,6 +454,7 @@ async fn forward_passthrough(
         s.config.load_timeout_seconds,
     )
     .await
+    .map_err(|error| error.on_anthropic_surface_if(&surface_path))
 }
 
 fn encode_query(pairs: &[(String, String)]) -> Option<String> {

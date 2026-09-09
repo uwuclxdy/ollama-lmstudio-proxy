@@ -14,6 +14,11 @@ use crate::constants::{ERROR_BODY_TOO_LARGE, ERROR_CANCELLED};
 pub struct ProxyError {
     pub message: String,
     pub status_code: u16,
+    /// Set at the rejection site when the failing request belongs to the
+    /// Anthropic surface, so `IntoResponse` renders the Anthropic envelope
+    /// without any outer layer having to re-read the error from response
+    /// extensions (which a response-rebuilding middleware would drop).
+    anthropic_surface: bool,
 }
 
 impl ProxyError {
@@ -21,63 +26,47 @@ impl ProxyError {
         Self {
             message,
             status_code,
+            anthropic_surface: false,
         }
+    }
+
+    /// Stamp the envelope choice from the path the rejection site knows,
+    /// leaving the error untouched when the path is not the Anthropic surface.
+    pub fn on_anthropic_surface_if(mut self, path: &str) -> Self {
+        self.anthropic_surface = is_anthropic_surface(path);
+        self
     }
 
     pub fn internal_server_error(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 500,
-        }
+        Self::new(message.to_string(), 500)
     }
 
     pub fn bad_request(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 400,
-        }
+        Self::new(message.to_string(), 400)
     }
 
     pub fn not_found(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 404,
-        }
+        Self::new(message.to_string(), 404)
     }
 
     pub fn not_implemented(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 501,
-        }
+        Self::new(message.to_string(), 501)
     }
 
     pub fn request_cancelled() -> Self {
-        Self {
-            message: ERROR_CANCELLED.to_string(),
-            status_code: 499,
-        }
+        Self::new(ERROR_CANCELLED.to_string(), 499)
     }
 
     pub fn lm_studio_unavailable(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 503,
-        }
+        Self::new(message.to_string(), 503)
     }
 
     pub fn too_many_requests(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 429,
-        }
+        Self::new(message.to_string(), 429)
     }
 
     pub fn bad_gateway(message: &str) -> Self {
-        Self {
-            message: message.to_string(),
-            status_code: 502,
-        }
+        Self::new(message.to_string(), 502)
     }
 
     /// Build the error for a request the web framework refused to extract.
@@ -139,7 +128,7 @@ pub fn is_anthropic_surface(path: &str) -> bool {
 /// inner `type`, so unknown statuses collapse to the generic `api_error`.
 pub fn anthropic_error_type(status_code: u16) -> &'static str {
     match status_code {
-        400 => "invalid_request_error",
+        400 | 405 => "invalid_request_error",
         401 => "authentication_error",
         403 => "permission_error",
         404 => "not_found_error",
@@ -176,17 +165,15 @@ impl Error for ProxyError {}
 
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
+        if self.anthropic_surface {
+            return self.into_anthropic_response();
+        }
         let status =
             StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = Json(json!({
             "error": self.message,
         }));
-        let mut response = (status, body).into_response();
-        // Carried so a surface that wants another envelope can re-render the
-        // error after the fact; an extraction rejection has no handler to
-        // choose the envelope in. Extensions never reach the wire.
-        response.extensions_mut().insert(self);
-        response
+        (status, body).into_response()
     }
 }
 

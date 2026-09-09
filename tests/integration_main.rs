@@ -61,3 +61,6 @@ mod auto_evict;
 
 #[path = "integration/cold_load_bare_key.rs"]
 mod cold_load_bare_key;
+
+#[path = "integration/envelope_rebuild.rs"]
+mod envelope_rebuild;

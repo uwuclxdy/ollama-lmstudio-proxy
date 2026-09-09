@@ -615,6 +615,31 @@ async fn same_prefix_stranger_401_wears_ollama_envelope() {
 }
 
 #[tokio::test]
+async fn method_not_allowed_on_anthropic_surface_wears_anthropic_envelope() {
+    // The catch-all registers get/post/put/delete/head/options; PATCH falls
+    // to the method-not-allowed fallback, which must still pick the envelope
+    // from the path.
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .patch(p.url("/v1/messages"))
+        .body("{}")
+        .send()
+        .await
+        .expect("PATCH /v1/messages");
+    assert_eq!(resp.status(), 405);
+    let body: Value = resp.json().await.expect("405 body must be JSON");
+    let obj = body
+        .as_object()
+        .expect("anthropic error envelope is an object");
+    assert_eq!(obj.len(), 2, "envelope must be the anthropic shape: {body}");
+    assert_eq!(obj["type"], "error");
+    let err = obj["error"].as_object().expect("`error` is an object");
+    assert_eq!(err["type"], "invalid_request_error");
+    assert_eq!(err["message"], "method not allowed");
+}
+
+#[tokio::test]
 async fn undecodable_path_param_on_anthropic_surface_returns_anthropic_envelope() {
     let p = spawn_proxy().await;
     let resp = p
