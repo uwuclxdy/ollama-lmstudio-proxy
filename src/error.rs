@@ -129,7 +129,7 @@ impl fmt::Display for ProxyError {
 /// Whether a request path belongs to the Anthropic-compatible surface, whose
 /// errors wear Anthropic's envelope instead of Ollama's.
 pub fn is_anthropic_surface(path: &str) -> bool {
-    path.starts_with("/v1/messages")
+    path == "/v1/messages" || path.starts_with("/v1/messages/")
 }
 
 /// Map an HTTP status to Anthropic's documented error `type` literal.
@@ -198,3 +198,7 @@ macro_rules! check_cancelled {
         }
     };
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/error.rs"]
+mod tests;

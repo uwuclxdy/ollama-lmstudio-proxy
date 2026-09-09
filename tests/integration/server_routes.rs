@@ -575,6 +575,46 @@ async fn undecodable_path_param_returns_400_in_ollama_envelope() {
 }
 
 #[tokio::test]
+async fn same_prefix_stranger_wears_ollama_envelope() {
+    // `/v1/messagesXYZ` shares the `/v1/messages` prefix but is not the
+    // anthropic surface: its extraction rejections wear the ollama envelope,
+    // unlike `/v1/messages/%FF` above.
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/v1/messagesXYZ/%FF"))
+        .body("{}")
+        .send()
+        .await
+        .expect("POST /v1/messagesXYZ/%FF");
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("400 body must be JSON");
+    let obj = body
+        .as_object()
+        .expect("ollama error envelope is an object");
+    assert_eq!(obj.len(), 1, "ollama envelope has only `error`: {body}");
+    let msg = obj["error"].as_str().expect("`error` carries a string");
+    assert!(msg.contains("path"), "message must name the param: {msg}");
+}
+
+#[tokio::test]
+async fn same_prefix_stranger_401_wears_ollama_envelope() {
+    // The auth gate picks its envelope through the same surface predicate.
+    use crate::common::spawn_proxy_with_api_key;
+    let p = spawn_proxy_with_api_key("k").await;
+    let resp = p
+        .client
+        .post(p.url("/v1/messagesXYZ"))
+        .body("{}")
+        .send()
+        .await
+        .expect("POST /v1/messagesXYZ no auth");
+    assert_eq!(resp.status(), 401);
+    let body: Value = resp.json().await.expect("401 body must be JSON");
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
+
+#[tokio::test]
 async fn undecodable_path_param_on_anthropic_surface_returns_anthropic_envelope() {
     let p = spawn_proxy().await;
     let resp = p

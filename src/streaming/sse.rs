@@ -12,7 +12,7 @@ use crate::constants::{
     ERROR_CANCELLED, ERROR_TIMEOUT, LOG_PREFIX_CONN, LOG_PREFIX_SUCCESS, SSE_DATA_PREFIX,
     SSE_DONE_MESSAGE, SSE_MESSAGE_BOUNDARY,
 };
-use crate::error::ProxyError;
+use crate::error::{ProxyError, is_anthropic_surface};
 use crate::lmstudio::response::{TimingInfo, estimate_tokens_from_bytes};
 use crate::logging::log_timed;
 use crate::streaming::chunks::{
@@ -622,7 +622,7 @@ pub enum PassthroughProtocol {
 
 impl PassthroughProtocol {
     pub fn from_endpoint(endpoint: &str) -> Self {
-        if endpoint.starts_with("/v1/messages") {
+        if is_anthropic_surface(endpoint) {
             Self::Anthropic
         } else if endpoint.starts_with("/v1/responses") {
             Self::Responses

@@ -355,6 +355,22 @@ fn passthrough_protocol_maps_endpoints() {
     assert_eq!(PassthroughProtocol::from_endpoint("/api/v1/chat"), NativeV1);
 }
 
+#[test]
+fn passthrough_protocol_bounds_the_anthropic_match_to_the_messages_endpoint() {
+    use PassthroughProtocol::*;
+    // The protocol selector shares the surface predicate's bound: only
+    // `/v1/messages` and its subpaths are anthropic, not same-prefix
+    // strangers.
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/messagesXYZ"),
+        OpenAi
+    );
+    assert_eq!(
+        PassthroughProtocol::from_endpoint("/v1/messages-thing"),
+        OpenAi
+    );
+}
+
 /// Split a framed SSE block into (event-name, parsed data payload).
 fn parse_frame(frame: &str) -> (Option<String>, serde_json::Value) {
     assert!(
