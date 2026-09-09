@@ -2,8 +2,8 @@
 //! into a u64 count of weights.
 //!
 //! Ollama's `general.parameter_count` field is documented as a raw count
-//! (e.g. 8030261248 for an 8.0B model — `api-docs/ollama.md` line 1485).
-//! LM Studio's `params_string` is a human-friendly shorthand; this helper
+//! (e.g. 8030261248 for an 8.0B model — `api-docs/ollama/repo/api.md`, "Show
+//! Model Information"). LM Studio's `params_string` is a human-friendly shorthand; this helper
 //! converts between the two formats.
 
 /// Parse a string like "7B", "1.5B", "70B", "500M", "0.5B" into a parameter

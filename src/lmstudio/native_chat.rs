@@ -17,7 +17,7 @@
 //! `done_reason` is always `"stop"`.
 //!
 //! Source of truth:
-//! - `api-docs/future/lmstudio/1_developer/2_rest/chat.md` (request + response)
+//! - `api-docs/lmstudio/1_developer/2_rest/chat.md` (request + response)
 
 use std::time::Instant;
 

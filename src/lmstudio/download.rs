@@ -5,7 +5,7 @@
 //! NDJSON progress chunks.
 //!
 //! LM Studio's status payload is rich; Ollama's `/api/pull` stream is narrower
-//! (see api-docs/ollama.md §"Pull a Model"):
+//! (see api-docs/ollama/repo/api.md §"Pull a Model"):
 //!   - in-progress: `{"status":"pulling", "total":..., "completed":...}` (Ollama's
 //!     convention is `pulling <digest>`; LM Studio exposes no content digest, so
 //!     the bare `pulling` prefix is emitted and `digest` omitted).

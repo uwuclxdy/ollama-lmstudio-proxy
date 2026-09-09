@@ -530,9 +530,10 @@ impl ModelInfo {
         if let Some(file_type) = Self::llama_file_type(&self.quantization) {
             map.insert("general.file_type".into(), json!(file_type));
         }
-        // Ollama clients (api-docs/ollama.md line 1485) use general.parameter_count
-        // to size memory budgets. Derive from params_string ("7B" → 7e9) or fall
-        // back to the heuristic on the model id.
+        // Ollama clients (api-docs/ollama/repo/api.md §"Show Model Information")
+        // use general.parameter_count to size memory budgets. Derive from
+        // params_string ("7B" → 7e9) or fall back to the heuristic on the model
+        // id.
         let params = self.parse_parameters();
         if let Some(count) = crate::model::param_count::parse_parameter_count(&params.size_string) {
             map.insert("general.parameter_count".into(), json!(count));

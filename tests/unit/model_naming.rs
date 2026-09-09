@@ -14,8 +14,8 @@ fn clean_model_name_strips_latest_suffix() {
 
 #[test]
 fn clean_model_name_preserves_size_tag() {
-    // Per api-docs/ollama.md "Model names": tags identify specific versions;
-    // only ":latest" is the default and gets stripped.
+    // Per api-docs/ollama/repo/api.md §"Model names": tags identify specific
+    // versions; only ":latest" is the default and gets stripped.
     assert_eq!(clean_model_name("llama3.1:8b"), "llama3.1:8b");
 }
 
