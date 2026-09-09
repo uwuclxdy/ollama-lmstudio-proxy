@@ -71,3 +71,57 @@ async fn unflagged_error_renders_the_ollama_envelope() {
     let value: serde_json::Value = serde_json::from_slice(&body).expect("json body");
     assert_eq!(value, serde_json::json!({ "error": "endpoint not found" }));
 }
+
+// ── a framework rejection's client bytes answer repr'd, not raw ────────────
+
+#[tokio::test]
+async fn bad_numeric_path_param_answers_its_value_quoted() {
+    // Drives the production PathParams wrapper (and so extraction_rejected)
+    // with a Path<u64> route, the shape a future typed param route would be:
+    // the client value must answer quoted, never echoing raw as proxy wording.
+    use std::sync::Arc;
+
+    use axum::Router;
+    use axum::routing::get;
+    use serde_json::Value;
+
+    use crate::proxy::routes::PathParams;
+
+    #[axum::debug_handler]
+    async fn num(_v: PathParams<u64>) -> &'static str {
+        "ok"
+    }
+
+    let app = Router::new()
+        .route("/n/{v}", get(num))
+        .with_state(Arc::new(()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{}/n/12ab", addr))
+        .send()
+        .await
+        .expect("GET /n/12ab");
+    assert_eq!(resp.status(), 400);
+    let value: Value = resp.json().await.expect("json body");
+    let msg = value["error"].as_str().expect("`error` carries a string");
+    // The whole rejection text answers repr'd: wrapped in double quotes, so
+    // the client bytes inside read as a quoted echo of what was sent, never
+    // as proxy wording.
+    assert!(
+        msg.starts_with('"') && msg.ends_with('"'),
+        "rejection text must answer quoted, got: {msg}"
+    );
+    assert!(
+        msg.contains("12ab"),
+        "the value must survive the repr: {msg}"
+    );
+
+    handle.abort();
+}

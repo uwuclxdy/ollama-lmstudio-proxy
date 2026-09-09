@@ -72,14 +72,16 @@ impl ProxyError {
     /// Build the error for a request the web framework refused to extract.
     ///
     /// `detail` is the framework's own body text, which names the offending
-    /// header, field or path param; the 413 wording stays the proxy's own
+    /// header, field or path param — and embeds the client's bytes verbatim.
+    /// It answers repr'd so those bytes read as a quoted echo of what was
+    /// sent, never as proxy wording. The 413 wording stays the proxy's own
     /// because "failed to buffer the request body" describes the server's
     /// machinery rather than what the client sent.
     fn extraction_rejected(status: StatusCode, detail: String) -> Self {
         let message = if status == StatusCode::PAYLOAD_TOO_LARGE {
             ERROR_BODY_TOO_LARGE.to_string()
         } else {
-            detail
+            format!("{:?}", detail)
         };
         Self::new(message, status.as_u16())
     }
