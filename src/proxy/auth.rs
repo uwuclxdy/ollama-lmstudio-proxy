@@ -80,8 +80,8 @@ fn extract_api_key(value: Option<&HeaderValue>) -> Option<&str> {
 }
 
 fn unauthorized(path: &str) -> Response {
-    // The gate sits outside the router, so it picks its own envelope; every
-    // error raised inside the router goes through the router's envelope layer.
+    // The gate sits outside the router, so it picks its own envelope via the
+    // same surface predicate the router's rejection sites stamp onto errors.
     let error = ProxyError::new("unauthorized".to_string(), 401);
     if is_anthropic_surface(path) {
         error.into_anthropic_response()

@@ -26,10 +26,14 @@ fn anthropic_error_type_maps_documented_statuses() {
     assert_eq!(anthropic_error_type(400), "invalid_request_error");
     assert_eq!(anthropic_error_type(405), "invalid_request_error");
     assert_eq!(anthropic_error_type(401), "authentication_error");
+    assert_eq!(anthropic_error_type(403), "permission_error");
     assert_eq!(anthropic_error_type(404), "not_found_error");
     assert_eq!(anthropic_error_type(413), "request_too_large");
     assert_eq!(anthropic_error_type(429), "rate_limit_error");
+    assert_eq!(anthropic_error_type(529), "overloaded_error");
     assert_eq!(anthropic_error_type(500), "api_error");
+    // Every undocumented status collapses to the generic arm.
+    assert_eq!(anthropic_error_type(418), "api_error");
 }
 
 #[tokio::test]

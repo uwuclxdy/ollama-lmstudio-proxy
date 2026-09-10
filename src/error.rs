@@ -125,7 +125,7 @@ pub fn is_anthropic_surface(path: &str) -> bool {
 
 /// Map an HTTP status to Anthropic's documented error `type` literal.
 ///
-/// The Anthropic surface (`/v1/messages*`) expects
+/// The Anthropic surface (`/v1/messages` and its subpaths) expects
 /// `{"type":"error","error":{"type":...,"message":...}}` — SDKs branch on the
 /// inner `type`, so unknown statuses collapse to the generic `api_error`.
 pub fn anthropic_error_type(status_code: u16) -> &'static str {
@@ -154,7 +154,8 @@ pub fn anthropic_error_body(status_code: u16, message: &str) -> serde_json::Valu
 
 impl ProxyError {
     /// Render this error in Anthropic's error envelope instead of the Ollama
-    /// `{"error":msg}` shape, for errors surfacing on `/v1/messages*`.
+    /// `{"error":msg}` shape, for errors surfacing on `/v1/messages` and its
+    /// subpaths.
     pub fn into_anthropic_response(self) -> Response {
         let status =
             StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
