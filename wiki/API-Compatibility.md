@@ -1,7 +1,6 @@
 # 🔌 API compatibility
 
-`/v1/*` and `/api/v1/*` are forwarded directly to LM Studio. Every other Ollama
-endpoint is translated to its native equivalent.
+`/v1/*` and `/api/v1/*` are forwarded directly to LM Studio. Every other Ollama endpoint is translated to its native equivalent.
 
 ## Endpoint support
 
@@ -16,7 +15,7 @@ endpoint is translated to its native equivalent.
 | `POST /api/embed` | Translates to `/v1/embeddings`; also handles `/api/embeddings`. Auto-loads (JIT) an unloaded embedding model on demand instead of returning "no models loaded"; honors `num_ctx`; `truncate` defaults to `true` |
 | `GET /api/version` | Returns configurable version string (`--ollama-version`, default `0.30.0`) in Ollama format |
 | `GET /health` | Validates LM Studio reachability |
-| `POST /api/create` | Creates proxy-managed virtual aliases (no custom blobs) |
+| `POST /api/create` | Creates proxy-managed virtual aliases (no custom blobs; `files`/`draft_files`/`quantize`/`draft_quantize` → 400) |
 | `POST /api/pull` | Translates to `/api/v1/models/download`; NDJSON progress, polled from LM Studio's job status every 500ms; `insecure` is accepted and ignored (no TLS-skip surface to emulate); failed downloads surface LM Studio's `error_message` |
 | `POST /api/push` | Returns 501 (LM Studio has no model registry) |
 | `POST /api/web_search` | Generic JSON passthrough to a configurable provider (`--search-url`); returns 501 when unconfigured. Request: `{query, max_results?}`; provider response returned verbatim |
@@ -57,7 +56,7 @@ Anthropic clients such as Claude Code work against `/v1/messages` with no extra 
   `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback:
   `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Alias metadata
   (`system`, `template`, `parameters`, `license`, `adapters`, `messages`,
-  `renderer`, `parser`) is recorded on the alias. `system` and `parameters`
+  `renderer`, `parser`, `requires`) is recorded on the alias. `system` and `parameters`
   reach inference; the rest are stored but stay inert on the LM Studio backend.
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio
   metadata plus alias info when present.
