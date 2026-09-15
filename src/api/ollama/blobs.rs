@@ -50,6 +50,16 @@ where
         log::debug!("blob upload request: {}", digest);
     }
 
+    // Upstream spec: 200 "Blob already exists". The body is not consumed,
+    // matching real Ollama's short-circuit — the stored bytes are already
+    // digest-verified, so a re-upload adds nothing.
+    if context.blob_store.exists(&digest).await? {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::empty())
+            .map_err(|_| ProxyError::internal_server_error("failed to build blob response"));
+    }
+
     let byte_stream = stream.map_ok(|mut buf| buf.copy_to_bytes(buf.remaining()));
 
     context.blob_store.save_stream(&digest, byte_stream).await?;

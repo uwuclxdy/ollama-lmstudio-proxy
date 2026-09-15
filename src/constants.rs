@@ -64,6 +64,8 @@ pub const WARNING_RENDERER_NOT_APPLIED: &str =
     "RENDERER is stored but not applied by the LM Studio backend";
 pub const WARNING_PARSER_NOT_APPLIED: &str =
     "PARSER is stored but not applied by the LM Studio backend";
+pub const WARNING_REQUIRES_NOT_APPLIED: &str =
+    "REQUIRES is stored but not applied by the LM Studio backend";
 
 /// SSE parsing constants
 pub const SSE_DATA_PREFIX: &str = "data: ";

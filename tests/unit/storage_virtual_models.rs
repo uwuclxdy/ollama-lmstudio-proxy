@@ -24,6 +24,7 @@ fn build_metadata_empty_body_no_base() {
     assert!(meta.messages.is_none());
     assert!(meta.renderer.is_none());
     assert!(meta.parser.is_none());
+    assert!(meta.requires.is_none());
 }
 
 #[test]
@@ -36,7 +37,8 @@ fn build_metadata_all_fields_populated() {
         "adapters": [],
         "messages": [{"role": "user", "content": "hi"}],
         "renderer": "harmony",
-        "parser": "harmony"
+        "parser": "harmony",
+        "requires": "0.31.0"
     });
     let meta = VirtualModelStore::build_metadata_from_request(&body, None);
     assert_eq!(meta.system_prompt.as_deref(), Some("be concise"));
@@ -47,6 +49,7 @@ fn build_metadata_all_fields_populated() {
     assert_eq!(meta.messages.as_ref().map(|m| m.len()), Some(1));
     assert_eq!(meta.renderer.as_deref(), Some("harmony"));
     assert_eq!(meta.parser.as_deref(), Some("harmony"));
+    assert_eq!(meta.requires.as_deref(), Some("0.31.0"));
 }
 
 #[test]
@@ -76,6 +79,12 @@ fn build_metadata_renderer_parser_non_string_ignored() {
     let meta = VirtualModelStore::build_metadata_from_request(&body, None);
     assert!(meta.renderer.is_none());
     assert!(meta.parser.is_none());
+}
+
+#[test]
+fn build_metadata_requires_non_string_ignored() {
+    let meta = VirtualModelStore::build_metadata_from_request(&json!({"requires": 42}), None);
+    assert!(meta.requires.is_none());
 }
 
 #[test]
@@ -186,6 +195,32 @@ fn load_corrupt_json_does_not_clobber_an_existing_backup() {
         std::fs::read(&second_backup).unwrap(),
         b"second corrupt payload"
     );
+}
+
+#[tokio::test]
+async fn load_legacy_store_without_requires_field_deserializes_to_none() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("virtual_models.json");
+    // A store written before `requires` existed: the key is absent.
+    std::fs::write(
+        &path,
+        r#"{
+  "legacy-alias:v1": {
+    "name": "legacy-alias:v1",
+    "source_model": "llama3.2:3b",
+    "target_model_id": "llama3.2:3b",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "metadata": {"system_prompt": "old"}
+  }
+}"#,
+    )
+    .unwrap();
+
+    let store = VirtualModelStore::load(&path).unwrap();
+    let entry = store.get("legacy-alias:v1").await.unwrap();
+    assert!(entry.metadata.requires.is_none());
+    assert_eq!(entry.metadata.system_prompt.as_deref(), Some("old"));
 }
 
 #[tokio::test]

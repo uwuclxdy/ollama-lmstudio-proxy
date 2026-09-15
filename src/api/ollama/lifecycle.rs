@@ -8,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 use crate::api::RequestContext;
 use crate::constants::{
     LOG_PREFIX_SUCCESS, WARNING_ADAPTERS_NOT_APPLIED, WARNING_MESSAGES_NOT_APPLIED,
-    WARNING_PARSER_NOT_APPLIED, WARNING_RENDERER_NOT_APPLIED, WARNING_TEMPLATE_NOT_APPLIED,
+    WARNING_PARSER_NOT_APPLIED, WARNING_RENDERER_NOT_APPLIED, WARNING_REQUIRES_NOT_APPLIED,
+    WARNING_TEMPLATE_NOT_APPLIED,
 };
 use crate::error::ProxyError;
 use crate::http::json_response;
@@ -147,12 +148,12 @@ pub async fn handle_ollama_create(
 
     log_request("POST", "/api/create", Some(new_model_name));
 
-    // `messages`, `template`, `adapters`, `renderer` and `parser` are stored in
-    // virtual-model metadata but never reach inference: LM Studio has no
-    // Modelfile engine to seed turns, no template-override, no LoRA-adapter load
-    // surface, and no custom prompt-renderer/response-parser hooks. Warn
-    // server-side and flag the client rather than staying silent about the
-    // no-op.
+    // `messages`, `template`, `adapters`, `renderer`, `parser` and `requires`
+    // are stored in virtual-model metadata but never reach inference: LM
+    // Studio has no Modelfile engine to seed turns, no template-override, no
+    // LoRA-adapter load surface, no custom prompt-renderer/response-parser
+    // hooks, and no minimum-version gate to enforce. Warn server-side and flag
+    // the client rather than staying silent about the no-op.
     let mut warnings: Vec<&str> = Vec::new();
     if body
         .get("messages")
@@ -189,30 +190,39 @@ pub async fn handle_ollama_create(
     {
         warnings.push(WARNING_PARSER_NOT_APPLIED);
     }
+    if body
+        .get("requires")
+        .and_then(|r| r.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        warnings.push(WARNING_REQUIRES_NOT_APPLIED);
+    }
     for warning in &warnings {
         log::warn!("create '{}': {}", new_model_name, warning);
     }
 
     // LM Studio has no API for creating real models; the proxy implements
-    // virtual aliases only. Files and quantization require real model creation
-    // which is not possible upstream.
-    if let Some(files) = body.get("files") {
-        let has_content = match files {
-            Value::Object(map) => !map.is_empty(),
-            Value::Array(arr) => !arr.is_empty(),
-            Value::Null => false,
-            _ => true,
-        };
-        if has_content {
-            return Err(ProxyError::bad_request(
-                "creating from raw files is unsupported by the LM Studio backend (no GGUF-blob import surface)",
-            ));
-        }
+    // virtual aliases only. Raw files, draft files and quantization require
+    // real model creation, which is not possible upstream.
+    if body.get("files").is_some_and(files_have_content) {
+        return Err(ProxyError::bad_request(
+            "creating from raw files is unsupported by the LM Studio backend (no GGUF-blob import surface)",
+        ));
+    }
+    if body.get("draft_files").is_some_and(files_have_content) {
+        return Err(ProxyError::bad_request(
+            "creating from draft files is unsupported by the LM Studio backend (no GGUF-blob import surface)",
+        ));
     }
 
     if body.get("quantize").is_some() {
         return Err(ProxyError::bad_request(
             "quantize is unsupported by the LM Studio backend (no quantization surface)",
+        ));
+    }
+    if body.get("draft_quantize").is_some() {
+        return Err(ProxyError::bad_request(
+            "draft_quantize is unsupported by the LM Studio backend (no quantization surface)",
         ));
     }
 
@@ -268,6 +278,18 @@ pub async fn handle_ollama_create(
     }
     log_handler_io("create", None, Some(&response));
     Ok(json_response(&response))
+}
+
+/// `files` / `draft_files` gate: only a populated map or array asks for real
+/// blob-import work; null, an empty map, or an empty array is a no-op that
+/// passes through.
+fn files_have_content(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => !map.is_empty(),
+        Value::Array(arr) => !arr.is_empty(),
+        Value::Null => false,
+        _ => true,
+    }
 }
 
 pub async fn handle_ollama_copy(

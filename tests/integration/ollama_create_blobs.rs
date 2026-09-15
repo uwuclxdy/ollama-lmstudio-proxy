@@ -110,6 +110,46 @@ async fn blob_head_present_after_upload_returns_200() {
 }
 
 #[tokio::test]
+async fn blob_reupload_existing_digest_returns_200() {
+    let p = spawn_proxy().await;
+
+    let data = b"re-upload content";
+    let digest = sha256_digest(data);
+    let url = p.url(&format!("/api/blobs/{digest}"));
+
+    let first = p
+        .client
+        .post(&url)
+        .body(data.to_vec())
+        .send()
+        .await
+        .expect("first POST /api/blobs/:digest");
+    assert_eq!(
+        first.status(),
+        201,
+        "first upload should create; got {}",
+        first.status()
+    );
+
+    // Upstream spec (openapi.yaml 2026-09-15): 200 "Blob already exists" is
+    // digest-keyed, so a re-upload answers 200 without consuming or verifying
+    // the new body — even when its bytes mismatch the stored digest.
+    let second = p
+        .client
+        .post(&url)
+        .body(b"different bytes, same digest".to_vec())
+        .send()
+        .await
+        .expect("second POST /api/blobs/:digest");
+    assert_eq!(
+        second.status(),
+        200,
+        "re-upload of an existing blob should return 200; got {}",
+        second.status()
+    );
+}
+
+#[tokio::test]
 async fn blob_head_absent_returns_404() {
     let p = spawn_proxy().await;
 
@@ -885,6 +925,156 @@ async fn create_with_valid_blob_file_ref_succeeds() {
         "create with files must return 400; got {}",
         resp.status()
     );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/create — draft_files / draft_quantize → 400
+// (api-docs refresh 2026-09-15: CreateRequest gained these fields)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_with_draft_files_returns_400_explaining_backend() {
+    let p = spawn_proxy().await;
+
+    // The gate fires before any LM Studio call, so no backend mock is mounted.
+    for draft_files in [
+        json!({"draft.gguf": "sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"}),
+        json!(["draft-00001-of-00002.gguf"]),
+    ] {
+        let resp = p
+            .client
+            .post(p.url("/api/create"))
+            .json(&json!({
+                "model": "draft-gguf:v1",
+                "from": "llama3.2:3b",
+                "draft_files": draft_files,
+                "stream": false
+            }))
+            .send()
+            .await
+            .expect("POST /api/create with draft_files");
+
+        assert_eq!(
+            resp.status(),
+            400,
+            "create with draft_files must return 400; got {}",
+            resp.status()
+        );
+
+        let body: Value = resp.json().await.expect("json body");
+        let error = body["error"].as_str().unwrap_or("");
+        assert!(
+            error.contains("draft files"),
+            "draft_files rejection must name draft files; got {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn create_with_draft_quantize_returns_400_explaining_backend() {
+    let p = spawn_proxy().await;
+
+    // The gate fires before any LM Studio call, so no backend mock is mounted.
+    // A null value is still a present field and rejects, mirroring `quantize`.
+    for draft_quantize in [json!("int8"), Value::Null] {
+        let resp = p
+            .client
+            .post(p.url("/api/create"))
+            .json(&json!({
+                "model": "draft-quant:v1",
+                "from": "llama3.2:3b",
+                "draft_quantize": draft_quantize,
+                "stream": false
+            }))
+            .send()
+            .await
+            .expect("POST /api/create with draft_quantize");
+
+        assert_eq!(
+            resp.status(),
+            400,
+            "create with draft_quantize must return 400; got {}",
+            resp.status()
+        );
+
+        let body: Value = resp.json().await.expect("json body");
+        let error = body["error"].as_str().unwrap_or("");
+        assert!(
+            error.contains("draft_quantize"),
+            "draft_quantize rejection must name the field; got {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn create_with_requires_stream_false_includes_warning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "requires-model:v1",
+            "from": "llama3.2:3b",
+            "requires": "0.31.0",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with requires");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    let warning = body.get("warning").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        warning.to_lowercase().contains("requires"),
+        "a stored REQUIRES must surface an inert-requires warning; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_empty_requires_response_unchanged() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    for requires in ["", "   "] {
+        let resp = p
+            .client
+            .post(p.url("/api/create"))
+            .json(&json!({
+                "model": "empty-requires:v1",
+                "from": "llama3.2:3b",
+                "requires": requires,
+                "stream": false
+            }))
+            .send()
+            .await
+            .expect("POST /api/create with empty requires");
+        assert_eq!(resp.status(), 200);
+
+        let body: Value = resp.json().await.expect("json body");
+        assert_eq!(
+            body,
+            json!({"status": "success"}),
+            "create with empty/whitespace requires must be unchanged; got {body}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
