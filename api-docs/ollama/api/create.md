@@ -69,12 +69,13 @@ paths:
               "system": "You are Ollama the llama."
             }'
         - lang: bash
-          label: Quantize
+          label: Create from GGUF
           source: |
             curl http://localhost:11434/api/create -d '{
-              "model": "llama3.1:8b-instruct-Q4_K_M",
-              "from": "llama3.1:8b-instruct-fp16",
-              "quantize": "q4_K_M"
+              "model": "my-gguf-model",
+              "files": {
+                "model.gguf": "sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+              }
             }'
 components:
   schemas:
@@ -98,6 +99,18 @@ components:
         parser:
           type: string
           description: Name of the parser for the model
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Source file names mapped to their SHA-256 digests. Split GGUF models
+            must include each shard under its original split filename.
+        draft_files:
+          type: object
+          additionalProperties:
+            type: string
+          description: Draft source file names mapped to their SHA-256 digests
         license:
           oneOf:
             - type: string
@@ -118,7 +131,13 @@ components:
             $ref: '#/components/schemas/ChatMessage'
         quantize:
           type: string
-          description: Quantization level to apply (e.g. `q4_K_M`, `q8_0`)
+          description: Quantization level to apply during import (e.g. `nvfp4`)
+        draft_quantize:
+          type: string
+          description: Quantization level to apply to draft weights during import
+        requires:
+          type: string
+          description: Minimum Ollama version required by the model
         stream:
           type: boolean
           default: true
