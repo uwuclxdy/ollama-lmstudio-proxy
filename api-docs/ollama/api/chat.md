@@ -220,19 +220,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum:
-                - high
-                - medium
-                - low
-                - max
-          description: >-
-            When true, returns separate thinking output in addition to content.
-            Can be a boolean (true/false) or a string ("high", "medium", "low",
-            "max") for supported models, with "max" requesting the highest
-            thinking level.
+          $ref: '#/components/schemas/ThinkValue'
         keep_alive:
           oneOf:
             - type: string
@@ -441,6 +429,17 @@ components:
           type: integer
           description: Maximum number of tokens to generate
       additionalProperties: true
+    ThinkValue:
+      description: >-
+        Controls a model's thinking output. Use `/api/show` to discover the
+        supported values and default for the selected model. `true` requests
+        thinking, `false` requests no thinking output, and `null` uses the model
+        default. String values are model-defined; supported names must match
+        `/api/show` exactly. Numbers are not supported.
+      oneOf:
+        - type: boolean
+        - type: string
+        - type: 'null'
     ToolCall:
       type: object
       properties:

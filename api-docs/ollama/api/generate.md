@@ -78,6 +78,15 @@ paths:
               "stream": false
             }'
         - lang: bash
+          label: Thinking
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gpt-oss",
+              "prompt": "What is 1+1?",
+              "think": "low",
+              "stream": false
+            }'
+        - lang: bash
           label: With options
           source: |
             curl http://localhost:11434/api/generate -d '{
@@ -173,19 +182,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum:
-                - high
-                - medium
-                - low
-                - max
-          description: >-
-            When true, returns separate thinking output in addition to content.
-            Can be a boolean (true/false) or a string ("high", "medium", "low",
-            "max") for supported models, with "max" requesting the highest
-            thinking level.
+          $ref: '#/components/schemas/ThinkValue'
         raw:
           type: boolean
           description: >-
@@ -299,6 +296,17 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+    ThinkValue:
+      description: >-
+        Controls a model's thinking output. Use `/api/show` to discover the
+        supported values and default for the selected model. `true` requests
+        thinking, `false` requests no thinking output, and `null` uses the model
+        default. String values are model-defined; supported names must match
+        `/api/show` exactly. Numbers are not supported.
+      oneOf:
+        - type: boolean
+        - type: string
+        - type: 'null'
     ModelOptions:
       type: object
       description: Runtime options that control text generation
