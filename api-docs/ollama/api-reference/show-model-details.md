@@ -52,7 +52,13 @@ paths:
                   Last modified: February 21, 2024...
                 capabilities:
                   - completion
+                  - thinking
                   - vision
+                thinking:
+                  values:
+                    - false
+                    - true
+                  default: true
                 modified_at: '2025-08-14T15:49:43.634137516-07:00'
                 details:
                   parent_model: ''
@@ -133,6 +139,18 @@ paths:
               "model": "gemma4",
               "verbose": true
             }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
 components:
   schemas:
     ShowRequest:
@@ -149,6 +167,8 @@ components:
     ShowResponse:
       type: object
       properties:
+        thinking:
+          $ref: '#/components/schemas/Thinking'
         parameters:
           type: string
           description: Model parameter settings serialized as text
@@ -172,5 +192,33 @@ components:
         model_info:
           type: object
           description: Additional model metadata
+    Thinking:
+      type: object
+      required:
+        - values
+        - default
+      description: >-
+        Thinking controls advertised by a model. Models without thinking
+        metadata omit this field.
+      properties:
+        values:
+          type: array
+          description: >-
+            Values explicitly supported by the model's `think` request field.
+            Booleans represent on/off controls and strings represent
+            model-defined levels. An array containing only `false` identifies a
+            model without thinking support.
+          items:
+            oneOf:
+              - type: boolean
+              - type: string
+        default:
+          description: >-
+            Value used when `think` is not set. For models that use this
+            metadata for named thinking levels, unsupported names resolve to
+            this default.
+          oneOf:
+            - type: boolean
+            - type: string
 
 ````
