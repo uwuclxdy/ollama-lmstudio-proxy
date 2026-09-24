@@ -16,15 +16,33 @@ use crate::storage::VirtualModelEntry;
 ///
 /// `reasoning_effort` (OpenAI alias) is accepted as a fallback when `think` is
 /// absent. When both are present, `think` takes precedence.
+///
+/// `think: null` is upstream's "use the model default" (ThinkValue,
+/// api-docs/ollama/api/chat.md); it is normalised to absence here, so the
+/// default-resolution path applies exactly like an omitted think and `null`
+/// never reaches the LM Studio body.
 pub fn make_top_level_params(body: &Value) -> TopLevelParams<'_> {
     TopLevelParams {
-        think: body.get("think").or_else(|| body.get("reasoning_effort")),
+        think: body
+            .get("think")
+            .filter(|v| !v.is_null())
+            .or_else(|| body.get("reasoning_effort").filter(|v| !v.is_null())),
         logprobs: body.get("logprobs"),
         top_logprobs: body.get("top_logprobs"),
         // Caller fills this from the resolved model's capability after building
         // the params (the body alone can't say whether the model reasons).
         model_is_thinking: false,
     }
+}
+
+/// Whether the request carries no explicit thinking control.
+///
+/// `think: null` is upstream's "use the model default" (ThinkValue,
+/// api-docs/ollama/api/chat.md), which the proxy resolves through the
+/// model-capability lookup — exactly like an omitted `think`.
+fn think_absent(body: &Value) -> bool {
+    body.get("think").is_none_or(Value::is_null)
+        && body.get("reasoning_effort").is_none_or(Value::is_null)
 }
 
 pub fn extract_system_prompt(body: &Value) -> Option<String> {
@@ -109,13 +127,13 @@ pub async fn resolve_model_with_context<'a>(
     // (matching real Ollama). The lookup costs a `GET /api/v1/models`, so skip it
     // unless it can change the outcome: only the chat/generate paths
     // (`wants_thinking_default = true`) reason, and only when no explicit
-    // `think`/`reasoning_effort` is set (an explicit value always wins
-    // downstream). Embeddings pass `false` — they never reason, and the legacy
-    // `/api/embeddings` shape carries a `prompt` that must NOT be mistaken for an
-    // inference body. Best-effort: an unknown / unfetchable model is non-thinking.
-    let think_absent =
-        request_body.get("think").is_none() && request_body.get("reasoning_effort").is_none();
-    let model_supports_thinking = if wants_thinking_default && think_absent {
+    // `think`/`reasoning_effort` is set (`think: null` counts as absent —
+    // upstream's "model default" — so the lookup still runs and an explicit
+    // value always wins downstream). Embeddings pass `false` — they never
+    // reason, and the legacy `/api/embeddings` shape carries a `prompt` that
+    // must NOT be mistaken for an inference body. Best-effort: an unknown /
+    // unfetchable model is non-thinking.
+    let model_supports_thinking = if wants_thinking_default && think_absent(request_body) {
         let model_info = fetch_model_info_for_id(
             context,
             model_resolver,

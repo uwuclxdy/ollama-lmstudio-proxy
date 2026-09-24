@@ -194,6 +194,58 @@ fn make_top_level_params_defaults_model_is_thinking_false() {
     assert!(!top.model_is_thinking);
 }
 
+#[test]
+fn make_top_level_params_null_think_reads_as_absent() {
+    // ThinkValue defines null as "use the model default" (api-docs/ollama/
+    // api/chat.md); the proxy emulates that exactly like an omitted think, so
+    // the default-resolution path (and the native or_else default) applies.
+    let body = json!({ "think": null, "model": "x", "messages": [] });
+    let top = make_top_level_params(&body);
+    assert!(top.think.is_none(), "think:null must read as absent");
+}
+
+#[test]
+fn make_top_level_params_null_think_falls_back_to_reasoning_effort() {
+    let body = json!({ "think": null, "reasoning_effort": "high", "model": "x" });
+    let top = make_top_level_params(&body);
+    assert_eq!(top.think, Some(&json!("high")));
+}
+
+#[test]
+fn make_top_level_params_null_reasoning_effort_gives_none() {
+    let body = json!({ "reasoning_effort": null, "model": "x" });
+    let top = make_top_level_params(&body);
+    assert!(top.think.is_none());
+}
+
+// ── think_absent (the model-capability lookup skip rule) ─────────────────────
+
+#[test]
+fn think_absent_true_when_think_and_effort_missing() {
+    let body = json!({ "model": "x", "messages": [] });
+    assert!(think_absent(&body));
+}
+
+#[test]
+fn think_absent_true_when_think_null() {
+    // think:null means "use the model default", which needs the capability
+    // lookup to resolve — exactly like an omitted think.
+    let body = json!({ "think": null, "model": "x", "messages": [] });
+    assert!(think_absent(&body));
+}
+
+#[test]
+fn think_absent_false_when_think_present() {
+    let body = json!({ "think": true, "model": "x", "messages": [] });
+    assert!(!think_absent(&body));
+}
+
+#[test]
+fn think_absent_false_when_reasoning_effort_present() {
+    let body = json!({ "reasoning_effort": "high", "model": "x", "messages": [] });
+    assert!(!think_absent(&body));
+}
+
 // Build a minimal ModelInfo without the HTTP stack. `resolve_model_with_context`
 // populates `model_supports_thinking` from exactly this predicate, so testing
 // `is_thinking_model()` pins the field's value for both cases.
@@ -213,6 +265,7 @@ fn model_info(id: &str, supports_reasoning: bool) -> ModelInfo {
         supports_vision: false,
         supports_tools: false,
         supports_reasoning,
+        reasoning_capability: None,
         has_backend_capabilities: true,
         size_bytes: None,
         params_string: None,

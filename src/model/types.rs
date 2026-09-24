@@ -61,6 +61,13 @@ pub struct NativeReasoningCapability {
     pub default: Option<String>,
 }
 
+/// Whether a backend reasoning option means "thinking disabled". Covers both
+/// vocabularies LM Studio has shipped: the tier-era `off` and the newer
+/// enabled/disabled pair.
+fn is_reasoning_off(option: &str) -> bool {
+    option.eq_ignore_ascii_case("off") || option.eq_ignore_ascii_case("disabled")
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeQuantization {
     pub name: Option<String>,
@@ -111,6 +118,10 @@ pub struct ModelInfo {
     pub supports_vision: bool,
     pub supports_tools: bool,
     pub supports_reasoning: bool,
+    /// Raw backend reasoning capability (`allowed_options` + `default`),
+    /// carried through so `/api/show` can advertise Ollama's `thinking`
+    /// controls. None when the backend reported no reasoning entry.
+    pub reasoning_capability: Option<NativeReasoningCapability>,
     /// Whether LM Studio returned a `capabilities` object for this model. When
     /// true, the `thinking` capability is decided strictly by `supports_reasoning`
     /// (the backend is authoritative); the id-keyword heuristic only runs when
@@ -193,16 +204,14 @@ impl ModelInfo {
             .and_then(|c| c.trained_for_tool_use)
             .unwrap_or(false);
 
-        let supports_reasoning = native_data
+        let reasoning_capability = native_data
             .capabilities
             .as_ref()
-            .and_then(|c| c.reasoning.as_ref())
-            .map(|r| {
-                r.allowed_options
-                    .iter()
-                    .any(|opt| !opt.eq_ignore_ascii_case("off"))
-            })
-            .unwrap_or(false);
+            .and_then(|c| c.reasoning.clone());
+
+        let supports_reasoning = reasoning_capability
+            .as_ref()
+            .is_some_and(|r| r.allowed_options.iter().any(|opt| !is_reasoning_off(opt)));
 
         Self {
             id: native_data.key.clone(),
@@ -225,6 +234,7 @@ impl ModelInfo {
             supports_vision,
             supports_tools,
             supports_reasoning,
+            reasoning_capability,
             has_backend_capabilities: native_data.capabilities.is_some(),
             size_bytes: native_data.size_bytes,
             params_string: native_data.params_string.clone(),
@@ -642,6 +652,9 @@ impl ModelInfo {
         });
 
         if let Some(obj) = response.as_object_mut() {
+            if let Some(thinking) = self.build_thinking_controls() {
+                obj.insert("thinking".to_string(), thinking);
+            }
             if let Some(name) = &self.display_name {
                 obj.insert("display_name".to_string(), json!(name));
             }
@@ -664,6 +677,52 @@ impl ModelInfo {
         }
 
         response
+    }
+
+    /// Build the `thinking` object for `/api/show` (Thinking schema,
+    /// api-docs/ollama/api-reference/show-model-details.md), advertising the
+    /// `think` values the proxy can honor for this model.
+    ///
+    /// Sourced from the backend's `capabilities.reasoning.allowed_options`:
+    /// `on`/`off` (and the newer `enabled`/`disabled`) become Ollama's boolean
+    /// controls, tier names become model-defined strings. `default` advertises
+    /// what the proxy actually does when `think` is unset — reasoning defaults
+    /// on for thinking models — never LM Studio's own `reasoning.default`,
+    /// which the proxy deliberately overrides (docs/reasoning.md). Models
+    /// without reasoning metadata omit the object, matching Ollama.
+    fn build_thinking_controls(&self) -> Option<Value> {
+        let caps = self.reasoning_capability.as_ref()?;
+        if caps.allowed_options.is_empty() {
+            return None;
+        }
+
+        let mut has_off = false;
+        let mut tiers: Vec<String> = Vec::new();
+        for option in &caps.allowed_options {
+            if is_reasoning_off(option) {
+                has_off = true;
+            } else if option.eq_ignore_ascii_case("on") || option.eq_ignore_ascii_case("enabled") {
+                // Collapses onto the boolean `true` control pushed below.
+            } else if !tiers.contains(option) {
+                tiers.push(option.clone());
+            }
+        }
+
+        // Booleans first (upstream's bool-model example order, show-model-
+        // details.md), tier strings after.
+        let mut values: Vec<Value> = Vec::new();
+        if has_off {
+            values.push(json!(false));
+        }
+        if self.supports_reasoning {
+            values.push(json!(true));
+        }
+        values.extend(tiers.into_iter().map(Value::String));
+
+        Some(json!({
+            "values": values,
+            "default": self.supports_reasoning,
+        }))
     }
 }
 

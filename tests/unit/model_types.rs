@@ -230,6 +230,106 @@ fn reasoning_only_off_does_not_promote_thinking() {
     assert!(!caps(&info).contains(&"thinking"));
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// /api/show `thinking` controls (Thinking schema)
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn show_thinking_maps_backend_reasoning_options() {
+    let mut native = make_native_with_caps("openai/gpt-oss-20b", "llm", false, false);
+    native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+        allowed_options: vec!["off".into(), "low".into(), "medium".into(), "high".into()],
+        default: Some("medium".into()),
+    });
+    let info = ModelInfo::from_native_data(&native);
+    let thinking = &info.to_show_response(None, false)["thinking"];
+    assert_eq!(
+        thinking["values"],
+        json!([false, true, "low", "medium", "high"]),
+        "on/off map to booleans, tier names stay model-defined strings"
+    );
+    // `default` advertises what the proxy actually does when `think` is unset
+    // (reasoning defaults on for thinking models), never the backend's own
+    // `reasoning.default` ("medium" here), which the proxy deliberately
+    // overrides (docs/reasoning.md).
+    assert_eq!(thinking["default"], json!(true));
+}
+
+#[test]
+fn show_thinking_off_only_reports_false() {
+    let mut native = make_native_with_caps("plain-model", "llm", false, false);
+    native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+        allowed_options: vec!["off".into()],
+        default: Some("off".into()),
+    });
+    let info = ModelInfo::from_native_data(&native);
+    let thinking = &info.to_show_response(None, false)["thinking"];
+    // values:[false] is upstream's "no thinking support" marker
+    // (api-docs/ollama/capabilities/thinking.md).
+    assert_eq!(thinking["values"], json!([false]));
+    assert_eq!(thinking["default"], json!(false));
+}
+
+#[test]
+fn show_thinking_disabled_only_reports_false() {
+    let mut native = make_native_with_caps("plain-model", "llm", false, false);
+    native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+        allowed_options: vec!["disabled".into()],
+        default: None,
+    });
+    let info = ModelInfo::from_native_data(&native);
+    assert!(!info.supports_reasoning);
+    let thinking = &info.to_show_response(None, false)["thinking"];
+    assert_eq!(thinking["values"], json!([false]));
+    assert_eq!(thinking["default"], json!(false));
+}
+
+#[test]
+fn show_thinking_absent_without_reasoning_caps() {
+    // No capabilities at all → no thinking metadata (matches Ollama's "models
+    // without thinking metadata omit this field").
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    assert!(info.to_show_response(None, false).get("thinking").is_none());
+
+    // Capabilities without a reasoning entry → same omission.
+    let native_caps = make_native_with_caps("publisher/model", "llm", false, false);
+    let info_caps = ModelInfo::from_native_data(&native_caps);
+    assert!(
+        info_caps
+            .to_show_response(None, false)
+            .get("thinking")
+            .is_none()
+    );
+}
+
+#[test]
+fn show_thinking_absent_when_reasoning_options_empty() {
+    // An empty allowed_options list advertises nothing — emitting values:[]
+    // would be a shape upstream defines neither as "no thinking support" nor
+    // as metadata, so the object is omitted like any missing metadata.
+    let mut native = make_native_with_caps("plain-model", "llm", false, false);
+    native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+        allowed_options: vec![],
+        default: None,
+    });
+    let info = ModelInfo::from_native_data(&native);
+    assert!(info.to_show_response(None, false).get("thinking").is_none());
+}
+
+#[test]
+fn show_thinking_maps_enabled_vocab_and_dedupes() {
+    // The newer enabled/disabled vocabulary collapses onto the same booleans.
+    let mut native = make_native_with_caps("some-model", "llm", false, false);
+    native.capabilities.as_mut().unwrap().reasoning = Some(NativeReasoningCapability {
+        allowed_options: vec!["disabled".into(), "enabled".into(), "high".into()],
+        default: None,
+    });
+    let info = ModelInfo::from_native_data(&native);
+    let thinking = &info.to_show_response(None, false)["thinking"];
+    assert_eq!(thinking["values"], json!([false, true, "high"]));
+    assert_eq!(thinking["default"], json!(true));
+}
+
 #[test]
 fn show_response_surfaces_display_name_and_description() {
     let mut native = make_native_with_caps("publisher/model", "llm", false, false);

@@ -17,6 +17,7 @@ fn mi(id: &str, loaded: bool) -> ModelInfo {
         supports_vision: false,
         supports_tools: false,
         supports_reasoning: false,
+        reasoning_capability: None,
         size_bytes: None,
         params_string: None,
         display_name: None,
