@@ -39,7 +39,9 @@ async fn responses_model_remapped_and_input_forwarded_verbatim() {
         .and(path("/v1/responses"))
         .and(body_partial_json(json!({
             "model": "openai/gpt-oss-20b",
-            "input": "Provide a prime number less than 50"
+            "input": "Provide a prime number less than 50",
+            "reasoning": { "effort": "low" },
+            "think": "medium"
         })))
         .respond_with(
             ResponseTemplate::new(200)
@@ -60,7 +62,9 @@ async fn responses_model_remapped_and_input_forwarded_verbatim() {
         .post(p.url("/v1/responses"))
         .json(&json!({
             "model": "gpt-oss-20b",
-            "input": "Provide a prime number less than 50"
+            "input": "Provide a prime number less than 50",
+            "reasoning": { "effort": "low" },
+            "think": "medium"
         }))
         .send()
         .await

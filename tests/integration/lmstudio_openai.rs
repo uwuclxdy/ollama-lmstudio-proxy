@@ -354,7 +354,8 @@ async fn anthropic_messages_model_remapped_and_forwarded() {
         .and(path("/v1/messages"))
         .and(body_partial_json(json!({
             "model": "ibm/granite-4-micro",
-            "messages": [{ "role": "user", "content": "Hello" }]
+            "messages": [{ "role": "user", "content": "Hello" }],
+            "output_config": { "effort": "high" }
         })))
         .respond_with(
             ResponseTemplate::new(200)
@@ -380,7 +381,8 @@ async fn anthropic_messages_model_remapped_and_forwarded() {
         .json(&json!({
             "model": "granite-4-micro",
             "max_tokens": 256,
-            "messages": [{ "role": "user", "content": "Hello" }]
+            "messages": [{ "role": "user", "content": "Hello" }],
+            "output_config": { "effort": "high" }
         }))
         .send()
         .await
