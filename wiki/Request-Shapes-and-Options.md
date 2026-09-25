@@ -31,10 +31,9 @@ enforcement.
 
 ### Accepted but ignored
 
-Ollama-only sampling/runtime options with no LM Studio equivalent (e.g. `mirostat*`,
-`tfs_z`, `typical_p`, `repeat_last_n`, `num_keep`, `num_gpu`, `num_thread`, `numa`) are
-accepted without error and dropped, surfaced once per request in a warn-log so they are
-not silently swallowed.
+Ollama-only sampling/runtime options with no LM Studio equivalent (e.g. `mirostat*`, `tfs_z`, `typical_p`, `repeat_last_n`, `num_keep`, `num_gpu`, `num_thread`, `numa`) are accepted without error and dropped, surfaced once per request in a warn-log so they are not silently swallowed.
+
+`typical_p` is deprecated upstream (Ollama's `api.md` says it "may be removed in a future release"), so new clients should not rely on it.
 
 `draft_num_predict` (max speculative draft tokens per step) falls here too: LM Studio
 configures speculative decoding at model-load time via a draft model, with no per-request
