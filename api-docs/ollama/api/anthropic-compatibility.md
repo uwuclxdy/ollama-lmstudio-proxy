@@ -385,20 +385,20 @@ curl http://localhost:11434/v1/messages \
 
 The following Anthropic API features are not currently supported:
 
-| Feature                     | Description                                                 |
-| --------------------------- | ----------------------------------------------------------- |
-| `/v1/messages/count_tokens` | Token counting endpoint                                     |
-| `tool_choice`               | Forcing specific tool use or disabling tools                |
-| `metadata`                  | Request metadata (user\_id)                                 |
-| Prompt caching              | `cache_control` blocks for caching prefixes                 |
-| Batches API                 | `/v1/messages/batches` for async batch processing           |
-| Citations                   | `citations` content blocks                                  |
-| PDF support                 | `document` content blocks with PDF files                    |
-| Server-sent errors          | `error` events during streaming (errors return HTTP status) |
+| Feature | Description |
+| - | - |
+| `/v1/messages/count_tokens` | Token counting endpoint |
+| `tool_choice` | Forcing specific tool use or disabling tools |
+| `metadata` | Request metadata (user\_id) |
+| Prompt caching | `cache_control` blocks for caching prefixes |
+| Batches API | `/v1/messages/batches` for async batch processing |
+| Citations | `citations` content blocks |
+| PDF support | `document` content blocks with PDF files |
+| Server-sent errors | `error` events during streaming (errors return HTTP status) |
 
 ### Partial support
 
-| Feature           | Status                                                   |
-| ----------------- | -------------------------------------------------------- |
-| Image content     | Base64 images supported; URL images not supported        |
+| Feature | Status |
+| - | - |
+| Image content | Base64 images supported; URL images not supported |
 | Extended thinking | Basic support; `budget_tokens` accepted but not enforced |
