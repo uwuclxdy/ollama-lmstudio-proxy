@@ -9,7 +9,7 @@
 | `GET /` | Returns "Ollama is running" |
 | `GET /api/tags` | Translates to `/api/v1/models`; includes proxy-managed aliases |
 | `GET /api/ps` | Translates to `/api/v1/models`; shows loaded models plus aliases; `size_vram` mirrors the loaded model `size` (LM Studio reports no GPU/CPU split); `details.parent_model` is `""`; `expires_at` is a best-effort placeholder |
-| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; a `thinking` object (`values`/`default`) is synthesized from the backend's reasoning capabilities when present; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`/`offload_kv_cache_to_gpu`) while the model is loaded and multi-quant `variants`/`selected_variant` when the backend reports them; merges alias info when present. Native models omit `modelfile`/`template`/`parameters`/`license` since LM Studio exposes no Modelfile |
+| `POST /api/show` | Fetches real LM Studio metadata; capabilities (`vision`/`tools`/`thinking`) come from the backend `capabilities` object, with an id-keyword fallback only when the backend reports none; capabilities requested on an alias at create time merge in after the inherited set; a `thinking` object (`values`/`default`) is synthesized from the backend's reasoning capabilities when present; `description`/`display_name` surfaced; verbose `model_info` adds loaded tuning (`flash_attention`/`eval_batch_size`/`parallel`/`offload_kv_cache_to_gpu`) while the model is loaded and multi-quant `variants`/`selected_variant` when the backend reports them; merges alias info when present. Native models omit `modelfile`/`template`/`parameters`/`license` since LM Studio exposes no Modelfile |
 | `POST /api/chat` | Translates to `/api/v0/chat/completions` (or native `/api/v1/chat` with `--use-native-chat` / `--native-chat-streaming`). Non-streaming replies carry LM Studio's real `eval_count` / `eval_duration` / `prompt_eval_count` / `prompt_eval_duration` from the v0 `stats` block. The v0 SSE stream ends without a stats chunk, so streaming counts are length-proportional estimates; the native path reports real ones from its `chat.end` event. A messageless request warms the model (`done_reason:"load"` no-op); `keep_alive: 0` without messages unloads it |
 | `POST /api/generate` | Translates to `/api/v0/completions`; vision requests use the v0 chat endpoint. A promptless request warms the model; `keep_alive: 0` without a prompt unloads it |
 | `POST /api/embed` | Translates to `/v1/embeddings`; also handles `/api/embeddings`. Auto-loads (JIT) an unloaded embedding model on demand instead of returning "no models loaded"; honors `num_ctx`; `truncate` defaults to `true` |
@@ -47,6 +47,8 @@ before forwarding. A few compatibility shims apply on top:
 - Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
   protocol: `event: error` for Anthropic, `event: response.failed` for
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
+- `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers
+  `501`: LM Studio has no decision-capable model type or scoring runner.
 
 Anthropic clients such as Claude Code work against `/v1/messages` with no extra setup: point `ANTHROPIC_BASE_URL` at the proxy.
 
@@ -56,8 +58,11 @@ Anthropic clients such as Claude Code work against `/v1/messages` with no extra 
   `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback:
   `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Alias metadata
   (`system`, `template`, `parameters`, `license`, `adapters`, `messages`,
-  `renderer`, `parser`, `requires`) is recorded on the alias. `system` and `parameters`
-  reach inference; the rest are stored but stay inert on the LM Studio backend.
+  `renderer`, `parser`, `requires`, `capabilities`) is recorded on the alias.
+  `system` and `parameters` reach inference; the rest are stored but stay inert
+  on the LM Studio backend, with `capabilities` echoed back on `/api/show`
+  (merged after the inherited set). Storing an inert field adds a `warning`
+  to the create response (and a warning status line on a streamed create).
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio
   metadata plus alias info when present.
 - A `virtual_models.json` that fails to parse is renamed aside to
