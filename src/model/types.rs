@@ -626,13 +626,26 @@ impl ModelInfo {
     /// `parameters` and `template` are only surfaced when the caller passed a
     /// virtual alias that supplies them — LM Studio exposes no Modelfile, so
     /// the proxy refuses to fabricate values that would mislead clients into
-    /// thinking these are the model's real generation defaults.
+    /// thinking these are the model's real generation defaults. Create-time
+    /// `capabilities` are appended to the reported set after the inherited
+    /// one, matching upstream's add-without-removing semantics.
     pub fn to_show_response(
         &self,
         alias_metadata: Option<&VirtualModelMetadata>,
         verbose: bool,
     ) -> Value {
-        let capabilities = self.determine_capabilities();
+        let mut capabilities: Vec<String> = self
+            .determine_capabilities()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        if let Some(added) = alias_metadata.and_then(|meta| meta.capabilities.as_ref()) {
+            for cap in added {
+                if !capabilities.contains(cap) {
+                    capabilities.push(cap.clone());
+                }
+            }
+        }
         let mut details = self.base_ollama_representation()["details"].clone();
         if let Some(obj) = details.as_object_mut() {
             obj.insert("parent_model".to_string(), json!(""));

@@ -317,6 +317,34 @@ fn show_thinking_absent_when_reasoning_options_empty() {
 }
 
 #[test]
+fn show_capabilities_adds_stored_alias_capabilities() {
+    // Upstream /api/create `capabilities` adds to the inherited/inferred set
+    // without removing from it (openapi 2026-10-01); /api/show reflects the
+    // additions the same way.
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let meta = VirtualModelMetadata {
+        capabilities: Some(vec!["chat".to_string(), "decision".to_string()]),
+        ..VirtualModelMetadata::default()
+    };
+    let caps = info.to_show_response(Some(&meta), false)["capabilities"].clone();
+    assert_eq!(
+        caps,
+        json!(["completion", "chat", "decision"]),
+        "stored additions merge after the inherited set, deduped"
+    );
+}
+
+#[test]
+fn show_capabilities_default_alias_metadata_unchanged() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let meta = VirtualModelMetadata::default();
+    assert_eq!(
+        info.to_show_response(Some(&meta), false)["capabilities"],
+        info.to_show_response(None, false)["capabilities"]
+    );
+}
+
+#[test]
 fn show_thinking_maps_enabled_vocab_and_dedupes() {
     // The newer enabled/disabled vocabulary collapses onto the same booleans.
     let mut native = make_native_with_caps("some-model", "llm", false, false);

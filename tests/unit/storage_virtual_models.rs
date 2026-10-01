@@ -38,7 +38,8 @@ fn build_metadata_all_fields_populated() {
         "messages": [{"role": "user", "content": "hi"}],
         "renderer": "harmony",
         "parser": "harmony",
-        "requires": "0.31.0"
+        "requires": "0.31.0",
+        "capabilities": ["decision", "tools"]
     });
     let meta = VirtualModelStore::build_metadata_from_request(&body, None);
     assert_eq!(meta.system_prompt.as_deref(), Some("be concise"));
@@ -50,6 +51,10 @@ fn build_metadata_all_fields_populated() {
     assert_eq!(meta.renderer.as_deref(), Some("harmony"));
     assert_eq!(meta.parser.as_deref(), Some("harmony"));
     assert_eq!(meta.requires.as_deref(), Some("0.31.0"));
+    assert_eq!(
+        meta.capabilities.as_deref(),
+        Some(&["decision".to_string(), "tools".to_string()][..])
+    );
 }
 
 #[test]
@@ -85,6 +90,55 @@ fn build_metadata_renderer_parser_non_string_ignored() {
 fn build_metadata_requires_non_string_ignored() {
     let meta = VirtualModelStore::build_metadata_from_request(&json!({"requires": 42}), None);
     assert!(meta.requires.is_none());
+}
+
+#[test]
+fn build_metadata_capabilities_stored_and_base_preserved() {
+    let base = VirtualModelMetadata {
+        capabilities: Some(vec!["inherited-cap".to_string()]),
+        ..VirtualModelMetadata::default()
+    };
+    // Empty body keeps the inherited capabilities from the source alias.
+    let kept = VirtualModelStore::build_metadata_from_request(&json!({}), Some(base.clone()));
+    assert_eq!(
+        kept.capabilities.as_deref(),
+        Some(&["inherited-cap".to_string()][..])
+    );
+
+    // A body value overrides the inherited one.
+    let overridden = VirtualModelStore::build_metadata_from_request(
+        &json!({"capabilities": ["decision"]}),
+        Some(base),
+    );
+    assert_eq!(
+        overridden.capabilities.as_deref(),
+        Some(&["decision".to_string()][..])
+    );
+}
+
+#[test]
+fn build_metadata_capabilities_non_array_ignored() {
+    let meta =
+        VirtualModelStore::build_metadata_from_request(&json!({"capabilities": "decision"}), None);
+    assert!(meta.capabilities.is_none());
+}
+
+#[test]
+fn build_metadata_capabilities_non_string_items_dropped() {
+    let meta = VirtualModelStore::build_metadata_from_request(
+        &json!({"capabilities": ["decision", 42, null]}),
+        None,
+    );
+    assert_eq!(
+        meta.capabilities.as_deref(),
+        Some(&["decision".to_string()][..])
+    );
+}
+
+#[test]
+fn build_metadata_capabilities_empty_array_is_none() {
+    let meta = VirtualModelStore::build_metadata_from_request(&json!({"capabilities": []}), None);
+    assert!(meta.capabilities.is_none());
 }
 
 #[test]

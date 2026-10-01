@@ -613,6 +613,125 @@ async fn create_with_adapters_stream_false_includes_warning() {
 }
 
 #[tokio::test]
+async fn create_with_capabilities_stream_false_includes_warning() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "cap-inert:v1",
+            "from": "llama3.2:3b",
+            "capabilities": ["decision"],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with capabilities");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    let warning = body
+        .get("warning")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    assert!(
+        warning.contains("capabilit"),
+        "a stored CAPABILITIES must surface an inert-capabilities warning; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_empty_capabilities_stays_warning_free() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "cap-empty:v1",
+            "from": "llama3.2:3b",
+            "capabilities": [],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with empty capabilities");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    assert!(
+        body.get("warning").is_none(),
+        "an empty capabilities array is a no-op; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn create_with_capabilities_reflected_in_show() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "cap-show:v1",
+            "from": "llama3.2:3b",
+            "capabilities": ["decision"],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with capabilities");
+    assert_eq!(resp.status(), 200);
+
+    let show = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "cap-show:v1"}))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(show.status(), 200);
+    let body: Value = show.json().await.expect("show body");
+    let caps = body["capabilities"].as_array().cloned().unwrap_or_default();
+    assert!(
+        caps.contains(&json!("decision")),
+        "capabilities added at create time must surface in /api/show; got {body}"
+    );
+    assert!(
+        caps.contains(&json!("completion")) && caps.contains(&json!("chat")),
+        "the inherited set must survive the merge; got {caps:?}"
+    );
+}
+
+#[tokio::test]
 async fn create_with_renderer_parser_stream_false_includes_warnings() {
     let p = spawn_proxy().await;
 

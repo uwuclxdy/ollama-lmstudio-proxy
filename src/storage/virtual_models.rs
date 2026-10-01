@@ -22,6 +22,7 @@ pub struct VirtualModelMetadata {
     pub renderer: Option<String>,
     pub parser: Option<String>,
     pub requires: Option<String>,
+    pub capabilities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +81,19 @@ impl VirtualModelStore {
 
         if let Some(requires) = body.get("requires").and_then(|v| v.as_str()) {
             metadata.requires = Some(requires.to_string());
+        }
+
+        if let Some(capabilities) = body
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|caps| !caps.is_empty())
+        {
+            metadata.capabilities = Some(capabilities);
         }
 
         metadata
