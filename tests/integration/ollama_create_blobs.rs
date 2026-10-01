@@ -732,6 +732,40 @@ async fn create_with_capabilities_reflected_in_show() {
 }
 
 #[tokio::test]
+async fn create_with_non_string_capabilities_stays_warning_free() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "cap-nonstring:v1",
+            "from": "llama3.2:3b",
+            "capabilities": [42, null],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with non-string capabilities");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["status"].as_str(), Some("success"));
+    assert!(
+        body.get("warning").is_none(),
+        "an array with no string item stores nothing, so it must not claim storage; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn create_with_renderer_parser_stream_false_includes_warnings() {
     let p = spawn_proxy().await;
 

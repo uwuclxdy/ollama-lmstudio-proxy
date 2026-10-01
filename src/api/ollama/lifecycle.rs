@@ -201,7 +201,7 @@ pub async fn handle_ollama_create(
     if body
         .get("capabilities")
         .and_then(|c| c.as_array())
-        .is_some_and(|arr| !arr.is_empty())
+        .is_some_and(|arr| arr.iter().any(Value::is_string))
     {
         warnings.push(WARNING_CAPABILITIES_NOT_APPLIED);
     }
