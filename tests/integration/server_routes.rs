@@ -334,6 +334,43 @@ async fn route_web_search_is_present_and_returns_501() {
 }
 
 #[tokio::test]
+async fn route_systemone_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "nimble",
+            "state": "Our checkout has returned 500 errors since 9am.",
+            "questions": {
+                "label": {
+                    "type": "choice",
+                    "instructions": "Which label fits this ticket?",
+                    "criteria": {"bug": "Software errors"}
+                }
+            }
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/v1/systemone must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/v1/systemone must return 501: LM Studio has no System One decision models"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("systemone"),
+        "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn route_web_fetch_is_present_and_fetches() {
     let p = spawn_proxy().await;
     // web_fetch hits an arbitrary URL with its own client; point it at the mock

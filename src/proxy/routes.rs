@@ -148,6 +148,7 @@ pub fn create_router(server: AppState) -> Router {
         .route("/api/copy", post(copy_handler))
         .route("/api/delete", delete(delete_handler))
         .route("/api/push", post(push_handler))
+        .route("/v1/systemone", post(systemone_handler))
         .route("/api/web_search", post(web_search_handler))
         .route("/api/web_fetch", post(web_fetch_handler))
         .route("/api/show", post(show_handler))
@@ -323,6 +324,15 @@ async fn delete_handler(
 async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
     Err(ProxyError::not_implemented(
         "push is not supported: LM Studio has no model registry",
+    ))
+}
+
+// Upstream v0.35 endpoint (System One decision models). LM Studio exposes no
+// decision-capable model type or scoring surface, so an explicit 501 beats the
+// passthrough's misleading `200 {"error":"Unexpected endpoint..."}`.
+async fn systemone_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "systemone is not supported: LM Studio has no System One decision models",
     ))
 }
 
