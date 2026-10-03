@@ -11,8 +11,8 @@
   Currently available locally in Ollama.
 </Note>
 
-* Returns one JSON response; streaming, images, tools, and generation controls are not supported.
-* Requests must fit within 64 KiB. Each rendered prompt must fit the loaded context window with two token positions left for scoring. Input is never truncated.
+* Returns one JSON response; streaming, video, tools, and generation controls are not supported.
+* Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
 
 
 ## OpenAPI
@@ -96,13 +96,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '413':
-          description: Request body exceeds 64 KiB.
+          description: Request body exceeds 64 KiB without images or 32 MiB with images.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: request body must not exceed 64 KiB
+                error: request body must not exceed 64 KiB without images
         '500':
           description: Model loading, rendering, or scoring failed.
           content:
@@ -148,12 +148,20 @@ components:
             MLX/Safetensors models are not supported.
         state:
           $ref: '#/components/schemas/SystemOneContent'
+        images:
+          type: array
+          description: >-
+            Base64-encoded images shared by all questions, in request order.
+            Requires Clef or Clef Flash with vision weights. URLs and data URLs
+            are not supported.
+          items:
+            type: string
+            format: byte
         questions:
           type: object
           description: >-
-            Named questions about the shared state. Each is scored separately
-            against the full state and question schema; answers are not passed
-            to later questions.
+            Named questions about the shared state. Answers are not passed to
+            later questions.
           minProperties: 1
           maxProperties: 64
           propertyNames:
@@ -200,8 +208,9 @@ components:
               type: integer
               minimum: 0
               description: >-
-                Sum of full rendered prompt lengths across all questions,
-                including repeated shared context even when cached.
+                Total evaluated input tokens, including image positions. Shared
+                context is counted again when the model scores questions
+                separately.
             output_tokens:
               type: integer
               minimum: 0
@@ -244,8 +253,8 @@ components:
           type: object
           description: >-
             Option keys mapped to descriptions. A null description uses the key
-            itself. Keys must not be blank; ties select the first option in
-            request order.
+            itself. Keys must not be blank; ties follow the model's option
+            order.
           minProperties: 2
           maxProperties: 26
           propertyNames:
@@ -319,8 +328,8 @@ components:
         choice:
           type: string
           description: >-
-            Option key with the highest probability. Ties select the first
-            option in request order.
+            Option key with the highest probability. Ties follow the model's
+            option order.
         probabilities:
           $ref: '#/components/schemas/SystemOneProbabilities'
         confidence:
