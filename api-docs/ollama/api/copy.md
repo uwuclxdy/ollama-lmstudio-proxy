@@ -39,6 +39,24 @@ paths:
       responses:
         '200':
           description: Model successfully copied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                status: success
+        '400':
+          description: Model could not be copied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       x-codeSamples:
         - lang: bash
           label: Copy a model to a new name
@@ -61,5 +79,17 @@ components:
         destination:
           type: string
           description: New model name to create
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Current status message
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message describing what went wrong
 
 ````
