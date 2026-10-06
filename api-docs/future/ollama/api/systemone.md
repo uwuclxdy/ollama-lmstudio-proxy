@@ -252,11 +252,11 @@ components:
         criteria:
           type: object
           description: >-
-            Option keys mapped to descriptions. A null description uses the key
-            itself. Keys must not be blank; ties follow the model's option
-            order.
+            Option keys mapped to descriptions, or null for a bare label. Keys
+            must not be blank; ties follow the model's option order. The option
+            limit depends on the model.
           minProperties: 2
-          maxProperties: 26
+          maxProperties: 255
           propertyNames:
             pattern: \S
           additionalProperties:
@@ -279,8 +279,8 @@ components:
         criteria:
           type: object
           description: >-
-            Optional descriptions for the two outcomes. Omitted entries use No
-            and Yes.
+            Optional descriptions for the two outcomes. Omitted entries use
+            model-specific defaults.
           properties:
             'false':
               type: string
@@ -307,7 +307,8 @@ components:
           type: array
           description: >-
             Descriptions ordered from the lowest score (index 0) to the highest.
-            Defines a scale from 0 to the number of criteria minus 1.
+            Defines a scale from 0 to the number of criteria minus 1. The
+            maximum number of levels depends on the model.
           minItems: 2
           maxItems: 26
           items:
