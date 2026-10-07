@@ -21,7 +21,7 @@
 | `POST /api/web_search` | Generic JSON passthrough to a configurable provider (`--search-url`); returns 501 when unconfigured. Request: `{query, max_results?}`; provider response returned verbatim |
 | `POST /api/web_fetch` | Fetches URL, renders HTML to markdown. Request: `{url}`; response: `{title, content, links}`. SSRF guard on by default (disable with `--allow-private-fetch`). No LM Studio dependency |
 | `DELETE /api/delete` | Removes proxy-managed aliases only |
-| `POST /api/copy` | Duplicates aliases or references LM Studio models; returns an empty `200` body and upserts (overwrites an existing destination) |
+| `POST /api/copy` | Duplicates aliases or references LM Studio models; returns `200 {"status":"success"}` and upserts (overwrites an existing destination) |
 | `HEAD/POST /api/blobs/:digest` | Stores and validates blobs for alias manifests |
 
 ## Error codes
