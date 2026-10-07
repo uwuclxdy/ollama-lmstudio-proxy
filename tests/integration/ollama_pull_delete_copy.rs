@@ -818,10 +818,7 @@ async fn delete_success_returns_empty_body() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn copy_returns_empty_body() {
-    // The Ollama spec declares no content block for the 200 response ("Model
-    // successfully copied"), so the proxy returns 200 with an EMPTY body —
-    // never a JSON envelope leaking proxy-internal fields.
+async fn copy_returns_success_status() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -846,11 +843,8 @@ async fn copy_returns_empty_body() {
         resp.status()
     );
 
-    let bytes = resp.bytes().await.expect("copy response bytes");
-    assert!(
-        bytes.is_empty(),
-        "copy 200 body must be empty per spec; got {bytes:?}"
-    );
+    let body: Value = resp.json().await.expect("copy response JSON");
+    assert_eq!(body, json!({"status": "success"}));
 }
 
 #[tokio::test]
@@ -956,7 +950,7 @@ async fn copy_creates_virtual_alias_in_tags() {
 }
 
 #[tokio::test]
-async fn copy_missing_source_returns_error() {
+async fn copy_unknown_source_returns_404() {
     let p = spawn_proxy().await;
 
     Mock::given(method("GET"))
@@ -973,17 +967,16 @@ async fn copy_missing_source_returns_error() {
         .await
         .expect("POST /api/copy missing source");
 
-    assert!(
-        resp.status().is_client_error() || resp.status().is_server_error(),
-        "expected error for missing source; got {}",
-        resp.status()
+    assert_eq!(resp.status(), 404, "unknown source must return 404");
+    let body: Value = resp.json().await.expect("copy error JSON");
+    assert_eq!(
+        body,
+        json!({"error": "model 'nonexistent' not found in LM Studio. Available models can be listed via /api/tags"})
     );
 }
 
 #[tokio::test]
-async fn copy_missing_fields_returns_400() {
-    // The Ollama spec declares no 400 response, but the proxy returns 400 for
-    // missing required fields as a pragmatic guard against silent failures.
+async fn copy_missing_destination_returns_400() {
     let p = spawn_proxy().await;
 
     let resp = p
@@ -994,12 +987,25 @@ async fn copy_missing_fields_returns_400() {
         .await
         .expect("POST /api/copy no destination");
 
-    assert_eq!(
-        resp.status(),
-        400,
-        "expected 400 when destination missing; got {}",
-        resp.status()
-    );
+    assert_eq!(resp.status(), 400, "missing destination must return 400");
+    let body: Value = resp.json().await.expect("copy error JSON");
+    assert_eq!(body, json!({"error": "missing 'destination' field"}));
+}
+
+#[tokio::test]
+async fn copy_missing_source_returns_400() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"destination": "dest:v1"}))
+        .send()
+        .await
+        .expect("POST /api/copy no source");
+
+    assert_eq!(resp.status(), 400, "missing source must return 400");
+    let body: Value = resp.json().await.expect("copy error JSON");
+    assert_eq!(body, json!({"error": "missing 'source' field"}));
 }
 
 #[tokio::test]

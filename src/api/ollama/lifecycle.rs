@@ -308,9 +308,7 @@ pub async fn handle_ollama_copy(
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("copy", Some(&body), None);
-    // The Ollama spec declares no 400 for this endpoint, but silently accepting
-    // a request with missing required fields would produce a confusing failure
-    // downstream. We keep the 400 as a pragmatic guard.
+    // Missing required fields must fail before alias resolution or persistence.
     let source = body
         .get("source")
         .and_then(|value| value.as_str())
@@ -348,13 +346,9 @@ pub async fn handle_ollama_copy(
     }
 
     log_timed(LOG_PREFIX_SUCCESS, "Ollama copy", start_time);
-    // Ollama returns 200 with an empty body (no content block declared); the
-    // alias is upserted, so copying onto an existing destination overwrites.
-    log_handler_io("copy", None, None);
-    axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .body(axum::body::Body::empty())
-        .map_err(|_| ProxyError::internal_server_error("failed to build copy response"))
+    let response = json!({"status": "success"});
+    log_handler_io("copy", None, Some(&response));
+    Ok(json_response(&response))
 }
 
 pub async fn handle_ollama_delete(
