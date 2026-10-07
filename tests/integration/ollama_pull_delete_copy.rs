@@ -976,6 +976,47 @@ async fn copy_unknown_source_returns_404() {
 }
 
 #[tokio::test]
+async fn copy_empty_source_returns_upstream_error() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "", "destination": "dest:v1"}))
+        .send()
+        .await
+        .expect("POST /api/copy empty source");
+
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("copy error JSON");
+    assert_eq!(body, json!({"error": "source \"\" is invalid"}));
+}
+
+#[tokio::test]
+async fn copy_empty_destination_returns_upstream_error() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model("llama3.2:3b")])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/copy"))
+        .json(&json!({"source": "llama3.2:3b", "destination": ""}))
+        .send()
+        .await
+        .expect("POST /api/copy empty destination");
+
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("copy error JSON");
+    assert_eq!(body, json!({"error": "destination \"\" is invalid"}));
+}
+
+#[tokio::test]
 async fn copy_missing_destination_returns_400() {
     let p = spawn_proxy().await;
 
@@ -989,7 +1030,7 @@ async fn copy_missing_destination_returns_400() {
 
     assert_eq!(resp.status(), 400, "missing destination must return 400");
     let body: Value = resp.json().await.expect("copy error JSON");
-    assert_eq!(body, json!({"error": "missing 'destination' field"}));
+    assert_eq!(body, json!({"error": "destination \"\" is invalid"}));
 }
 
 #[tokio::test]
@@ -1005,7 +1046,7 @@ async fn copy_missing_source_returns_400() {
 
     assert_eq!(resp.status(), 400, "missing source must return 400");
     let body: Value = resp.json().await.expect("copy error JSON");
-    assert_eq!(body, json!({"error": "missing 'source' field"}));
+    assert_eq!(body, json!({"error": "source \"\" is invalid"}));
 }
 
 #[tokio::test]

@@ -308,15 +308,16 @@ pub async fn handle_ollama_copy(
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     log_handler_io("copy", Some(&body), None);
-    // Missing required fields must fail before alias resolution or persistence.
     let source = body
         .get("source")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| ProxyError::bad_request("missing 'source' field"))?;
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| ProxyError::bad_request("source \"\" is invalid"))?;
     let destination = body
         .get("destination")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| ProxyError::bad_request("missing 'destination' field"))?;
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| ProxyError::bad_request("destination \"\" is invalid"))?;
 
     log_request("POST", "/api/copy", Some(destination));
 
