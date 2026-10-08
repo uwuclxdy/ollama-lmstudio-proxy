@@ -1231,7 +1231,7 @@ async fn create_with_empty_requires_response_unchanged() {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/create — from omitted → 400
+// POST /api/create — from omitted or empty → 400
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1258,6 +1258,35 @@ async fn create_without_from_returns_400() {
         "'from' omitted must return 400; got {}",
         resp.status()
     );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, json!({"error": "'from' is required"}));
+}
+
+#[tokio::test]
+async fn create_empty_from_returns_400_required() {
+    // Upstream branches on `from != ""`, so an empty string is the missing-`from`
+    // case and must take the same required-guard 400, not reach the resolver.
+    let p = spawn_proxy().await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/create"))
+        .json(&json!({
+            "model": "empty-from:v1",
+            "from": ""
+        }))
+        .send()
+        .await
+        .expect("POST /api/create with empty from");
+    assert_eq!(
+        resp.status(),
+        400,
+        "create with empty from must 400; got {}",
+        resp.status()
+    );
+
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, json!({"error": "'from' is required"}));
 }
 
 // ---------------------------------------------------------------------------

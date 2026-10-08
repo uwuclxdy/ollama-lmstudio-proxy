@@ -241,6 +241,7 @@ pub async fn handle_ollama_create(
     let source_model_name = body
         .get("from")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ProxyError::bad_request("'from' is required"))?;
 
     let (resolved_id, source_virtual_entry) = resolve_model_target(
