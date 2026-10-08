@@ -1423,3 +1423,189 @@ async fn embed_truncate_and_dimensions_reach_lm_studio_body() {
         "dimensions must reach LM Studio embeddings body: {body}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 36. /api/embed rejects media-bearing object input (Ollama multimodal form)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_media_object_input_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": { "text": "a cat on a windowsill", "image": "iVBORw0KGgo..." }
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed media object");
+
+    assert_eq!(resp.status(), 400, "media embed input must be rejected");
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body.get("error"),
+        Some(&json!(
+            ollama_lmstudio_proxy::constants::ERROR_EMBED_MEDIA_UNSUPPORTED
+        )),
+        "rejection must name the backend limitation"
+    );
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    assert!(
+        !received.iter().any(|r| r.url.path() == "/v1/embeddings"),
+        "rejected input must never reach LM Studio"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 37. /api/embed rejects a batch mixing text and media objects
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_rejects_batch_with_media_entry_with_400() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": ["a plain text query", { "image": "iVBORw0KGgo..." }]
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed batch with media");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "one media entry rejects the whole batch (dropping it would return fewer vectors than inputs)"
+    );
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    assert!(
+        !received.iter().any(|r| r.url.path() == "/v1/embeddings"),
+        "rejected input must never reach LM Studio"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 38. /api/embed lifts a text-only object entry to a plain string
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_lifts_text_only_object_input() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({ "input": "hello" })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_response_single("all-minilm", vec![0.1, 0.2])),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": { "text": "hello" }
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed text-only object");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "a text-only object is legal Ollama input and must embed as its text"
+    );
+    p.mock.verify().await;
+}
+
+// ---------------------------------------------------------------------------
+// 39. /api/embed lifts text-only object entries inside a batch
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_lifts_text_only_objects_inside_batch() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({ "input": ["a", "b", "c"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_response_multi(
+            "all-minilm",
+            vec![vec![0.1], vec![0.2], vec![0.3]],
+        )))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": ["a", { "text": "b" }, "c"]
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed batch with text-only object");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "text-only objects inside a batch must lift to their text"
+    );
+    p.mock.verify().await;
+}
+
+// ---------------------------------------------------------------------------
+// 40. /api/embed lifts an entry whose media key is null (unset optionals)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn embed_lifts_entry_with_null_media_key() {
+    let p = spawn_proxy().await;
+    mount_models(&p, "all-minilm").await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({ "input": "hello" })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(lm_response_single("all-minilm", vec![0.1, 0.2])),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/embed"))
+        .json(&json!({
+            "model": "all-minilm",
+            "input": { "text": "hello", "image": null }
+        }))
+        .send()
+        .await
+        .expect("POST /api/embed null media key");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "a media key serialized as null carries no media and must not reject the entry"
+    );
+    p.mock.verify().await;
+}

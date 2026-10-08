@@ -8,8 +8,9 @@ use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::config::get_runtime_config;
 use crate::constants::{
-    ERROR_EMBED_INPUT_EMPTY, ERROR_EMBED_INPUT_REQUIRED, ERROR_EMBEDDINGS_PROMPT_EMPTY,
-    ERROR_EMBEDDINGS_PROMPT_REQUIRED, LM_STUDIO_NATIVE_EMBEDDINGS,
+    ERROR_EMBED_INPUT_EMPTY, ERROR_EMBED_INPUT_REQUIRED, ERROR_EMBED_MEDIA_UNSUPPORTED,
+    ERROR_EMBED_TEXT_REQUIRED, ERROR_EMBEDDINGS_PROMPT_EMPTY, ERROR_EMBEDDINGS_PROMPT_REQUIRED,
+    LM_STUDIO_NATIVE_EMBEDDINGS,
 };
 use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
@@ -148,10 +149,12 @@ pub async fn handle_ollama_embeddings(
 
 /// Extract the embedding input value from the request body, gated by endpoint mode.
 ///
-/// `/api/embed` (Embed) requires `input` (string or string[]) and rejects the
+/// `/api/embed` (Embed) requires `input` (string, string[], or Ollama's
+/// object-form entries — see [`normalize_embedding_input`]) and rejects the
 /// legacy `prompt` field. `/api/embeddings` (LegacyEmbeddings) requires `prompt`
 /// (string) and rejects the new `input` field. Empty values — empty string,
-/// empty array, or an array of only empty strings — are rejected with 400.
+/// empty array, an array of only empty strings, or an entry whose lifted `text`
+/// is empty — are rejected with 400.
 fn extract_embedding_input(body: &Value, mode: EmbeddingResponseMode) -> Result<Value, ProxyError> {
     match mode {
         EmbeddingResponseMode::Embed => {
@@ -162,6 +165,7 @@ fn extract_embedding_input(body: &Value, mode: EmbeddingResponseMode) -> Result<
                 .get("input")
                 .cloned()
                 .ok_or_else(|| ProxyError::bad_request(ERROR_EMBED_INPUT_REQUIRED))?;
+            let input = normalize_embedding_input(input)?;
             if is_empty_embedding_input(&input) {
                 return Err(ProxyError::bad_request(ERROR_EMBED_INPUT_EMPTY));
             }
@@ -180,6 +184,47 @@ fn extract_embedding_input(body: &Value, mode: EmbeddingResponseMode) -> Result<
             }
             Ok(prompt)
         }
+    }
+}
+
+/// Normalize Ollama's object-form `input` entries (`{text, image, audio}`, plain
+/// strings allowed alongside them) before they reach LM Studio.
+///
+/// A text-only entry lifts to its `text` — the same embedding, in the shape the
+/// backend accepts. A media-bearing entry is rejected rather than dropped:
+/// LM Studio's embeddings endpoint is text-only (its REST reference calls it
+/// "Text Embeddings API", `api-docs/lmstudio/1_developer/2_rest/endpoints.mdx`),
+/// so forwarding media would silently return fewer vectors than the caller sent
+/// inputs, and stripping it here would fake a successful batch.
+fn normalize_embedding_input(input: Value) -> Result<Value, ProxyError> {
+    match input {
+        Value::Object(entry) => normalize_embedding_entry(&entry),
+        Value::Array(items) => {
+            let mut lifted = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::Object(entry) => lifted.push(normalize_embedding_entry(&entry)?),
+                    other => lifted.push(other),
+                }
+            }
+            Ok(Value::Array(lifted))
+        }
+        other => Ok(other),
+    }
+}
+
+fn normalize_embedding_entry(entry: &serde_json::Map<String, Value>) -> Result<Value, ProxyError> {
+    // A media key serialized as `null` carries no media — it is how a typed
+    // client writes an unset optional field — so the entry stays text-only.
+    let carries_media = ["image", "audio", "video"]
+        .iter()
+        .any(|key| entry.get(*key).is_some_and(|value| !value.is_null()));
+    if carries_media {
+        return Err(ProxyError::bad_request(ERROR_EMBED_MEDIA_UNSUPPORTED));
+    }
+    match entry.get("text") {
+        Some(Value::String(text)) => Ok(Value::String(text.clone())),
+        _ => Err(ProxyError::bad_request(ERROR_EMBED_TEXT_REQUIRED)),
     }
 }
 

@@ -39,10 +39,10 @@ pub const DEFAULT_KEEP_ALIVE_MINUTES: i64 = 5;
 pub const ERROR_MISSING_MODEL: &str = "Missing 'model' field";
 pub const ERROR_MISSING_MESSAGES: &str = "Missing 'messages' field";
 pub const ERROR_MISSING_PROMPT: &str = "Missing 'prompt' field";
-pub const ERROR_EMBED_INPUT_REQUIRED: &str =
-    "`input` field required (string or string[]). Use `/api/embeddings` for legacy `prompt`.";
-pub const ERROR_EMBED_INPUT_EMPTY: &str =
-    "`input` must not be empty (empty string, empty array, or array of only empty strings)";
+pub const ERROR_EMBED_INPUT_REQUIRED: &str = "`input` field required (string, string[], or `{text}` object). Use `/api/embeddings` for legacy `prompt`.";
+pub const ERROR_EMBED_INPUT_EMPTY: &str = "`input` must not be empty (empty string, empty array, array of only empty strings, or an entry with empty `text`)";
+pub const ERROR_EMBED_MEDIA_UNSUPPORTED: &str = "media embed input (image/audio/video) is unsupported by the LM Studio backend (embeddings are text-only)";
+pub const ERROR_EMBED_TEXT_REQUIRED: &str = "`input` object entries require a `text` string";
 pub const ERROR_EMBEDDINGS_PROMPT_REQUIRED: &str =
     "`prompt` field required. Use `/api/embed` for batch `input`.";
 pub const ERROR_EMBEDDINGS_PROMPT_EMPTY: &str = "`prompt` must not be empty";
