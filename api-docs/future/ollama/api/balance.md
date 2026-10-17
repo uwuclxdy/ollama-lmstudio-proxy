@@ -143,7 +143,7 @@ paths:
         - bearerAuth: []
       servers:
         - url: https://ollama.com
-          description: Ollama Cloud
+          description: Ollama's cloud
 components:
   schemas:
     BalanceResponse:

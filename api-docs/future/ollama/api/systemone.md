@@ -4,15 +4,12 @@
 
 # System One
 
-> Answer choice, yes/no, and scoring questions with a local System One model. Requires Ollama v0.35.0 or later. See the [decision guide](/capabilities/decision) for examples.
+> Answer choice, yes/no, and scoring questions with a System One model, locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or v0.40.5 or later for cloud models. See the [decision guide](/capabilities/decision) for examples.
 
-
-<Note>
-  Currently available locally in Ollama.
-</Note>
 
 * Returns one JSON response; streaming, video, tools, and generation controls are not supported.
-* Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+* Local requests' text and schema, excluding images, must fit within 64 KiB, and the whole request within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+* Cloud models need a paid plan or purchased [usage credits](https://ollama.com/pricing). Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Requests must fit within 13 MiB, and input must fit the model's 65,536-token context window.
 
 
 ## OpenAPI
@@ -36,8 +33,9 @@ paths:
     post:
       summary: Answer typed questions
       description: >
-        Answer choice, yes/no, and scoring questions with a local System One
-        model. Requires Ollama v0.35.0 or later. See the [decision
+        Answer choice, yes/no, and scoring questions with a System One model,
+        locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or
+        v0.40.5 or later for cloud models. See the [decision
         guide](/capabilities/decision) for examples.
       operationId: systemone
       requestBody:
@@ -84,31 +82,58 @@ paths:
         '400':
           description: >-
             Invalid request, unsupported model or runner, or a rendered prompt
-            that exceeds the loaded context. Cloud models are rejected.
+            that exceeds the loaded context or a cloud model's token limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            A cloud model was requested without signing in, or with an invalid
+            API key. Through a local server, the response includes a
+            `signin_url`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: >-
+            The cloud model isn't included in the Free plan. Add usage credits
+            or upgrade. Also returned when a payment fails.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Local model not found. Download the model before making a request.
+          description: Model not found. Download a local model before making a request.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '413':
-          description: Request body exceeds 64 KiB without images or 32 MiB with images.
+          description: >-
+            Local text and schema exceed 64 KiB or the request exceeds 32 MiB,
+            or a cloud request exceeds 13 MiB or the model's context window.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: request body must not exceed 64 KiB without images
+                error: text and schema must not exceed 64 KiB
         '500':
           description: Model loading, rendering, or scoring failed.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {}
+        - bearerAuth: []
+      servers:
+        - url: http://localhost:11434
+          description: Ollama
+        - url: https://ollama.com
+          description: Ollama's cloud
       x-codeSamples:
         - lang: bash
           label: Choose a label
@@ -143,17 +168,16 @@ components:
           type: string
           pattern: \S
           description: >-
-            Local model trained for System One, such as nimble. Requires
-            compatible GGUF weights and a scoring-capable runner; cloud and
-            MLX/Safetensors models are not supported.
+            Model trained for System One, such as nimble, or clef:cloud for
+            Ollama's cloud.
         state:
           $ref: '#/components/schemas/SystemOneContent'
         images:
           type: array
           description: >-
             Base64-encoded images shared by all questions, in request order.
-            Requires Clef or Clef Flash with vision weights. URLs and data URLs
-            are not supported.
+            Requires a model with vision, such as Clef. URLs and data URLs are
+            not supported.
           items:
             type: string
             format: byte
@@ -161,7 +185,8 @@ components:
           type: object
           description: >-
             Named questions about the shared state. Answers are not passed to
-            later questions.
+            later questions. Cloud models accept names of up to 100 ASCII
+            letters, digits, `_`, `.`, or `-`.
           minProperties: 1
           maxProperties: 64
           propertyNames:
@@ -284,10 +309,8 @@ components:
           properties:
             'false':
               type: string
-              default: 'No'
             'true':
               type: string
-              default: 'Yes'
           additionalProperties: false
     SystemOneScoreQuestion:
       title: Score
@@ -307,10 +330,9 @@ components:
           type: array
           description: >-
             Descriptions ordered from the lowest score (index 0) to the highest.
-            Defines a scale from 0 to the number of criteria minus 1. The
-            maximum number of levels depends on the model.
+            Defines a scale from 0 to the number of criteria minus 1.
           minItems: 2
-          maxItems: 26
+          maxItems: 10
           items:
             type: string
     SystemOneChoiceAnswer:
@@ -370,7 +392,7 @@ components:
         score:
           type: number
           minimum: 0
-          maximum: 25
+          maximum: 9
           description: >-
             Probability-weighted average of the zero-based criterion indices,
             from 0 to the number of criteria minus 1. Not rounded to a level or
@@ -405,5 +427,10 @@ components:
         is entropy and N is the candidate count. Zero means uniform
         probabilities; values near 1 mean one candidate dominates. Not
         calibrated correctness.
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
 
 ````
