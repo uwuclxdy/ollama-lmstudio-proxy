@@ -47,22 +47,13 @@ before forwarding. A few compatibility shims apply on top:
 - Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
   protocol: `event: error` for Anthropic, `event: response.failed` for
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
-- `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers
-  `501`: LM Studio has no decision-capable model type or scoring runner.
+- `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers `501`: LM Studio's Jev-compatible `/v1/systemone` is documented only in the future mirror, so the proxy keeps an explicit 501 instead of forwarding to LM Studio's misleading `200 {"error":"Unexpected endpoint..."}` envelope.
 
 Anthropic clients such as Claude Code work against `/v1/messages` with no extra setup: point `ANTHROPIC_BASE_URL` at the proxy.
 
 ## Virtual model aliases
 
-- `/api/create` and `/api/copy` manage aliases stored under
-  `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback:
-  `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Alias metadata
-  (`system`, `template`, `parameters`, `license`, `adapters`, `messages`,
-  `renderer`, `parser`, `requires`, `capabilities`) is recorded on the alias.
-  `system` and `parameters` reach inference; the rest are stored but stay inert
-  on the LM Studio backend, with `capabilities` echoed back on `/api/show`
-  (merged after the inherited set). Storing an inert field adds a `warning`
-  to the create response (and a warning status line on a streamed create).
+- `/api/create` and `/api/copy` manage aliases stored under `$XDG_CACHE_HOME/ollama-lmstudio-proxy/virtual_models.json` (fallback: `$HOME/.cache/ollama-lmstudio-proxy/`, then system temp). Alias metadata (`system`, `template`, `parameters`, `license`, `adapters`, `messages`, `renderer`, `parser`, `requires`, `capabilities`) is recorded on the alias. `system` and `parameters` reach inference; the rest are stored and stay inert on the LM Studio backend. `/api/show` echoes `template`, `renderer` and `parser` when an alias supplies them, and merges `capabilities` after the inherited set. Storing an inert field adds a `warning` to the create response (and a warning status line on a streamed create).
 - `/api/delete` removes only proxy-managed aliases. `/api/show` returns LM Studio
   metadata plus alias info when present.
 - A `virtual_models.json` that fails to parse is renamed aside to
