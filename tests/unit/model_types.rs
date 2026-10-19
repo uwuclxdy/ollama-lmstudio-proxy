@@ -17,13 +17,15 @@ fn native(key: &str) -> NativeModelData {
             name: Some("Q4_K_M".to_string()),
             bits_per_weight: Some(4.0),
         }),
-        max_context_length: 4096,
+        max_context_length: Some(4096),
         loaded_instances: vec![],
         capabilities: None,
         size_bytes: None,
         params_string: None,
         display_name: None,
         description: None,
+        decision_type: None,
+        has_vision_adapter: None,
         variants: Vec::new(),
         selected_variant: None,
     }
@@ -89,7 +91,7 @@ fn make_native_with_caps(
             name: Some("Q4_K_M".to_string()),
             bits_per_weight: Some(4.0),
         }),
-        max_context_length: 4096,
+        max_context_length: Some(4096),
         loaded_instances: vec![],
         capabilities: Some(NativeCapabilities {
             vision: Some(vision),
@@ -100,6 +102,8 @@ fn make_native_with_caps(
         params_string: None,
         display_name: None,
         description: None,
+        decision_type: None,
+        has_vision_adapter: None,
         variants: Vec::new(),
         selected_variant: None,
     }
@@ -458,7 +462,7 @@ fn from_native_capabilities_default_false_when_absent() {
 #[test]
 fn from_native_context_length_prefers_loaded_instance_config() {
     let mut n = native("foo");
-    n.max_context_length = 4096;
+    n.max_context_length = Some(4096);
     n.loaded_instances.push(loaded_instance(Some(8192)));
     let info = ModelInfo::from_native_data(&n);
     assert_eq!(info.context_length, 8192);
@@ -468,7 +472,7 @@ fn from_native_context_length_prefers_loaded_instance_config() {
 #[test]
 fn from_native_context_length_falls_back_to_max_when_not_loaded() {
     let mut n = native("foo");
-    n.max_context_length = 4096;
+    n.max_context_length = Some(4096);
     let info = ModelInfo::from_native_data(&n);
     assert_eq!(info.context_length, 4096);
     assert_eq!(info.max_context_length, 4096);
@@ -477,7 +481,7 @@ fn from_native_context_length_falls_back_to_max_when_not_loaded() {
 #[test]
 fn from_native_context_length_falls_back_to_max_when_instance_has_no_config() {
     let mut n = native("foo");
-    n.max_context_length = 4096;
+    n.max_context_length = Some(4096);
     n.loaded_instances.push(NativeLoadedInstance {
         id: "x".into(),
         config: None,
@@ -485,6 +489,98 @@ fn from_native_context_length_falls_back_to_max_when_instance_has_no_config() {
     let info = ModelInfo::from_native_data(&n);
     assert_eq!(info.context_length, 4096);
     assert_eq!(info.max_context_length, 4096);
+}
+
+#[test]
+fn native_models_accept_null_max_context_length_for_decision_model() {
+    // LM Studio's list schema (2026-10-19 refresh) documents `"decision"` as a
+    // model type and `max_context_length` as nullable for decision models. A
+    // null must not fail the whole list decode.
+    let parsed: NativeModelsResponse = serde_json::from_value(json!({
+        "models": [{
+            "key": "nimble",
+            "type": "decision",
+            "publisher": "ollama",
+            "architecture": null,
+            "format": "gguf",
+            "quantization": null,
+            "max_context_length": null,
+            "loaded_instances": [],
+            "decision_type": "systemone",
+            "has_vision_adapter": true
+        }]
+    }))
+    .expect("decision model with null max_context_length must decode");
+
+    assert_eq!(parsed.models.len(), 1);
+    let info = ModelInfo::from_native_data(&parsed.models[0]);
+    assert_eq!(info.max_context_length, 0);
+    assert_eq!(info.context_length, 0);
+}
+
+#[test]
+fn decision_model_advertises_decision_not_chat() {
+    // Decision models answer System One questions; they are not chat models,
+    // so the generic fallback must not label them completion/chat.
+    let n = make_native_no_caps("nimble", "decision");
+    let info = ModelInfo::from_native_data(&n);
+    assert_eq!(caps(&info), vec!["decision"]);
+}
+
+#[test]
+fn decision_model_without_vision_adapter_has_no_vision_capability() {
+    // list.md marks has_vision_adapter optional: absent and `false` both mean
+    // no adapter, so only an explicit `true` may add the vision capability.
+    let mut n = make_native_no_caps("nimble", "decision");
+    n.has_vision_adapter = Some(false);
+    let info = ModelInfo::from_native_data(&n);
+    assert_eq!(caps(&info), vec!["decision"]);
+}
+
+#[test]
+fn decision_model_null_max_uses_loaded_instance_context() {
+    // load.md documents loading decision models; a loaded instance's config
+    // supplies the runtime context while the model max stays unknown (0).
+    let mut n = make_native_no_caps("nimble", "decision");
+    n.max_context_length = None;
+    n.loaded_instances.push(loaded_instance(Some(4096)));
+    let info = ModelInfo::from_native_data(&n);
+    assert_eq!(info.max_context_length, 0);
+    assert_eq!(info.context_length, 4096);
+    let show = info.to_show_response(None, false);
+    assert_eq!(show["details"]["context_length"], json!(0));
+}
+
+#[test]
+fn decision_model_fields_appear_only_in_verbose_show() {
+    let mut n = make_native_no_caps("nimble", "decision");
+    n.decision_type = Some("systemone".to_string());
+    n.has_vision_adapter = Some(true);
+    let info = ModelInfo::from_native_data(&n);
+
+    let concise = info.to_show_response(None, false);
+    assert!(
+        concise["model_info"]
+            .get("lmstudio.decision_type")
+            .is_none(),
+        "concise show must not leak backend decision fields; got {concise}"
+    );
+    assert!(
+        concise["model_info"]
+            .get("lmstudio.has_vision_adapter")
+            .is_none(),
+        "concise show must not leak backend decision fields; got {concise}"
+    );
+
+    let verbose = info.to_show_response(None, true);
+    assert_eq!(
+        verbose["model_info"]["lmstudio.decision_type"],
+        json!("systemone")
+    );
+    assert_eq!(
+        verbose["model_info"]["lmstudio.has_vision_adapter"],
+        json!(true)
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1094,6 +1190,45 @@ fn show_response_emits_alias_parameters_and_template_when_provided() {
     );
 }
 
+#[test]
+fn show_response_emits_alias_renderer_and_parser_when_provided() {
+    // ShowResponse gained renderer/parser/template_source in the 2026-10-19
+    // refresh. The proxy stores renderer/parser on aliases, so it echoes the
+    // configured values like `template`; `template_source` has no LM Studio
+    // equivalent and is omitted rather than fabricated.
+    use crate::storage::virtual_models::VirtualModelMetadata;
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let meta = VirtualModelMetadata {
+        renderer: Some("qwen3".to_string()),
+        parser: Some("qwen3".to_string()),
+        ..Default::default()
+    };
+    let v = info.to_show_response(Some(&meta), false);
+    assert_eq!(
+        v.get("renderer").and_then(|r| r.as_str()),
+        Some("qwen3"),
+        "alias renderer must surface verbatim; got {v}"
+    );
+    assert_eq!(
+        v.get("parser").and_then(|p| p.as_str()),
+        Some("qwen3"),
+        "alias parser must surface verbatim; got {v}"
+    );
+    assert!(
+        v.get("template_source").is_none(),
+        "LM Studio exposes no template source to report; got {v}"
+    );
+}
+
+#[test]
+fn show_response_omits_renderer_and_parser_for_native_model() {
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    let v = info.to_show_response(None, false);
+    assert!(v.get("renderer").is_none(), "got {v}");
+    assert!(v.get("parser").is_none(), "got {v}");
+    assert!(v.get("template_source").is_none(), "got {v}");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // T14 — modified_at must be omitted when LM Studio surfaces no real mtime.
 // ════════════════════════════════════════════════════════════════════════════
@@ -1116,12 +1251,12 @@ fn show_response_details_context_length_is_stable_across_load_states() {
     // Same max_context_length, different loaded state — details.context_length
     // must equal max_context_length regardless.
     let mut unloaded = native("publisher/model");
-    unloaded.max_context_length = 262_144;
+    unloaded.max_context_length = Some(262_144);
     let info_unloaded = ModelInfo::from_native_data(&unloaded);
     let v_unloaded = info_unloaded.to_show_response(None, false);
 
     let mut loaded = native("publisher/model");
-    loaded.max_context_length = 262_144;
+    loaded.max_context_length = Some(262_144);
     loaded.loaded_instances.push(loaded_instance(Some(50_000)));
     let info_loaded = ModelInfo::from_native_data(&loaded);
     let v_loaded = info_loaded.to_show_response(None, false);

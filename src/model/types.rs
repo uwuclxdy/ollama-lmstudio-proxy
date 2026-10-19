@@ -20,8 +20,16 @@ pub struct NativeModelData {
     pub architecture: Option<String>,
     pub format: Option<String>,
     pub quantization: Option<NativeQuantization>,
-    pub max_context_length: u64,
+    pub max_context_length: Option<u64>,
     pub loaded_instances: Vec<NativeLoadedInstance>,
+    /// Decision model type (e.g. `systemone`). Only present for decision models
+    /// when LM Studio reports one.
+    #[serde(default)]
+    pub decision_type: Option<String>,
+    /// Whether a decision model has a vision adapter. Only present for decision
+    /// models.
+    #[serde(default)]
+    pub has_vision_adapter: Option<bool>,
     #[serde(default)]
     pub capabilities: Option<NativeCapabilities>,
     #[serde(default)]
@@ -131,6 +139,8 @@ pub struct ModelInfo {
     pub params_string: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
+    pub decision_type: Option<String>,
+    pub has_vision_adapter: Option<bool>,
     /// Tuning values read from the first loaded instance's `config` (only Some
     /// when the model is loaded and LM Studio reported the field).
     pub loaded_flash_attention: Option<bool>,
@@ -166,6 +176,10 @@ impl ModelInfo {
         let is_loaded = !native_data.loaded_instances.is_empty();
         let state = if is_loaded { "loaded" } else { "not-loaded" };
 
+        // Nullable for decision models (api-docs/lmstudio/1_developer/2_rest/
+        // list.md): absent/unknown becomes 0, the proxy's "no window" value.
+        let max_context_length = native_data.max_context_length.unwrap_or(0);
+
         let first_config = native_data
             .loaded_instances
             .first()
@@ -173,7 +187,7 @@ impl ModelInfo {
 
         let context_length = first_config
             .and_then(|cfg| cfg.context_length)
-            .unwrap_or(native_data.max_context_length);
+            .unwrap_or(max_context_length);
 
         let loaded_flash_attention = first_config.and_then(|cfg| cfg.flash_attention);
         let loaded_eval_batch_size = first_config.and_then(|cfg| cfg.eval_batch_size);
@@ -228,7 +242,7 @@ impl ModelInfo {
                 .unwrap_or_else(|| "unknown".to_string()),
             quantization,
             state: state.to_string(),
-            max_context_length: native_data.max_context_length,
+            max_context_length,
             context_length,
             is_loaded,
             supports_vision,
@@ -240,6 +254,8 @@ impl ModelInfo {
             params_string: native_data.params_string.clone(),
             display_name: native_data.display_name.clone(),
             description: native_data.description.clone(),
+            decision_type: native_data.decision_type.clone(),
+            has_vision_adapter: native_data.has_vision_adapter,
             loaded_flash_attention,
             loaded_eval_batch_size,
             loaded_parallel,
@@ -307,6 +323,12 @@ impl ModelInfo {
             }
             "embeddings" | "embedding" => {
                 caps.push("embedding");
+            }
+            "decision" => {
+                caps.push("decision");
+                if self.supports_vision || self.has_vision_adapter == Some(true) {
+                    caps.push("vision");
+                }
             }
             _ => {
                 caps.push("completion");
@@ -580,6 +602,12 @@ impl ModelInfo {
                 json!(self.supports_reasoning),
             );
             map.insert("lmstudio.is_loaded".into(), json!(self.is_loaded));
+            if let Some(ref dt) = self.decision_type {
+                map.insert("lmstudio.decision_type".into(), json!(dt));
+            }
+            if let Some(adapter) = self.has_vision_adapter {
+                map.insert("lmstudio.has_vision_adapter".into(), json!(adapter));
+            }
             // Real per-instance load tuning (from /api/v1/models loaded_instances
             // config) — surfaced only while loaded and only when LM Studio
             // actually reported the field, never fabricated for unloaded models.
@@ -686,6 +714,16 @@ impl ModelInfo {
                 if let Some(template) = &meta.template {
                     obj.insert("template".to_string(), json!(template));
                 }
+                if let Some(renderer) = &meta.renderer {
+                    obj.insert("renderer".to_string(), json!(renderer));
+                }
+                if let Some(parser) = &meta.parser {
+                    obj.insert("parser".to_string(), json!(parser));
+                }
+                // `template_source` names where the chat prompt actually comes
+                // from (gguf_chat_template / renderer_parser / ...). LM Studio
+                // exposes no equivalent provenance, so the key is omitted
+                // rather than fabricated.
             }
         }
 

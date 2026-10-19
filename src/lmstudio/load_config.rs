@@ -141,8 +141,9 @@ pub async fn ensure_context_length(
         .unwrap_or_default();
 
     // Clamp to the model's trained maximum: loading above it fails, and since we
-    // unload first that would leave the model with NO instance at all.
-    if let Some(max) = model.map(|m| m.max_context_length).filter(|&m| m > 0)
+    // unload first that would leave the model with NO instance at all. Decision
+    // models may report null max_context_length — no clamp to apply then.
+    if let Some(max) = model.and_then(|m| m.max_context_length).filter(|&m| m > 0)
         && requested > max
     {
         log::warn!(

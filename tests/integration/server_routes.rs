@@ -361,7 +361,7 @@ async fn route_systemone_is_present_and_returns_501() {
     assert_eq!(
         resp.status().as_u16(),
         501,
-        "/v1/systemone must return 501: LM Studio has no System One decision models"
+        "/v1/systemone must return 501: the proxy does not forward System One decision requests to LM Studio"
     );
     let body: Value = resp.json().await.expect("json body");
     assert!(

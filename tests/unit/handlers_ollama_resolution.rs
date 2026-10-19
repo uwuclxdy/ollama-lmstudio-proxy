@@ -271,6 +271,8 @@ fn model_info(id: &str, supports_reasoning: bool) -> ModelInfo {
         params_string: None,
         display_name: None,
         description: None,
+        decision_type: None,
+        has_vision_adapter: None,
         loaded_flash_attention: None,
         loaded_eval_batch_size: None,
         loaded_parallel: None,

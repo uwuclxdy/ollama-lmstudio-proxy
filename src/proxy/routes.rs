@@ -327,12 +327,15 @@ async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyErr
     ))
 }
 
-// Upstream v0.35 endpoint (System One decision models). LM Studio exposes no
-// decision-capable model type or scoring surface, so an explicit 501 beats the
-// passthrough's misleading `200 {"error":"Unexpected endpoint..."}`.
+// Upstream v0.35 endpoint (System One decision models). LM Studio's model
+// list now includes decision models (api-docs/lmstudio/1_developer/2_rest/
+// list.md), but the proxy does not yet map them onto the mirror spec
+// (api-docs/ollama/openapi.yaml §/v1/systemone): forwarding is deferred so
+// the passthrough's misleading `200 {"error":"Unexpected endpoint..."}`
+// envelope never masquerades as an answer — an explicit 501 beats it.
 async fn systemone_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
     Err(ProxyError::not_implemented(
-        "systemone is not supported: LM Studio has no System One decision models",
+        "systemone is not supported: the proxy does not forward System One decision requests to LM Studio",
     ))
 }
 

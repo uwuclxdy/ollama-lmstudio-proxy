@@ -1337,3 +1337,64 @@ async fn version_matches_expected_constant() {
         "version mismatch; expected '{OLLAMA_SERVER_VERSION}', got '{version}'"
     );
 }
+
+#[tokio::test]
+async fn decision_model_with_null_max_context_length_is_listed_and_shown() {
+    // LM Studio's 2026-10-19 list schema adds `type: "decision"` and makes
+    // `max_context_length` nullable for decision models. The proxy must decode
+    // the catalog, report the unknown context as 0, and map the model type to
+    // Ollama's `decision` capability instead of chat/completion.
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![json!({
+                "key": "nimble",
+                "type": "decision",
+                "publisher": "ollama",
+                "architecture": null,
+                "format": "gguf",
+                "quantization": null,
+                "max_context_length": null,
+                "loaded_instances": [],
+                "decision_type": "systemone",
+                "has_vision_adapter": true
+            })])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/api/tags"))
+        .send()
+        .await
+        .expect("GET /api/tags");
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    let models = body["models"].as_array().expect("models array");
+    assert_eq!(models.len(), 1, "decision model must be listed; got {body}");
+    assert_eq!(models[0]["max_context_length"], json!(0));
+    assert_eq!(models[0]["context_length"], json!(0));
+
+    let resp = p
+        .client
+        .post(p.url("/api/show"))
+        .json(&json!({"model": "nimble", "verbose": true}))
+        .send()
+        .await
+        .expect("POST /api/show");
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["capabilities"], json!(["decision", "vision"]));
+    assert_eq!(body["details"]["context_length"], json!(0));
+    assert_eq!(
+        body["model_info"]["lmstudio.decision_type"],
+        json!("systemone")
+    );
+    assert_eq!(
+        body["model_info"]["lmstudio.has_vision_adapter"],
+        json!(true)
+    );
+}
