@@ -5,7 +5,7 @@
 # Structured Outputs
 
 <Note>
-  Ollama's Cloud currently does not support structured outputs.
+  Ollama's cloud currently does not support structured outputs.
 </Note>
 
 Structured outputs let you enforce a JSON schema on model responses so you can reliably extract structured data, describe images, or keep every reply consistent.
