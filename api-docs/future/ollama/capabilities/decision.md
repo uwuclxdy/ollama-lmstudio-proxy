@@ -12,7 +12,7 @@ See the [full list of decision models](https://ollama.com/search?c=decision).
 
 ## Setup
 
-Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
+Start [Ollama](/quickstart.md) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
 
 ```shell setup.sh theme={"system"}
 ollama pull nimble
@@ -162,7 +162,7 @@ Example response:
 
 ## Use a cloud model
 
-[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud) with a paid plan or purchased [usage credits](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
+[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud.md) with a paid plan or purchased [usage credits](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
 
 ```shell cloud.sh theme={"system"}
 curl http://localhost:11434/v1/systemone \
@@ -249,4 +249,4 @@ curl http://localhost:11434/v1/systemone \
 
 This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
 
-See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.
+See the [API reference](/api/systemone.md) for request fields, limits, errors, and token usage.

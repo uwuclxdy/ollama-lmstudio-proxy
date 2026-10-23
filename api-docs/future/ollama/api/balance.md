@@ -6,32 +6,28 @@
 
 > Check your remaining usage credits.
 
-<RequestExample>
-  ```shell Request theme={"system"}
-  curl https://ollama.com/api/balance \
-    -H "Authorization: Bearer $OLLAMA_API_KEY"
-  ```
-</RequestExample>
+```shell Request theme={"system"}
+curl https://ollama.com/api/balance \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
 
-<ResponseExample>
-  ```json Response theme={"system"}
-  {
-    "included": {
-      "balance_usd": 72.5,
-      "allowance_usd": 100,
-      "period": {
-        "from": "2026-09-15T09:30:00Z",
-        "until": "2026-10-15T09:30:00Z"
-      }
-    },
-    "purchased": {
-      "balance_usd": 25
+```json Response theme={"system"}
+{
+  "included": {
+    "balance_usd": 72.5,
+    "allowance_usd": 100,
+    "period": {
+      "from": "2026-09-15T09:30:00Z",
+      "until": "2026-10-15T09:30:00Z"
     }
+  },
+  "purchased": {
+    "balance_usd": 25
   }
-  ```
-</ResponseExample>
+}
+```
 
-This endpoint takes no query parameters. For usage history, see [Cloud usage](/api/cloud-usage).
+This endpoint takes no query parameters. For usage history, see [Cloud usage](/api/cloud-usage.md).
 
 ## Balances
 
@@ -39,29 +35,29 @@ The included period follows your plan's monthly reset schedule, including for an
 
 The purchased balance includes only unexpired credits.
 
-<Accordion title="Legacy plans">
-  Plans with session and weekly limits return `session` and `weekly` in `included`:
-
-  ```json theme={"system"}
-  {
-    "included": {
-      "session": {
-        "remaining_percent": 75,
-        "resets_at": "2026-10-01T07:00:00Z"
-      },
-      "weekly": {
-        "remaining_percent": 40,
-        "resets_at": "2026-10-05T00:00:00Z"
-      }
-    },
-    "purchased": {
-      "balance_usd": 25
-    }
-  }
-  ```
-
-  `remaining_percent` ranges from `0` to `100`; `75` means 75% remains. `resets_at` is the next reset time in UTC.
-</Accordion>
+> **Legacy plans**
+>
+> Plans with session and weekly limits return `session` and `weekly` in `included`:
+>
+> ```json theme={"system"}
+> {
+>   "included": {
+>     "session": {
+>       "remaining_percent": 75,
+>       "resets_at": "2026-10-01T07:00:00Z"
+>     },
+>     "weekly": {
+>       "remaining_percent": 40,
+>       "resets_at": "2026-10-05T00:00:00Z"
+>     }
+>   },
+>   "purchased": {
+>     "balance_usd": 25
+>   }
+> }
+> ```
+>
+> `remaining_percent` ranges from `0` to `100`; `75` means 75% remains. `resets_at` is the next reset time in UTC.
 
 ## Rate limits
 

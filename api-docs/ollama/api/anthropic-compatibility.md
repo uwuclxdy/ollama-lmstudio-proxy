@@ -39,7 +39,7 @@ Compatible models support messages, streaming, and function calling. Tool-choice
 
 ## Local server usage
 
-These examples connect to your local Ollama server. Use `ollama` as the placeholder API key. To use cloud models through this server, [sign in to Ollama](/api/authentication#signing-in).
+These examples connect to your local Ollama server. Use `ollama` as the placeholder API key. To use cloud models through this server, [sign in to Ollama](/api/authentication.md#signing-in).
 
 ### Environment variables
 
@@ -52,218 +52,212 @@ export ANTHROPIC_BASE_URL=http://localhost:11434
 
 ### Simple `/v1/messages` example
 
-<CodeGroup dropdown>
-  ```python basic.py theme={"system"}
-  import anthropic
+```python basic.py theme={"system"}
+import anthropic
 
-  client = anthropic.Anthropic(
-      base_url='http://localhost:11434',
-      api_key='ollama',  # required but ignored
-  )
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',  # required but ignored
+)
 
-  message = client.messages.create(
-      model='qwen3-coder',
-      max_tokens=1024,
-      messages=[
-          {'role': 'user', 'content': 'Hello, how are you?'}
-      ]
-  )
-  print(message.content[0].text)
-  ```
+message = client.messages.create(
+    model='qwen3-coder',
+    max_tokens=1024,
+    messages=[
+        {'role': 'user', 'content': 'Hello, how are you?'}
+    ]
+)
+print(message.content[0].text)
+```
 
-  ```javascript basic.js theme={"system"}
-  import Anthropic from "@anthropic-ai/sdk";
+```javascript basic.js theme={"system"}
+import Anthropic from "@anthropic-ai/sdk";
 
-  const anthropic = new Anthropic({
-    baseURL: "http://localhost:11434",
-    apiKey: "ollama", // required but ignored
-  });
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama", // required but ignored
+});
 
-  const message = await anthropic.messages.create({
-    model: "qwen3-coder",
-    max_tokens: 1024,
-    messages: [{ role: "user", content: "Hello, how are you?" }],
-  });
+const message = await anthropic.messages.create({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Hello, how are you?" }],
+});
 
-  console.log(message.content[0].text);
-  ```
+console.log(message.content[0].text);
+```
 
-  ```shell basic.sh theme={"system"}
-  curl -X POST http://localhost:11434/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: ollama" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "qwen3-coder",
-    "max_tokens": 1024,
-    "messages": [{ "role": "user", "content": "Hello, how are you?" }]
-  }'
-  ```
-</CodeGroup>
+```shell basic.sh theme={"system"}
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-H "x-api-key: ollama" \
+-H "anthropic-version: 2023-06-01" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "messages": [{ "role": "user", "content": "Hello, how are you?" }]
+}'
+```
 
 ### Streaming example
 
-<CodeGroup dropdown>
-  ```python streaming.py theme={"system"}
-  import anthropic
+```python streaming.py theme={"system"}
+import anthropic
 
-  client = anthropic.Anthropic(
-      base_url='http://localhost:11434',
-      api_key='ollama',
-  )
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',
+)
 
-  with client.messages.stream(
-      model='qwen3-coder',
-      max_tokens=1024,
-      messages=[{'role': 'user', 'content': 'Count from 1 to 10'}]
-  ) as stream:
-      for text in stream.text_stream:
-          print(text, end='', flush=True)
-  ```
+with client.messages.stream(
+    model='qwen3-coder',
+    max_tokens=1024,
+    messages=[{'role': 'user', 'content': 'Count from 1 to 10'}]
+) as stream:
+    for text in stream.text_stream:
+        print(text, end='', flush=True)
+```
 
-  ```javascript streaming.js theme={"system"}
-  import Anthropic from "@anthropic-ai/sdk";
+```javascript streaming.js theme={"system"}
+import Anthropic from "@anthropic-ai/sdk";
 
-  const anthropic = new Anthropic({
-    baseURL: "http://localhost:11434",
-    apiKey: "ollama",
-  });
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama",
+});
 
-  const stream = await anthropic.messages.stream({
-    model: "qwen3-coder",
-    max_tokens: 1024,
-    messages: [{ role: "user", content: "Count from 1 to 10" }],
-  });
+const stream = await anthropic.messages.stream({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Count from 1 to 10" }],
+});
 
-  for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      process.stdout.write(event.delta.text);
-    }
+for await (const event of stream) {
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "text_delta"
+  ) {
+    process.stdout.write(event.delta.text);
   }
-  ```
+}
+```
 
-  ```shell streaming.sh theme={"system"}
-  curl -X POST http://localhost:11434/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3-coder",
-    "max_tokens": 1024,
-    "stream": true,
-    "messages": [{ "role": "user", "content": "Count from 1 to 10" }]
-  }'
-  ```
-</CodeGroup>
+```shell streaming.sh theme={"system"}
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "stream": true,
+  "messages": [{ "role": "user", "content": "Count from 1 to 10" }]
+}'
+```
 
 ### Tool calling example
 
-<CodeGroup dropdown>
-  ```python tools.py theme={"system"}
-  import anthropic
+```python tools.py theme={"system"}
+import anthropic
 
-  client = anthropic.Anthropic(
-      base_url='http://localhost:11434',
-      api_key='ollama',
-  )
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',
+)
 
-  message = client.messages.create(
-      model='qwen3-coder',
-      max_tokens=1024,
-      tools=[
-          {
-              'name': 'get_weather',
-              'description': 'Get the current weather in a location',
-              'input_schema': {
-                  'type': 'object',
-                  'properties': {
-                      'location': {
-                          'type': 'string',
-                          'description': 'The city and state, e.g. San Francisco, CA'
-                      }
-                  },
-                  'required': ['location']
-              }
-          }
-      ],
-      messages=[{'role': 'user', 'content': "What's the weather in San Francisco?"}]
-  )
-
-  for block in message.content:
-      if block.type == 'tool_use':
-          print(f'Tool: {block.name}')
-          print(f'Input: {block.input}')
-  ```
-
-  ```javascript tools.js theme={"system"}
-  import Anthropic from "@anthropic-ai/sdk";
-
-  const anthropic = new Anthropic({
-    baseURL: "http://localhost:11434",
-    apiKey: "ollama",
-  });
-
-  const message = await anthropic.messages.create({
-    model: "qwen3-coder",
-    max_tokens: 1024,
-    tools: [
-      {
-        name: "get_weather",
-        description: "Get the current weather in a location",
-        input_schema: {
-          type: "object",
-          properties: {
-            location: {
-              type: "string",
-              description: "The city and state, e.g. San Francisco, CA",
-            },
-          },
-          required: ["location"],
-        },
-      },
-    ],
-    messages: [{ role: "user", content: "What's the weather in San Francisco?" }],
-  });
-
-  for (const block of message.content) {
-    if (block.type === "tool_use") {
-      console.log("Tool:", block.name);
-      console.log("Input:", block.input);
-    }
-  }
-  ```
-
-  ```shell tools.sh theme={"system"}
-  curl -X POST http://localhost:11434/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3-coder",
-    "max_tokens": 1024,
-    "tools": [
-      {
-        "name": "get_weather",
-        "description": "Get the current weather in a location",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "location": {
-              "type": "string",
-              "description": "The city and state"
+message = client.messages.create(
+    model='qwen3-coder',
+    max_tokens=1024,
+    tools=[
+        {
+            'name': 'get_weather',
+            'description': 'Get the current weather in a location',
+            'input_schema': {
+                'type': 'object',
+                'properties': {
+                    'location': {
+                        'type': 'string',
+                        'description': 'The city and state, e.g. San Francisco, CA'
+                    }
+                },
+                'required': ['location']
             }
-          },
-          "required": ["location"]
         }
-      }
     ],
-    "messages": [{ "role": "user", "content": "What is the weather in San Francisco?" }]
-  }'
-  ```
-</CodeGroup>
+    messages=[{'role': 'user', 'content': "What's the weather in San Francisco?"}]
+)
+
+for block in message.content:
+    if block.type == 'tool_use':
+        print(f'Tool: {block.name}')
+        print(f'Input: {block.input}')
+```
+
+```javascript tools.js theme={"system"}
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama",
+});
+
+const message = await anthropic.messages.create({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get the current weather in a location",
+      input_schema: {
+        type: "object",
+        properties: {
+          location: {
+            type: "string",
+            description: "The city and state, e.g. San Francisco, CA",
+          },
+        },
+        required: ["location"],
+      },
+    },
+  ],
+  messages: [{ role: "user", content: "What's the weather in San Francisco?" }],
+});
+
+for (const block of message.content) {
+  if (block.type === "tool_use") {
+    console.log("Tool:", block.name);
+    console.log("Input:", block.input);
+  }
+}
+```
+
+```shell tools.sh theme={"system"}
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather in a location",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city and state"
+          }
+        },
+        "required": ["location"]
+      }
+    }
+  ],
+  "messages": [{ "role": "user", "content": "What is the weather in San Francisco?" }]
+}'
+```
 
 ## Using with Claude Code
 
-See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [direct cloud setup](/integrations/claude-code#connect-directly-to-ollama-cloud).
+See the [Claude Code guide](/integrations/claude-code.md) for Ollama Launch and [direct cloud setup](/integrations/claude-code.md#connect-directly-to-ollama-cloud).
 
 ## Endpoints
 

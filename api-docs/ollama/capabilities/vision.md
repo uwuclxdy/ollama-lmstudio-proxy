@@ -16,72 +16,70 @@ ollama run gemma4 ./image.png what is in this image?
 
 Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the REST API expects base64-encoded image data.
 
-<Tabs>
-  <Tab title="cURL">
-    ```shell theme={"system"}
-    # 1. Download a sample image
-    curl -L -o test.jpg "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
+**cURL**
 
-    # 2. Encode the image
-    IMG=$(base64 < test.jpg | tr -d '\n')
+```shell theme={"system"}
+# 1. Download a sample image
+curl -L -o test.jpg "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
 
-    # 3. Send it to Ollama
-    curl -X POST http://localhost:11434/api/chat \
-    -H "Content-Type: application/json" \
-    -d '{
-        "model": "gemma4",
-        "messages": [{
-        "role": "user",
-        "content": "What is in this image?",
-        "images": ["'"$IMG"'"]
-        }],
-        "stream": false
-    }'
-    ```
-  </Tab>
+# 2. Encode the image
+IMG=$(base64 < test.jpg | tr -d '\n')
 
-  <Tab title="Python">
-    ```python theme={"system"}
-    from ollama import chat
-    # from pathlib import Path
+# 3. Send it to Ollama
+curl -X POST http://localhost:11434/api/chat \
+-H "Content-Type: application/json" \
+-d '{
+    "model": "gemma4",
+    "messages": [{
+    "role": "user",
+    "content": "What is in this image?",
+    "images": ["'"$IMG"'"]
+    }],
+    "stream": false
+}'
+```
 
-    # Pass in the path to the image
-    path = input('Please enter the path to the image: ')
+**Python**
 
-    # You can also pass in base64 encoded image data
-    # img = base64.b64encode(Path(path).read_bytes()).decode()
-    # or the raw bytes
-    # img = Path(path).read_bytes()
+```python theme={"system"}
+from ollama import chat
+# from pathlib import Path
 
-    response = chat(
-      model='gemma4',
-      messages=[
-        {
-          'role': 'user',
-          'content': 'What is in this image? Be concise.',
-          'images': [path],
-        }
-      ],
-    )
+# Pass in the path to the image
+path = input('Please enter the path to the image: ')
 
-    print(response.message.content)
-    ```
-  </Tab>
+# You can also pass in base64 encoded image data
+# img = base64.b64encode(Path(path).read_bytes()).decode()
+# or the raw bytes
+# img = Path(path).read_bytes()
 
-  <Tab title="JavaScript">
-    ```javascript theme={"system"}
-    import ollama from 'ollama'
+response = chat(
+  model='gemma4',
+  messages=[
+    {
+      'role': 'user',
+      'content': 'What is in this image? Be concise.',
+      'images': [path],
+    }
+  ],
+)
 
-    const imagePath = '/absolute/path/to/image.jpg'
-    const response = await ollama.chat({
-      model: 'gemma4',
-      messages: [
-        { role: 'user', content: 'What is in this image?', images: [imagePath] }
-      ],
-      stream: false,
-    })
+print(response.message.content)
+```
 
-    console.log(response.message.content)
-    ```
-  </Tab>
-</Tabs>
+**JavaScript**
+
+```javascript theme={"system"}
+import ollama from 'ollama'
+
+const imagePath = '/absolute/path/to/image.jpg'
+const response = await ollama.chat({
+  model: 'gemma4',
+  messages: [
+    { role: 'user', content: 'What is in this image?', images: [imagePath] }
+  ],
+  stream: false,
+})
+
+console.log(response.message.content)
+```
