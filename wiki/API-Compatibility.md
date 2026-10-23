@@ -48,6 +48,7 @@ before forwarding. A few compatibility shims apply on top:
   protocol: `event: error` for Anthropic, `event: response.failed` for
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
 - `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers `501`: LM Studio's Jev-compatible `/v1/systemone` is documented only in the future mirror, so the proxy keeps an explicit 501 instead of forwarding to LM Studio's misleading `200 {"error":"Unexpected endpoint..."}` envelope.
+- `POST /v1/audio/speech` (upstream v0.40.8 OpenAI audio-speech endpoint) answers `501`: LM Studio has no TTS surface, and its catch-all answers unknown `/v1` paths with the misleading `200 {"error":"Unexpected endpoint..."}` envelope.
 
 Anthropic clients such as Claude Code work against `/v1/messages` with no extra setup: point `ANTHROPIC_BASE_URL` at the proxy.
 

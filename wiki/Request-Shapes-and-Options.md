@@ -3,7 +3,7 @@
 The proxy understands two payload styles:
 
 - **Ollama-style:** model parameters belong in `options`. Use this for `/api/*` endpoints.
-- **OpenAI-style passthrough:** send OpenAI-compatible JSON to `/v1/*`, forwarded untouched.
+- **OpenAI-style passthrough:** send OpenAI-compatible JSON to `/v1/*`, forwarded to LM Studio (a handful of documented exceptions — see [API Compatibility](API-Compatibility)).
 
 For Ollama endpoints, put fields such as `temperature`, `num_predict`, `max_tokens`,
 `logit_bias`, and structured `format` values inside the `options` object (or
