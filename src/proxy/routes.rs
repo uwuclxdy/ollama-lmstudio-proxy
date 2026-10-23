@@ -149,6 +149,7 @@ pub fn create_router(server: AppState) -> Router {
         .route("/api/delete", delete(delete_handler))
         .route("/api/push", post(push_handler))
         .route("/v1/systemone", post(systemone_handler))
+        .route("/v1/audio/speech", post(speech_handler))
         .route("/api/web_search", post(web_search_handler))
         .route("/api/web_fetch", post(web_fetch_handler))
         .route("/api/show", post(show_handler))
@@ -336,6 +337,16 @@ async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyErr
 async fn systemone_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
     Err(ProxyError::not_implemented(
         "systemone is not supported: the proxy does not forward System One decision requests to LM Studio",
+    ))
+}
+
+// Upstream v0.40.8 endpoint (OpenAI audio speech, api-docs/ollama/api/
+// openai-compatibility.md §/v1/audio/speech). LM Studio exposes no TTS
+// surface, and its catch-all answers unknown /v1 paths with a misleading
+// `200 {"error":"Unexpected endpoint..."}` — an explicit 501 beats it.
+async fn speech_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "audio speech is not supported: LM Studio has no TTS endpoint",
     ))
 }
 

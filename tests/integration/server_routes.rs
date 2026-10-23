@@ -371,6 +371,38 @@ async fn route_systemone_is_present_and_returns_501() {
 }
 
 #[tokio::test]
+async fn route_audio_speech_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .post(p.url("/v1/audio/speech"))
+        .json(&json!({
+            "model": "phonon",
+            "input": "Hello from the test suite.",
+            "voice": "default",
+            "response_format": "wav"
+        }))
+        .send()
+        .await
+        .expect("POST /v1/audio/speech");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/v1/audio/speech must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/v1/audio/speech must return 501: LM Studio has no TTS endpoint to forward to"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("speech"),
+        "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn route_web_fetch_is_present_and_fetches() {
     let p = spawn_proxy().await;
     // web_fetch hits an arbitrary URL with its own client; point it at the mock
