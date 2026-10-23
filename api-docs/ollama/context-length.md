@@ -6,13 +6,13 @@
 
 Context length is the maximum number of tokens that the model has access to in memory.
 
-<Note>
-  Ollama defaults to the following context lengths based on VRAM:
-
-  * \< 24 GiB VRAM: 4k context
-  * 24-48 GiB VRAM: 32k context
-  * \>= 48 GiB VRAM: 256k context
-</Note>
+> [!NOTE]
+>
+> Ollama defaults to the following context lengths based on VRAM:
+>
+> * \< 24 GiB VRAM: 4k context
+> * 24-48 GiB VRAM: 32k context
+> * \>= 48 GiB VRAM: 256k context
 
 Tasks which require large context like web search, agents, and coding tools should be set to at least 64000 tokens.
 
@@ -26,7 +26,7 @@ Cloud models are set to their maximum context length by default.
 
 Change the slider in the Ollama app under settings to your desired context length.
 
-<img src="https://mintcdn.com/ollama-9269c548/SjntZZpXgbN5v4M5/images/ollama-settings.png?fit=max&auto=format&n=SjntZZpXgbN5v4M5&q=85&s=e8a7ccd30fd9cee5e93662db05b43dc7" alt="Context length in Ollama app" width="2724" height="2570" data-path="images/ollama-settings.png" />
+![Context length in Ollama app](https://mintcdn.com/ollama-9269c548/SjntZZpXgbN5v4M5/images/ollama-settings.png?fit=max\&auto=format\&n=SjntZZpXgbN5v4M5\&q=85\&s=e8a7ccd30fd9cee5e93662db05b43dc7)
 
 ### CLI
 

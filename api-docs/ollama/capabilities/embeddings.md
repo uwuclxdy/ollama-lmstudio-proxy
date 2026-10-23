@@ -10,115 +10,111 @@ Embeddings turn text into numeric vectors you can store in a vector database, se
 
 ## Generate embeddings
 
-<Tabs>
-  <Tab title="CLI">
-    Generate embeddings directly from the command line:
+**CLI**
 
-    ```shell theme={"system"}
-    ollama run embeddinggemma "Hello world"
-    ```
+Generate embeddings directly from the command line:
 
-    You can also pipe text to generate embeddings:
+```shell theme={"system"}
+ollama run embeddinggemma "Hello world"
+```
 
-    ```shell theme={"system"}
-    echo "Hello world" | ollama run embeddinggemma
-    ```
+You can also pipe text to generate embeddings:
 
-    Output is a JSON array.
-  </Tab>
+```shell theme={"system"}
+echo "Hello world" | ollama run embeddinggemma
+```
 
-  <Tab title="cURL">
-    ```shell theme={"system"}
-    curl -X POST http://localhost:11434/api/embed \
-      -H "Content-Type: application/json" \
-      -d '{
-        "model": "embeddinggemma",
-        "input": "The quick brown fox jumps over the lazy dog."
-      }'
-    ```
-  </Tab>
+Output is a JSON array.
 
-  <Tab title="Python">
-    ```python theme={"system"}
-    import ollama
+**cURL**
 
-    single = ollama.embed(
-      model='embeddinggemma',
-      input='The quick brown fox jumps over the lazy dog.'
-    )
-    print(len(single['embeddings'][0]))  # vector length
-    ```
-  </Tab>
+```shell theme={"system"}
+curl -X POST http://localhost:11434/api/embed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "embeddinggemma",
+    "input": "The quick brown fox jumps over the lazy dog."
+  }'
+```
 
-  <Tab title="JavaScript">
-    ```javascript theme={"system"}
-    import ollama from 'ollama'
+**Python**
 
-    const single = await ollama.embed({
-      model: 'embeddinggemma',
-      input: 'The quick brown fox jumps over the lazy dog.',
-    })
-    console.log(single.embeddings[0].length) // vector length
-    ```
-  </Tab>
-</Tabs>
+```python theme={"system"}
+import ollama
 
-<Note>
-  The `/api/embed` endpoint returns L2‑normalized (unit‑length) vectors.
-</Note>
+single = ollama.embed(
+  model='embeddinggemma',
+  input='The quick brown fox jumps over the lazy dog.'
+)
+print(len(single['embeddings'][0]))  # vector length
+```
+
+**JavaScript**
+
+```javascript theme={"system"}
+import ollama from 'ollama'
+
+const single = await ollama.embed({
+  model: 'embeddinggemma',
+  input: 'The quick brown fox jumps over the lazy dog.',
+})
+console.log(single.embeddings[0].length) // vector length
+```
+
+> [!NOTE]
+>
+> The `/api/embed` endpoint returns L2‑normalized (unit‑length) vectors.
 
 ## Generate a batch of embeddings
 
 Pass an array of strings to `input`.
 
-<Tabs>
-  <Tab title="cURL">
-    ```shell theme={"system"}
-    curl -X POST http://localhost:11434/api/embed \
-      -H "Content-Type: application/json" \
-      -d '{
-        "model": "embeddinggemma",
-        "input": [
-          "First sentence",
-          "Second sentence",
-          "Third sentence"
-        ]
-      }'
-    ```
-  </Tab>
+**cURL**
 
-  <Tab title="Python">
-    ```python theme={"system"}
-    import ollama
+```shell theme={"system"}
+curl -X POST http://localhost:11434/api/embed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "embeddinggemma",
+    "input": [
+      "First sentence",
+      "Second sentence",
+      "Third sentence"
+    ]
+  }'
+```
 
-    batch = ollama.embed(
-      model='embeddinggemma',
-      input=[
-        'The quick brown fox jumps over the lazy dog.',
-        'The five boxing wizards jump quickly.',
-        'Jackdaws love my big sphinx of quartz.',
-      ]
-    )
-    print(len(batch['embeddings']))  # number of vectors
-    ```
-  </Tab>
+**Python**
 
-  <Tab title="JavaScript">
-    ```javascript theme={"system"}
-    import ollama from 'ollama'
+```python theme={"system"}
+import ollama
 
-    const batch = await ollama.embed({
-      model: 'embeddinggemma',
-      input: [
-        'The quick brown fox jumps over the lazy dog.',
-        'The five boxing wizards jump quickly.',
-        'Jackdaws love my big sphinx of quartz.',
-      ],
-    })
-    console.log(batch.embeddings.length) // number of vectors
-    ```
-  </Tab>
-</Tabs>
+batch = ollama.embed(
+  model='embeddinggemma',
+  input=[
+    'The quick brown fox jumps over the lazy dog.',
+    'The five boxing wizards jump quickly.',
+    'Jackdaws love my big sphinx of quartz.',
+  ]
+)
+print(len(batch['embeddings']))  # number of vectors
+```
+
+**JavaScript**
+
+```javascript theme={"system"}
+import ollama from 'ollama'
+
+const batch = await ollama.embed({
+  model: 'embeddinggemma',
+  input: [
+    'The quick brown fox jumps over the lazy dog.',
+    'The five boxing wizards jump quickly.',
+    'Jackdaws love my big sphinx of quartz.',
+  ],
+})
+console.log(batch.embeddings.length) // number of vectors
+```
 
 ## Tips
 

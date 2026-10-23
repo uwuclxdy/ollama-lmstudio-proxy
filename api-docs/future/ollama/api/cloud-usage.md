@@ -6,67 +6,63 @@
 
 > Usage statistics for cloud inference, web search, and web fetch.
 
-<RequestExample>
-  ```shell Request theme={"system"}
-  curl 'https://ollama.com/api/usage?range=24h' \
-    -H "Authorization: Bearer $OLLAMA_API_KEY"
-  ```
-</RequestExample>
+```shell Request theme={"system"}
+curl 'https://ollama.com/api/usage?range=24h' \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
 
-<ResponseExample>
-  ```json Response (22 empty buckets omitted) theme={"system"}
-  {
-    "range": "24h",
-    "scope": "self",
-    "granularity": "hour",
-    "from": "2026-09-30T02:00:00Z",
-    "until": "2026-10-01T02:30:00Z",
-    "totals": {
-      "request_count": 15,
-      "usage_usd": 0.01718,
-      "input_tokens": 106000,
-      "cached_input_tokens": 46000,
-      "output_tokens": 13600
+```json Response (22 empty buckets omitted) theme={"system"}
+{
+  "range": "24h",
+  "scope": "self",
+  "granularity": "hour",
+  "from": "2026-09-30T02:00:00Z",
+  "until": "2026-10-01T02:30:00Z",
+  "totals": {
+    "request_count": 15,
+    "usage_usd": 0.01718,
+    "input_tokens": 106000,
+    "cached_input_tokens": 46000,
+    "output_tokens": 13600
+  },
+  "buckets": [
+    {
+      "from": "2026-09-30T12:00:00Z",
+      "until": "2026-09-30T13:00:00Z",
+      "request_count": 4,
+      "usage_usd": 0.0052,
+      "input_tokens": 24000,
+      "cached_input_tokens": 0,
+      "output_tokens": 3200
     },
-    "buckets": [
-      {
-        "from": "2026-09-30T12:00:00Z",
-        "until": "2026-09-30T13:00:00Z",
-        "request_count": 4,
-        "usage_usd": 0.0052,
-        "input_tokens": 24000,
-        "cached_input_tokens": 0,
-        "output_tokens": 3200
-      },
-      {
-        "from": "2026-10-01T00:00:00Z",
-        "until": "2026-10-01T01:00:00Z",
-        "request_count": 8,
-        "usage_usd": 0.0088,
-        "input_tokens": 64000,
-        "cached_input_tokens": 40000,
-        "output_tokens": 8000
-      },
-      {
-        "from": "2026-10-01T02:00:00Z",
-        "until": "2026-10-01T02:30:00Z",
-        "partial": true,
-        "request_count": 3,
-        "usage_usd": 0.00318,
-        "input_tokens": 18000,
-        "cached_input_tokens": 6000,
-        "output_tokens": 2400
-      }
-    ]
-  }
-  ```
-</ResponseExample>
+    {
+      "from": "2026-10-01T00:00:00Z",
+      "until": "2026-10-01T01:00:00Z",
+      "request_count": 8,
+      "usage_usd": 0.0088,
+      "input_tokens": 64000,
+      "cached_input_tokens": 40000,
+      "output_tokens": 8000
+    },
+    {
+      "from": "2026-10-01T02:00:00Z",
+      "until": "2026-10-01T02:30:00Z",
+      "partial": true,
+      "request_count": 3,
+      "usage_usd": 0.00318,
+      "input_tokens": 18000,
+      "cached_input_tokens": 6000,
+      "output_tokens": 2400
+    }
+  ]
+}
+```
 
 New usage may take time to appear.
 
-For your remaining included and purchased credits, use [Balance](/api/balance).
+For your remaining included and purchased credits, use [Balance](/api/balance.md).
 
-Unsupported or repeated query parameters return `400`. Errors follow Ollama's [JSON error format](/api/errors#error-messages).
+Unsupported or repeated query parameters return `400`. Errors follow Ollama's [JSON error format](/api/errors.md#error-messages).
 
 ## Time ranges
 
@@ -128,108 +124,108 @@ The response includes `groups` in both `totals` and every bucket.
 }
 ```
 
-<Accordion title="Example with multiple models and buckets">
-  ```json Response (6 empty buckets omitted) theme={"system"}
-  {
-    "range": "7d",
-    "scope": "self",
-    "granularity": "day",
-    "group_by": "model",
-    "from": "2026-09-24T00:00:00Z",
-    "until": "2026-10-01T02:30:00Z",
-    "totals": {
-      "request_count": 16,
-      "usage_usd": 0.0268,
-      "input_tokens": 116000,
-      "cached_input_tokens": 60000,
-      "output_tokens": 15000,
-      "groups": [
-        {
-          "model": "glm-5.3-flash",
-          "request_count": 12,
-          "usage_usd": 0.0132,
-          "input_tokens": 96000,
-          "cached_input_tokens": 60000,
-          "output_tokens": 12000
-        },
-        {
-          "model": "glm-5.3",
-          "request_count": 2,
-          "usage_usd": 0.01,
-          "input_tokens": 4000,
-          "cached_input_tokens": 0,
-          "output_tokens": 1000
-        },
-        {
-          "model": "gpt-oss:120b",
-          "request_count": 2,
-          "usage_usd": 0.0036,
-          "input_tokens": 16000,
-          "cached_input_tokens": 0,
-          "output_tokens": 2000
-        }
-      ]
-    },
-    "buckets": [
-      {
-        "from": "2026-09-30T00:00:00Z",
-        "until": "2026-10-01T00:00:00Z",
-        "request_count": 8,
-        "usage_usd": 0.0166,
-        "input_tokens": 52000,
-        "cached_input_tokens": 30000,
-        "output_tokens": 7000,
-        "groups": [
-          {
-            "model": "glm-5.3-flash",
-            "request_count": 6,
-            "usage_usd": 0.0066,
-            "input_tokens": 48000,
-            "cached_input_tokens": 30000,
-            "output_tokens": 6000
-          },
-          {
-            "model": "glm-5.3",
-            "request_count": 2,
-            "usage_usd": 0.01,
-            "input_tokens": 4000,
-            "cached_input_tokens": 0,
-            "output_tokens": 1000
-          }
-        ]
-      },
-      {
-        "from": "2026-10-01T00:00:00Z",
-        "until": "2026-10-01T02:30:00Z",
-        "partial": true,
-        "request_count": 8,
-        "usage_usd": 0.0102,
-        "input_tokens": 64000,
-        "cached_input_tokens": 30000,
-        "output_tokens": 8000,
-        "groups": [
-          {
-            "model": "glm-5.3-flash",
-            "request_count": 6,
-            "usage_usd": 0.0066,
-            "input_tokens": 48000,
-            "cached_input_tokens": 30000,
-            "output_tokens": 6000
-          },
-          {
-            "model": "gpt-oss:120b",
-            "request_count": 2,
-            "usage_usd": 0.0036,
-            "input_tokens": 16000,
-            "cached_input_tokens": 0,
-            "output_tokens": 2000
-          }
-        ]
-      }
-    ]
-  }
-  ```
-</Accordion>
+> **Example with multiple models and buckets**
+>
+> ```json Response (6 empty buckets omitted) theme={"system"}
+> {
+>   "range": "7d",
+>   "scope": "self",
+>   "granularity": "day",
+>   "group_by": "model",
+>   "from": "2026-09-24T00:00:00Z",
+>   "until": "2026-10-01T02:30:00Z",
+>   "totals": {
+>     "request_count": 16,
+>     "usage_usd": 0.0268,
+>     "input_tokens": 116000,
+>     "cached_input_tokens": 60000,
+>     "output_tokens": 15000,
+>     "groups": [
+>       {
+>         "model": "glm-5.3-flash",
+>         "request_count": 12,
+>         "usage_usd": 0.0132,
+>         "input_tokens": 96000,
+>         "cached_input_tokens": 60000,
+>         "output_tokens": 12000
+>       },
+>       {
+>         "model": "glm-5.3",
+>         "request_count": 2,
+>         "usage_usd": 0.01,
+>         "input_tokens": 4000,
+>         "cached_input_tokens": 0,
+>         "output_tokens": 1000
+>       },
+>       {
+>         "model": "gpt-oss:120b",
+>         "request_count": 2,
+>         "usage_usd": 0.0036,
+>         "input_tokens": 16000,
+>         "cached_input_tokens": 0,
+>         "output_tokens": 2000
+>       }
+>     ]
+>   },
+>   "buckets": [
+>     {
+>       "from": "2026-09-30T00:00:00Z",
+>       "until": "2026-10-01T00:00:00Z",
+>       "request_count": 8,
+>       "usage_usd": 0.0166,
+>       "input_tokens": 52000,
+>       "cached_input_tokens": 30000,
+>       "output_tokens": 7000,
+>       "groups": [
+>         {
+>           "model": "glm-5.3-flash",
+>           "request_count": 6,
+>           "usage_usd": 0.0066,
+>           "input_tokens": 48000,
+>           "cached_input_tokens": 30000,
+>           "output_tokens": 6000
+>         },
+>         {
+>           "model": "glm-5.3",
+>           "request_count": 2,
+>           "usage_usd": 0.01,
+>           "input_tokens": 4000,
+>           "cached_input_tokens": 0,
+>           "output_tokens": 1000
+>         }
+>       ]
+>     },
+>     {
+>       "from": "2026-10-01T00:00:00Z",
+>       "until": "2026-10-01T02:30:00Z",
+>       "partial": true,
+>       "request_count": 8,
+>       "usage_usd": 0.0102,
+>       "input_tokens": 64000,
+>       "cached_input_tokens": 30000,
+>       "output_tokens": 8000,
+>       "groups": [
+>         {
+>           "model": "glm-5.3-flash",
+>           "request_count": 6,
+>           "usage_usd": 0.0066,
+>           "input_tokens": 48000,
+>           "cached_input_tokens": 30000,
+>           "output_tokens": 6000
+>         },
+>         {
+>           "model": "gpt-oss:120b",
+>           "request_count": 2,
+>           "usage_usd": 0.0036,
+>           "input_tokens": 16000,
+>           "cached_input_tokens": 0,
+>           "output_tokens": 2000
+>         }
+>       ]
+>     }
+>   ]
+> }
+> ```
 
 Currently, up to 10 groups appear under `groups`, ranked by total `usage_usd` across the range.
 
@@ -237,9 +233,9 @@ Every bucket uses the same selection and order. Groups with no requests in a buc
 
 Additional groups are combined under `remainder`, omitted when empty. Totals always include all usage.
 
-<Accordion title="Legacy plans">
-  For usage that includes requests from legacy plans, only request counts are available. If the range includes legacy requests, groups are ranked by request count instead of cost.
-</Accordion>
+> **Legacy plans**
+>
+> For usage that includes requests from legacy plans, only request counts are available. If the range includes legacy requests, groups are ranked by request count instead of cost.
 
 ## Rate limits
 

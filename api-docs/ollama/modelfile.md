@@ -109,9 +109,9 @@ FROM <model name>:<tag>
 FROM llama3.2
 ```
 
-<Card title="Model library" href="https://ollama.com/library">
-  Browse available models
-</Card>
+> **[Model library](https://ollama.com/library)**
+>
+> Browse available models
 
 #### Build from a Safetensors model
 

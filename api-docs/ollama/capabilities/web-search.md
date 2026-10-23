@@ -34,9 +34,9 @@ Returns an object containing:
 
 ### Examples
 
-<Note>
-  Ensure OLLAMA\_API\_KEY is set or it must be passed in the Authorization header.
-</Note>
+> [!NOTE]
+>
+> Ensure OLLAMA\_API\_KEY is set or it must be passed in the Authorization header.
 
 #### cURL Request
 
@@ -307,7 +307,7 @@ These updates highlight Ollama's focus on efficiency, performance, and expanded 
 
 ### Context length and agents
 
-Web search results can return thousands of tokens. It is recommended to increase the context length of the model to at least \~32000 tokens. Search agents work best with full context length. [Ollama's cloud models](https://docs.ollama.com/cloud) run at the full context length.
+Web search results can return thousands of tokens. It is recommended to increase the context length of the model to at least \~32000 tokens. Search agents work best with full context length. [Ollama's cloud models](https://docs.ollama.com/cloud.md) run at the full context length.
 
 ## MCP Server
 
@@ -332,7 +332,7 @@ Ollama's web search can be integrated with Cline easily using the MCP server con
 }
 ```
 
-<img src="https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/cline-mcp.png?fit=max&auto=format&n=lS1IbrlCxMxm029K&q=85&s=046239fbe74a8e928752b97b1a8954fa" alt="Cline MCP Configuration" width="852" height="1078" data-path="images/cline-mcp.png" />
+![Cline MCP Configuration](https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/cline-mcp.png?fit=max\&auto=format\&n=lS1IbrlCxMxm029K\&q=85\&s=046239fbe74a8e928752b97b1a8954fa)
 
 ### Codex
 
@@ -347,15 +347,15 @@ args = ["run", "path/to/web-search-mcp.py"]
 env = { "OLLAMA_API_KEY" = "your_api_key_here" }
 ```
 
-<img src="https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/codex-mcp.png?fit=max&auto=format&n=lS1IbrlCxMxm029K&q=85&s=775b41bb85af7836b0a5a609de7d1f6f" alt="Codex MCP Configuration" width="1150" height="1014" data-path="images/codex-mcp.png" />
+![Codex MCP Configuration](https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/codex-mcp.png?fit=max\&auto=format\&n=lS1IbrlCxMxm029K\&q=85\&s=775b41bb85af7836b0a5a609de7d1f6f)
 
 ### Goose
 
 Ollama can integrate with Goose via its MCP feature.
 
-<img src="https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/goose-mcp-1.png?fit=max&auto=format&n=lS1IbrlCxMxm029K&q=85&s=5fea6e0aab7865dc950470f004c549e8" alt="Goose MCP Configuration 1" width="1152" height="1012" data-path="images/goose-mcp-1.png" />
+![Goose MCP Configuration 1](https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/goose-mcp-1.png?fit=max\&auto=format\&n=lS1IbrlCxMxm029K\&q=85\&s=5fea6e0aab7865dc950470f004c549e8)
 
-<img src="https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/goose-mcp-2.png?fit=max&auto=format&n=lS1IbrlCxMxm029K&q=85&s=c69c12389f7dd60ef1c53cd10af82a7d" alt="Goose MCP Configuration 2" width="1146" height="1006" data-path="images/goose-mcp-2.png" />
+![Goose MCP Configuration 2](https://mintcdn.com/ollama-9269c548/lS1IbrlCxMxm029K/images/goose-mcp-2.png?fit=max\&auto=format\&n=lS1IbrlCxMxm029K\&q=85\&s=c69c12389f7dd60ef1c53cd10af82a7d)
 
 ### Other integrations
 
