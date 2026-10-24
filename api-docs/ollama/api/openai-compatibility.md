@@ -40,7 +40,7 @@ Choose a [cloud model](https://ollama.com/search?c=cloud). The cloud API does no
 
 ## Local server usage
 
-These examples connect to your local Ollama server. The client requires an API key value, but Ollama ignores it. To use cloud models through this server, [sign in to Ollama](/api/authentication.md#signing-in).
+These examples connect to your local Ollama server. The client requires an API key value, but Ollama ignores it. To use cloud models through this server, [sign in to Ollama](https://docs.ollama.com/api/authentication.md#signing-in).
 
 ### Simple `/v1/chat/completions` example
 
@@ -309,13 +309,13 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 > Note: Added in Ollama v0.40.8
 
-Generates audio with [speech models](/capabilities/speech.md). The response streams while audio is generated.
+Generates audio with [speech models](https://docs.ollama.com/capabilities/speech.md). The response streams while audio is generated.
 
 #### Supported request fields
 
 * [x] `model`
 * [x] `input` (up to 4,096 characters)
-* [x] `voice` (one of the model's voice names, such as `Freya`; omit it for the model's default)
+* [x] `voice` (one of the voices `ollama show` lists, in any case and with or without accents, such as `Freya`; omit it for the model's `default` voice)
 * [x] `response_format`
   * [x] `wav` (default)
   * [x] `pcm`
