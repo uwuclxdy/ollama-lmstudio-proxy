@@ -39,7 +39,7 @@ Compatible models support messages, streaming, and function calling. Tool-choice
 
 ## Local server usage
 
-These examples connect to your local Ollama server. Use `ollama` as the placeholder API key. To use cloud models through this server, [sign in to Ollama](/api/authentication.md#signing-in).
+These examples connect to your local Ollama server. Use `ollama` as the placeholder API key. To use cloud models through this server, [sign in to Ollama](https://docs.ollama.com/api/authentication.md#signing-in).
 
 ### Environment variables
 
@@ -257,7 +257,7 @@ curl -X POST http://localhost:11434/v1/messages \
 
 ## Using with Claude Code
 
-See the [Claude Code guide](/integrations/claude-code.md) for Ollama Launch and [direct cloud setup](/integrations/claude-code.md#connect-directly-to-ollama-cloud).
+See the [Claude Code guide](https://docs.ollama.com/integrations/claude-code.md) for Ollama Launch and [direct cloud setup](https://docs.ollama.com/integrations/claude-code.md#connect-directly-to-ollama-cloud).
 
 ## Endpoints
 

@@ -27,7 +27,7 @@ curl https://ollama.com/api/balance \
 }
 ```
 
-This endpoint takes no query parameters. For usage history, see [Cloud usage](/api/cloud-usage.md).
+This endpoint takes no query parameters. For usage history, see [Cloud usage](https://docs.ollama.com/api/cloud-usage.md).
 
 ## Balances
 
