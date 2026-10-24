@@ -60,9 +60,9 @@ curl 'https://ollama.com/api/usage?range=24h' \
 
 New usage may take time to appear.
 
-For your remaining included and purchased credits, use [Balance](/api/balance.md).
+For your remaining included and purchased credits, use [Balance](https://docs.ollama.com/api/balance.md).
 
-Unsupported or repeated query parameters return `400`. Errors follow Ollama's [JSON error format](/api/errors.md#error-messages).
+Unsupported or repeated query parameters return `400`. Errors follow Ollama's [JSON error format](https://docs.ollama.com/api/errors.md#error-messages).
 
 ## Time ranges
 
