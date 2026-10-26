@@ -49,9 +49,16 @@ jobs:
 
       - name: fetch tiny models (<0.5b)
         timeout-minutes: 10
+        # lms get's CLI search index missed the term; place GGUFs straight
+        # into the models dir and let the daemon rescan on restart.
         run: |
-          lms get smollm2-360m-instruct --gguf
-          lms get text-embedding-nomic-embed-text-v1.5
+          mkdir -p ~/.lmstudio/models/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF ~/.lmstudio/models/nomic-ai/nomic-embed-text-v1.5-GGUF
+          curl -sL -o ~/.lmstudio/models/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/smollm2-360m-instruct-q8_0.gguf https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf &
+          curl -sL -o ~/.lmstudio/models/nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_0.gguf https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_0.gguf &
+          wait
+          ls -la ~/.lmstudio/models/*/*/
+          lms daemon down || true
+          lms daemon up
           lms ls
 
       - name: start lm studio server
