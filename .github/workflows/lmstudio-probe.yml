@@ -1,13 +1,14 @@
 name: lmstudio hosted probe
 
-# Feasibility probe: install LM Studio headless (llmster) on a hosted runner and
-# drive a <0.5b chat + embedding model through the proxy's route families.
-# Lives on probe/lmstudio-ci; delete with the branch once the verdict is in.
+# Nightly probe: install LM Studio headless (llmster) on a hosted runner and
+# drive a <0.5b chat + embedding model through the proxy's route families, so
+# backend drift (new LM Studio releases) surfaces as a red run.
 
 on:
   workflow_dispatch:
-  push:
-    branches: [probe/lmstudio-ci]
+  schedule:
+    # Nightly at 03:00 UTC, ahead of the 06:00 api-docs refresh.
+    - cron: '0 3 * * *'
 
 permissions:
   contents: read
