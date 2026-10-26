@@ -119,6 +119,78 @@ async fn non_streaming_routes_to_native_and_converts_response() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Explicit think:false on the native path
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_think_false_suppresses_reasoning_on_thinking_model() {
+    let p = spawn_proxy_with_native().await;
+    // No `capabilities` object: the id-keyword heuristic (ids containing
+    // "reasoning") is what marks this model thinking-capable.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{
+                "key": "qwen3-reasoning-8b-instruct",
+                "type": "llm",
+                "publisher": "meta",
+                "architecture": "llama",
+                "format": "gguf",
+                "quantization": { "name": "Q4_K_M", "bits_per_weight": 4.5 },
+                "max_context_length": 8192,
+                "loaded_instances": [
+                    { "id": "inst-0", "config": { "context_length": 4096 } }
+                ]
+            }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    // `think:false` on a thinking-capable model must reach the backend as
+    // `reasoning:"off"`: upstream accepts the key there (only models with no
+    // reasoning configuration reject it), so dropping it would let the model
+    // reason anyway.
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .and(body_partial_json(json!({
+            "model": "qwen3-reasoning-8b-instruct",
+            "reasoning": "off"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "qwen3-reasoning-8b-instruct",
+            "output": [{ "type": "message", "content": "Hello!" }],
+            "stats": {
+                "input_tokens": 5,
+                "total_output_tokens": 2,
+                "tokens_per_second": 30.0,
+                "time_to_first_token_seconds": 0.1
+            },
+            "response_id": "resp_x"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "qwen3-reasoning:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "think": false,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat (native, think:false)");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+    assert!(body["message"]["thinking"].is_null());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Integrations passthrough
 // ═══════════════════════════════════════════════════════════════════════════
 

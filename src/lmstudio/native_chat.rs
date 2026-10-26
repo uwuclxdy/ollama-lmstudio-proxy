@@ -39,6 +39,9 @@ pub struct NativeChatRequestParams<'a> {
     pub ollama_options: Option<&'a Value>,
     /// Ollama `think` / reasoning value, normalised to LM Studio's `reasoning`.
     pub think: Option<&'a Value>,
+    /// Whether the resolved model exposes reasoning configuration; `reasoning`
+    /// is dropped for models without it (upstream errors on the field).
+    pub model_supports_thinking: bool,
     pub stream: bool,
     /// MCP integrations forwarded verbatim from the incoming Ollama body.
     ///
@@ -73,7 +76,13 @@ pub fn build_native_chat_request(params: NativeChatRequestParams<'_>) -> Value {
     apply_native_sampling(params.ollama_options, &mut body);
 
     if let Some(think_val) = params.think {
-        body.insert("reasoning".to_string(), normalize_reasoning(think_val));
+        let normalized = normalize_reasoning(think_val);
+        // `reasoning` on a model with no reasoning configuration is a hard
+        // upstream error (api-docs/lmstudio/1_developer/2_rest/chat.md), but
+        // "off" is a no-op there — drop it instead of failing the request.
+        if params.model_supports_thinking || normalized != json!("off") {
+            body.insert("reasoning".to_string(), normalized);
+        }
     }
 
     // Forward MCP integrations verbatim; only accepted when the value is an array.

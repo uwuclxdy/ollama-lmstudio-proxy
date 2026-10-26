@@ -196,6 +196,7 @@ pub async fn handle_ollama_chat(
                         system_prompt: resolution_ctx.system_prompt.as_deref(),
                         ollama_options: resolution_ctx.effective_options.as_ref(),
                         think: native_think,
+                        model_supports_thinking: resolution_ctx.model_supports_thinking,
                         stream,
                         integrations,
                     });
