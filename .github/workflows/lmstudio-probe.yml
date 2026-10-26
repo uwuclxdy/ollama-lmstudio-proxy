@@ -79,6 +79,7 @@ jobs:
         run: |
           cat > /tmp/probe.py <<'PY'
           import json, os, sys, time, urllib.request, urllib.error
+          from datetime import datetime
 
           P = 'http://127.0.0.1:11434'
           L = 'http://127.0.0.1:1234'
@@ -211,7 +212,12 @@ jobs:
               s, b, h = call(P + '/api/ps'); o2 = j(b); exp2 = ((o2 or {}).get('models') or [{}])[0].get('expires_at')
               # expires_at re-anchors at read time (now + remaining), so integer-second
               # truncation wobbles it; the invariant is "show never extends the TTL".
-              check('show does not reset expiry', exp2 is not None and exp is not None and abs(exp2 - exp) <= 5, f"{exp} -> {exp2}")
+              try:
+                  e1 = datetime.fromisoformat(exp.replace('Z', '+00:00')).timestamp()
+                  e2 = datetime.fromisoformat(exp2.replace('Z', '+00:00')).timestamp()
+              except Exception:
+                  e1 = e2 = None
+              check('show does not reset expiry', e1 is not None and e2 is not None and abs(e2 - e1) <= 5, f"{exp} -> {exp2}")
               s, b, h = call(P + '/api/chat', body={'model': CHAT, 'keep_alive': 0, 'messages': []})
               check('keep_alive:0 unload-only', s == 200 and (j(b) or {}).get('done') is True, f"{s} {b[:200]}")
               time.sleep(3)
