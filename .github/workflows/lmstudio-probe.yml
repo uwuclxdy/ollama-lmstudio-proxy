@@ -1,0 +1,267 @@
+name: lmstudio hosted probe
+
+# Feasibility probe: install LM Studio headless (llmster) on a hosted runner and
+# drive a <0.5b chat + embedding model through the proxy's route families.
+# Lives on probe/lmstudio-ci; delete with the branch once the verdict is in.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [probe/lmstudio-ci]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lmstudio-probe
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install lm studio headless (llmster)
+        timeout-minutes: 10
+        run: |
+          curl -fsSL https://lmstudio.ai/install.sh | bash
+          echo "$HOME/.lmstudio/bin" >> "$GITHUB_PATH"
+          "$HOME/.lmstudio/bin/lms" --version
+
+      - name: start headless daemon
+        timeout-minutes: 5
+        run: |
+          lms daemon up
+          lms daemon status
+
+      - name: fetch tiny models (<0.5b)
+        timeout-minutes: 10
+        run: |
+          lms get smollm2-360m-instruct --gguf
+          lms get text-embedding-nomic-embed-text-v1.5
+          lms ls
+
+      - name: start lm studio server
+        timeout-minutes: 5
+        run: |
+          lms server start
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:1234/v1/models >/dev/null && break
+            sleep 2
+          done
+          curl -s http://127.0.0.1:1234/v1/models | head -c 400; echo
+
+      - name: build proxy
+        timeout-minutes: 20
+        run: cargo build --release --locked
+
+      - name: write route probe
+        run: |
+          cat > /tmp/probe.py <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+
+          P = 'http://127.0.0.1:11434'
+          L = 'http://127.0.0.1:1234'
+          MODE = sys.argv[1] if len(sys.argv) > 1 else 'plain'
+          KEY = os.environ.get('PROBE_KEY', '')
+          CHAT = os.environ.get('CHAT_MODEL', '')
+          EMBED = os.environ.get('EMBED_MODEL', '')
+
+          fails = []
+
+          def check(name, ok, detail=''):
+              if ok:
+                  print(f"PASS | {name}", flush=True)
+              else:
+                  print(f"FAIL | {name} | {str(detail)[:200]}", flush=True)
+                  fails.append(name)
+
+          def call(url, method='GET', body=None, ctype='application/json', auth=True, timeout=180):
+              h = {}
+              if body is not None:
+                  h['Content-Type'] = ctype
+              if auth and KEY:
+                  h['Authorization'] = 'Bearer ' + KEY
+              data = body if isinstance(body, (bytes, bytearray)) else (json.dumps(body).encode() if body is not None else None)
+              req = urllib.request.Request(url, data=data, method=method, headers=h)
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as r:
+                      return r.status, r.read(), dict((k.lower(), v) for k, v in r.headers.items())
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read(), dict((k.lower(), v) for k, v in e.headers.items())
+              except Exception as e:
+                  return 0, str(e).encode(), {}
+
+          def j(b):
+              try:
+                  return json.loads(b)
+              except Exception:
+                  return None
+
+          def ndj(b):
+              out = []
+              for ln in b.decode('utf-8', 'replace').splitlines():
+                  ln = ln.strip()
+                  if ln:
+                      o = j(ln)
+                      if o is not None:
+                          out.append(o)
+              return out
+
+          def chat_body(**kw):
+              b = {'model': CHAT, 'stream': False, 'messages': [{'role': 'user', 'content': 'Say OK.'}],
+                   'options': {'num_predict': 8, 'num_ctx': 4096}}
+              b.update(kw)
+              return b
+
+          s, b, h = call(L + '/v1/models', auth=False)
+          ids = [m.get('id', '') for m in ((j(b) or {}).get('data') or [])]
+          CHAT = CHAT or next((i for i in ids if 'smollm2' in i.lower()), '')
+          EMBED = EMBED or next((i for i in ids if 'nomic' in i.lower() or 'embed' in i.lower()), '')
+          print(f"lm studio models: {ids}; chat={CHAT} embed={EMBED}", flush=True)
+          if not CHAT:
+              print('FAIL | model discovery', flush=True)
+              sys.exit(1)
+
+          if MODE == 'plain':
+              s, b, h = call(P + '/health'); check('health 200', s == 200, b)
+              s, b, h = call(P + '/'); check('root 200', s == 200, b)
+              s, b, h = call(P + '/api/version'); check('api/version', s == 200 and j(b), b)
+              s, b, h = call(P + '/api/tags'); tags = j(b)
+              check('tags lists chat model', s == 200 and any(CHAT in m.get('name', '') for m in (tags or {}).get('models', [])), b[:300])
+              s, b, h = call(P + '/api/ps'); check('api/ps', s == 200, b)
+              s, b, h = call(P + '/api/show', body={'model': CHAT}); check('show chat model', s == 200 and j(b), b[:300])
+              s, b, h = call(P + '/api/show', body={'model': EMBED}); check('show embed model', s == 200 and j(b), b[:300])
+
+              s, b, h = call(P + '/api/chat', body=chat_body()); o = j(b)
+              check('chat non-stream', s == 200 and isinstance((o or {}).get('message', {}).get('content'), str), b[:300])
+              s, b, h = call(P + '/api/chat', body=chat_body(stream=True)); chunks = ndj(b)
+              check('chat stream done:true', s == 200 and chunks and chunks[-1].get('done') is True, f"{s} {b[-300:]}")
+              s, b, h = call(P + '/api/chat', body=chat_body(think=False)); check('chat think:false', s == 200, b[:300])
+              s, b, h = call(P + '/api/chat', body=chat_body(format='json')); o = j(b)
+              check('chat format json', s == 200 and isinstance((o or {}).get('message', {}).get('content'), str), b[:300])
+
+              s, b, h = call(P + '/api/generate', body={'model': CHAT, 'stream': False, 'prompt': 'Say OK.', 'options': {'num_predict': 8, 'num_ctx': 4096}}); o = j(b)
+              check('generate non-stream', s == 200 and isinstance((o or {}).get('response'), str), b[:300])
+              s, b, h = call(P + '/api/generate', body={'model': CHAT, 'stream': True, 'prompt': 'Say OK.', 'options': {'num_predict': 8}}); chunks = ndj(b)
+              check('generate stream', s == 200 and chunks and chunks[-1].get('done') is True, f"{s} {b[-200:]}")
+
+              s, b, h = call(P + '/api/embed', body={'model': EMBED, 'input': 'hello world'}); o = j(b)
+              check('embed single', s == 200 and (o or {}).get('embeddings'), b[:300])
+              s, b, h = call(P + '/api/embed', body={'model': EMBED, 'input': ['a', 'b']}); o = j(b)
+              check('embed array len2', s == 200 and len((o or {}).get('embeddings', [])) == 2, b[:300])
+              s, b, h = call(P + '/api/embeddings', body={'model': EMBED, 'prompt': 'hello'}); check('embeddings legacy', s == 200 and (j(b) or {}).get('embedding'), b[:300])
+
+              alias = CHAT + '-ci-alias'
+              s, b, h = call(P + '/api/copy', body={'source': CHAT, 'destination': alias}); check('copy 200', s == 200, b[:200])
+              s, b, h = call(P + '/v1/chat/completions', body={'model': alias, 'messages': [{'role': 'user', 'content': 'Say OK.'}], 'max_tokens': 8})
+              check('alias via /v1 chat', s == 200, b[:300])
+              s, b, h = call(P + '/v1/models/' + alias); check('alias GET /v1/models/{id}', s == 200, b[:200])
+              s, b, h = call(P + '/api/delete', method='DELETE', body={'model': alias}); check('delete alias 200', s == 200, b[:200])
+              s, b, h = call(P + '/api/delete', method='DELETE', body={'model': alias}); check('delete unknown 404', s == 404, b[:200])
+
+              s, b, h = call(P + '/api/create', body={'model': 'x', 'files': [{'path': 'a'}]}); check('create files 400', s == 400, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/create', body={'model': 'x', 'quantize': 'q4'}); check('create quantize 400', s == 400, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/pull', body={'model': 'definitely-not-a-model'}); check('pull bogus errors', s >= 400, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/push', body={'model': CHAT}); check('push 501', s == 501, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/blobs/sha256-abc', method='HEAD'); check('blobs 404', s == 404, s)
+
+              s, b, h = call(P + '/api/web_fetch', body={'url': 'https://example.com'}, timeout=60); check('web_fetch public 200', s == 200, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/web_fetch', body={'url': 'http://127.0.0.1:1234'}, timeout=60); check('web_fetch loopback 400', s == 400, f"{s} {b[:200]}")
+              s, b, h = call(P + '/api/web_search', body={'query': 'test'}); check('web_search unconfigured 501', s == 501, f"{s} {b[:200]}")
+
+              s, b, h = call(P + '/v1/models'); check('v1/models', s == 200 and (j(b) or {}).get('data'), b[:200])
+              s, b, h = call(P + '/api/v0/models'); check('api/v0/models', s == 200, b[:200])
+              s, b, h = call(P + '/v1/messages', body={'model': CHAT, 'max_tokens': 8, 'messages': [{'role': 'user', 'content': 'Say OK.'}]})
+              check('v1/messages anthropic', s == 200 and (j(b) or {}).get('content'), f"{s} {b[:200]}")
+
+              s, b, h = call(P + '/api/definitely-not-here'); check('unknown path 404', s == 404, s)
+              s, b, h = call(P + '/api/tags', method='DELETE'); check('wrong method 405', s == 405, s)
+              s, b, h = call(P + '/api/chat', body=b'not json'); check('non-json body 415', s == 415, s)
+              s, b, h = call(P + '/api/chat', method='OPTIONS'); check('OPTIONS 200 + CORS', s == 200 and 'access-control-allow-origin' in h, f"{s} {h}")
+
+              s, b, h = call(P + '/api/chat', body=chat_body(keep_alive='17m')); check('chat keep_alive 17m', s == 200, b[:200])
+              s, b, h = call(P + '/api/ps'); o = j(b); exp = ((o or {}).get('models') or [{}])[0].get('expires_at')
+              check('ps shows expires_at', bool(exp), b[:300])
+              s, b, h = call(P + '/api/show', body={'model': CHAT}); check('show after keep_alive', s == 200, b[:200])
+              s, b, h = call(P + '/api/ps'); o2 = j(b); exp2 = ((o2 or {}).get('models') or [{}])[0].get('expires_at')
+              check('show does not reset expiry', exp2 == exp, f"{exp} -> {exp2}")
+              s, b, h = call(P + '/api/chat', body={'model': CHAT, 'keep_alive': 0, 'messages': []})
+              check('keep_alive:0 unload-only', s == 200 and (j(b) or {}).get('done') is True, f"{s} {b[:200]}")
+              time.sleep(3)
+              s, b, h = call(L + '/api/v0/models', auth=False); lm = j(b)
+              loaded = [m.get('id') for m in (lm or {}).get('data', []) if m.get('state') == 'loaded']
+              check('model left lm loaded list', all(CHAT not in str(i) for i in loaded), f"loaded={loaded}")
+              s, b, h = call(P + '/api/chat', body=chat_body()); check('reload after unload', s == 200, b[:200])
+
+          elif MODE == 'native':
+              s, b, h = call(P + '/api/chat', body=chat_body()); o = j(b)
+              check('native non-stream', s == 200 and isinstance((o or {}).get('message', {}).get('content'), str), b[:300])
+              s, b, h = call(P + '/api/chat', body=chat_body(stream=True)); chunks = ndj(b)
+              check('native stream done:true', s == 200 and chunks and chunks[-1].get('done') is True, f"{s} {b[-300:]}")
+              s, b, h = call(P + '/api/chat', body=chat_body(think=False)); o = j(b)
+              check('native think:false no thinking', s == 200 and not (o or {}).get('message', {}).get('thinking'), b[:300])
+
+          elif MODE == 'auth':
+              s, b, h = call(P + '/api/tags', auth=False); check('no auth 401', s == 401, s)
+              s, b, h = call(P + '/api/tags'); check('authed tags 200', s == 200, s)
+              s, b, h = call(P + '/api/chat', body=chat_body()); check('authed chat 200', s == 200, b[:200])
+
+          print(f"== {MODE}: {len(fails)} failed", flush=True)
+          if fails:
+              print('FAILED: ' + ', '.join(fails), flush=True)
+          sys.exit(1 if fails else 0)
+          PY
+
+      - name: session 1 — default flags, every route family
+        run: |
+          nohup ./target/release/ollama-lmstudio-proxy --listen 127.0.0.1:11434 --lmstudio-url http://127.0.0.1:1234 --log-level debug > /tmp/proxy1.log 2>&1 &
+          echo $! > /tmp/proxy.pid
+          for i in $(seq 1 20); do curl -sf http://127.0.0.1:11434/health >/dev/null 2>&1 && break; sleep 1; done
+          python3 /tmp/probe.py plain
+
+      - name: session 2 — --use-native-chat
+        run: |
+          kill "$(cat /tmp/proxy.pid)" 2>/dev/null || true; sleep 1
+          nohup ./target/release/ollama-lmstudio-proxy --listen 127.0.0.1:11434 --lmstudio-url http://127.0.0.1:1234 --log-level debug --use-native-chat > /tmp/proxy2.log 2>&1 &
+          echo $! > /tmp/proxy.pid
+          for i in $(seq 1 20); do curl -sf http://127.0.0.1:11434/health >/dev/null 2>&1 && break; sleep 1; done
+          python3 /tmp/probe.py native
+
+      - name: session 3 — --api-key
+        run: |
+          kill "$(cat /tmp/proxy.pid)" 2>/dev/null || true; sleep 1
+          nohup ./target/release/ollama-lmstudio-proxy --listen 127.0.0.1:11434 --lmstudio-url http://127.0.0.1:1234 --log-level debug --api-key ci-probe-key > /tmp/proxy3.log 2>&1 &
+          echo $! > /tmp/proxy.pid
+          for i in $(seq 1 20); do curl -sf http://127.0.0.1:11434/health >/dev/null 2>&1 && break; sleep 1; done
+          PROBE_KEY=ci-probe-key python3 /tmp/probe.py auth
+
+      - name: collect diagnostics
+        if: always()
+        run: |
+          kill "$(cat /tmp/proxy.pid 2>/dev/null)" 2>/dev/null || true
+          lms ps > /tmp/lms-ps.txt 2>&1 || true
+          lms ls > /tmp/lms-ls.txt 2>&1 || true
+          mkdir -p probe-logs
+          cp /tmp/proxy*.log /tmp/lms-*.txt probe-logs/ 2>/dev/null || true
+
+      - name: upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmstudio-probe-logs
+          path: probe-logs/
+          if-no-files-found: ignore
