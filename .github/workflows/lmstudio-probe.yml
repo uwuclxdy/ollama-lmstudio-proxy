@@ -96,7 +96,9 @@ jobs:
                   print(f"FAIL | {name} | {str(detail)[:200]}", flush=True)
                   fails.append(name)
 
-          def call(url, method='GET', body=None, ctype='application/json', auth=True, timeout=180):
+          def call(url, method=None, body=None, ctype='application/json', auth=True, timeout=180):
+              if method is None:
+                  method = 'POST' if body is not None else 'GET'
               h = {}
               if body is not None:
                   h['Content-Type'] = ctype
