@@ -15,6 +15,7 @@ fn build(messages: &Value, options: Option<&Value>, think: Option<&Value>) -> Va
         system_prompt: Some("be terse"),
         ollama_options: options,
         think,
+        model_supports_thinking: true,
         stream: false,
         integrations: None,
     })
@@ -166,6 +167,61 @@ fn request_normalizes_reasoning_levels() {
 }
 
 #[test]
+fn request_drops_reasoning_off_for_model_without_thinking() {
+    // Upstream errors on `reasoning` for models with no reasoning config
+    // (docs 2_rest/chat.md); "off" is a no-op there, so the builder drops it.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let think = json!(false);
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: Some(&think),
+        model_supports_thinking: false,
+        stream: false,
+        integrations: None,
+    });
+    assert!(body.get("reasoning").is_none());
+}
+
+#[test]
+fn request_keeps_reasoning_off_for_thinking_model() {
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let think = json!(false);
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: Some(&think),
+        model_supports_thinking: true,
+        stream: false,
+        integrations: None,
+    });
+    assert_eq!(body["reasoning"], json!("off"));
+}
+
+#[test]
+fn request_forwards_reasoning_level_for_non_thinking_model() {
+    // A level (not "off") still forwards: the backend's hard error is the
+    // informative outcome for "make this model think" on a non-thinking model.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let think = json!("medium");
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: Some(&think),
+        model_supports_thinking: false,
+        stream: false,
+        integrations: None,
+    });
+    assert_eq!(body["reasoning"], json!("medium"));
+}
+
+#[test]
 fn request_omits_reasoning_and_system_when_absent() {
     let messages = json!([{ "role": "user", "content": "hi" }]);
     let body = build_native_chat_request(NativeChatRequestParams {
@@ -174,6 +230,7 @@ fn request_omits_reasoning_and_system_when_absent() {
         system_prompt: None,
         ollama_options: None,
         think: None,
+        model_supports_thinking: true,
         stream: true,
         integrations: None,
     });
@@ -425,6 +482,7 @@ fn request_forwards_integrations_array() {
         system_prompt: None,
         ollama_options: None,
         think: None,
+        model_supports_thinking: true,
         stream: false,
         integrations: Some(&integrations),
     });
@@ -445,6 +503,7 @@ fn request_omits_integrations_when_absent() {
         system_prompt: None,
         ollama_options: None,
         think: None,
+        model_supports_thinking: true,
         stream: false,
         integrations: None,
     });
@@ -462,6 +521,7 @@ fn request_omits_integrations_when_not_array() {
         system_prompt: None,
         ollama_options: None,
         think: None,
+        model_supports_thinking: true,
         stream: false,
         integrations: Some(&non_array),
     });

@@ -40,11 +40,6 @@ pub fn make_top_level_params(body: &Value) -> TopLevelParams<'_> {
 /// `think: null` is upstream's "use the model default" (ThinkValue,
 /// api-docs/ollama/api/chat.md), which the proxy resolves through the
 /// model-capability lookup — exactly like an omitted `think`.
-fn think_absent(body: &Value) -> bool {
-    body.get("think").is_none_or(Value::is_null)
-        && body.get("reasoning_effort").is_none_or(Value::is_null)
-}
-
 pub fn extract_system_prompt(body: &Value) -> Option<String> {
     body.get("system")
         .and_then(|value| value.as_str())
@@ -124,16 +119,16 @@ pub async fn resolve_model_with_context<'a>(
 
     // Resolve the model's reasoning capability so the inference path can default
     // `reasoning:on` for thinking models when the caller omitted `think`
-    // (matching real Ollama). The lookup costs a `GET /api/v1/models`, so skip it
-    // unless it can change the outcome: only the chat/generate paths
-    // (`wants_thinking_default = true`) reason, and only when no explicit
-    // `think`/`reasoning_effort` is set (`think: null` counts as absent —
-    // upstream's "model default" — so the lookup still runs and an explicit
-    // value always wins downstream). Embeddings pass `false` — they never
-    // reason, and the legacy `/api/embeddings` shape carries a `prompt` that
-    // must NOT be mistaken for an inference body. Best-effort: an unknown /
-    // unfetchable model is non-thinking.
-    let model_supports_thinking = if wants_thinking_default && think_absent(request_body) {
+    // (matching real Ollama), and so the native path can suppress an explicit
+    // `think:false`/`"none"` on a model with no reasoning configuration —
+    // upstream hard-errors on `reasoning` for such models instead of ignoring
+    // it, so the drop must be capability-aware, not just default-aware. The
+    // lookup costs an uncached `GET /api/v1/models` per inference call.
+    // Embeddings pass `false` — they never reason, and the legacy
+    // `/api/embeddings` shape carries a `prompt` that must NOT be mistaken for
+    // an inference body. Best-effort: an unknown / unfetchable model is
+    // non-thinking.
+    let model_supports_thinking = if wants_thinking_default {
         let model_info = fetch_model_info_for_id(
             context,
             model_resolver,

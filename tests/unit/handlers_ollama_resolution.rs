@@ -218,34 +218,6 @@ fn make_top_level_params_null_reasoning_effort_gives_none() {
     assert!(top.think.is_none());
 }
 
-// ── think_absent (the model-capability lookup skip rule) ─────────────────────
-
-#[test]
-fn think_absent_true_when_think_and_effort_missing() {
-    let body = json!({ "model": "x", "messages": [] });
-    assert!(think_absent(&body));
-}
-
-#[test]
-fn think_absent_true_when_think_null() {
-    // think:null means "use the model default", which needs the capability
-    // lookup to resolve — exactly like an omitted think.
-    let body = json!({ "think": null, "model": "x", "messages": [] });
-    assert!(think_absent(&body));
-}
-
-#[test]
-fn think_absent_false_when_think_present() {
-    let body = json!({ "think": true, "model": "x", "messages": [] });
-    assert!(!think_absent(&body));
-}
-
-#[test]
-fn think_absent_false_when_reasoning_effort_present() {
-    let body = json!({ "reasoning_effort": "high", "model": "x", "messages": [] });
-    assert!(!think_absent(&body));
-}
-
 // Build a minimal ModelInfo without the HTTP stack. `resolve_model_with_context`
 // populates `model_supports_thinking` from exactly this predicate, so testing
 // `is_thinking_model()` pins the field's value for both cases.
