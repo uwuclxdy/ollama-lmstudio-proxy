@@ -44,7 +44,7 @@ model is loaded.
 
 | Ollama field | LM Studio parameter | Notes |
 |--------------|---------------------|-------|
-| `think` / `reasoning_effort` | `reasoning` | `true`→`"on"`, `false`→`"off"`, `"none"`→`"off"`; model-defined strings pass through (unsupported names are the backend's to decide); `null` = "use the model default" (treated as absent); `reasoning_effort` is an alias used only when `think` is absent. When `think` is omitted and the model is reasoning-capable (LM Studio reports a `reasoning` capability), defaults to `"on"` to match Ollama; explicit `think:false` always wins |
+| `think` / `reasoning_effort` | `reasoning` | `true`→`"on"`, `false`→`"off"`, `"none"`→`"off"`; model-defined strings pass through (unsupported names are the backend's to decide); `null` = "use the model default" (treated as absent); `reasoning_effort` is an alias used only when `think` is absent. When `think` is omitted and the model is reasoning-capable (LM Studio reports a `reasoning` capability), defaults to `"on"` to match Ollama; explicit `think:false` always wins on the OpenAI-compat path, and on the native path (`--use-native-chat`) it forwards `reasoning:"off"` only for reasoning-capable models — LM Studio hard-errors on `reasoning` for models with no reasoning config, and such a model cannot reason anyway |
 | `logprobs`, `top_logprobs` | Same name | Direct passthrough |
 | `suffix` | `suffix` | Forwarded on non-vision generate requests only |
 | `raw` | _none_ | Disables system-prompt injection in generate requests |
