@@ -20,6 +20,9 @@ jobs:
       - name: Run refresh script
         run: ./scripts/refresh-api-docs.sh
 
+      - name: Semantic delta verdict
+        run: python3 scripts/api-delta-verdict.py > semantic-delta.md
+
       - name: Detect changes
         id: diff
         run: |
@@ -55,6 +58,10 @@ jobs:
             fi
             echo
             echo "$table"
+            if [[ -s semantic-delta.md ]]; then
+              echo
+              cat semantic-delta.md
+            fi
             echo "__PR_BODY__"
           } >> "$GITHUB_OUTPUT"
 
