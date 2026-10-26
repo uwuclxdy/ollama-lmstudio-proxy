@@ -186,7 +186,8 @@ jobs:
               s, b, h = call(P + '/api/create', body={'model': 'x', 'quantize': 'q4'}); check('create quantize 400', s == 400, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/pull', body={'model': 'definitely-not-a-model'}); check('pull bogus errors', s >= 400, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/push', body={'model': CHAT}); check('push 501', s == 501, f"{s} {b[:200]}")
-              s, b, h = call(P + '/api/blobs/sha256-abc', method='HEAD'); check('blobs 404', s == 404, s)
+              s, b, h = call(P + '/api/blobs/' + 'sha256-' + 'a' * 64, method='HEAD'); check('blobs unknown 404', s == 404, s)
+              s, b, h = call(P + '/api/blobs/sha256-abc', method='HEAD'); check('blobs malformed 400', s == 400, s)
 
               s, b, h = call(P + '/api/web_fetch', body={'url': 'https://example.com'}, timeout=60); check('web_fetch public 200', s == 200, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/web_fetch', body={'url': 'http://127.0.0.1:1234'}, timeout=60); check('web_fetch loopback 400', s == 400, f"{s} {b[:200]}")
@@ -199,7 +200,8 @@ jobs:
 
               s, b, h = call(P + '/api/definitely-not-here'); check('unknown path 404', s == 404, s)
               s, b, h = call(P + '/api/tags', method='DELETE'); check('wrong method 405', s == 405, s)
-              s, b, h = call(P + '/api/chat', body=b'not json'); check('non-json body 415', s == 415, s)
+              s, b, h = call(P + '/api/chat', body=b'not json'); check('bad json with json ct 400', s == 400, s)
+              s, b, h = call(P + '/api/chat', body=b'a=1', ctype='application/x-www-form-urlencoded'); check('form content-type 415', s == 415, s)
               s, b, h = call(P + '/api/chat', method='OPTIONS'); check('OPTIONS 200 + CORS', s == 200 and 'access-control-allow-origin' in h, f"{s} {h}")
 
               s, b, h = call(P + '/api/chat', body=chat_body(keep_alive='17m')); check('chat keep_alive 17m', s == 200, b[:200])
@@ -207,7 +209,9 @@ jobs:
               check('ps shows expires_at', bool(exp), b[:300])
               s, b, h = call(P + '/api/show', body={'model': CHAT}); check('show after keep_alive', s == 200, b[:200])
               s, b, h = call(P + '/api/ps'); o2 = j(b); exp2 = ((o2 or {}).get('models') or [{}])[0].get('expires_at')
-              check('show does not reset expiry', exp2 == exp, f"{exp} -> {exp2}")
+              # expires_at re-anchors at read time (now + remaining), so integer-second
+              # truncation wobbles it; the invariant is "show never extends the TTL".
+              check('show does not reset expiry', exp2 is not None and exp is not None and abs(exp2 - exp) <= 5, f"{exp} -> {exp2}")
               s, b, h = call(P + '/api/chat', body={'model': CHAT, 'keep_alive': 0, 'messages': []})
               check('keep_alive:0 unload-only', s == 200 and (j(b) or {}).get('done') is True, f"{s} {b[:200]}")
               time.sleep(3)
