@@ -421,20 +421,85 @@ async fn embed_lmstudio_malformed_json_returns_error() {
         .mount(&p.mock)
         .await;
 
-    let resp = p
-        .client
+    // DIAG(macos-stall): branch-only instrumentation, reverted before merge.
+    // The 10s shared client aborts a slow-but-alive wakeup before its true
+    // latency shows, so the proxied leg gets a 180s budget and every marker
+    // prints elapsed ms from test start.
+    let t0 = std::time::Instant::now();
+    let _ = log::set_boxed_logger(Box::new(DiagLogger));
+    log::set_max_level(log::LevelFilter::Debug);
+    eprintln!(
+        "DIAG t={:?} start: proxy={} wiremock={}",
+        t0.elapsed(),
+        p.base_url,
+        p.mock.uri()
+    );
+
+    let slow = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .expect("diag client");
+    let resp = slow
         .post(p.url("/api/embed"))
         .json(&json!({ "model": "all-minilm", "input": "malformed test" }))
         .send()
         .await
         .expect("POST /api/embed malformed");
+    let status = resp.status();
+    let body = resp.text().await.expect("resp text");
+    eprintln!(
+        "DIAG t={:?} proxied: status={} body={}",
+        t0.elapsed(),
+        status,
+        body
+    );
+
+    // Control leg, hit after the proxied one: same request straight to
+    // wiremock, so a dead wiremock serving leg is distinguishable from a
+    // dead proxy leg.
+    let control = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("control client");
+    let cresp = control
+        .post(format!("{}/v1/embeddings", p.mock.uri()))
+        .json(&json!({ "model": "all-minilm", "input": "control" }))
+        .send()
+        .await
+        .expect("control POST to wiremock");
+    eprintln!(
+        "DIAG t={:?} control(wiremock direct): status={}",
+        t0.elapsed(),
+        cresp.status()
+    );
 
     // Proxy must return an error, not a 200 with garbage
     assert!(
-        resp.status().as_u16() >= 400,
+        status.as_u16() >= 400,
         "malformed backend JSON must return error, got {}",
-        resp.status()
+        status
     );
+}
+
+// DIAG(macos-stall): minimal stderr logger so the proxy's own log::info!
+// lines (request received, upstream call) show up in nextest's captured
+// output with wall-clock stamps.
+struct DiagLogger;
+
+impl log::Log for DiagLogger {
+    fn enabled(&self, meta: &log::Metadata) -> bool {
+        meta.level() <= log::Level::Debug
+    }
+
+    fn log(&self, record: &log::Record) {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        eprintln!("PROXY {}ms [{}] {}", ms, record.level(), record.args());
+    }
+
+    fn flush(&self) {}
 }
 
 // ---------------------------------------------------------------------------

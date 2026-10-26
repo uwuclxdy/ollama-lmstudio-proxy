@@ -1,0 +1,42 @@
+name: diag embed stall
+
+# Branch-only diagnostic for the macOS embed stall (see docs/todo.md): runs
+# the instrumented embed_lmstudio_malformed_json_returns_error test standalone
+# on a macos runner, next to the full-suite run ci.yml already does on the PR.
+# Delete this file with the branch once the stall is diagnosed.
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-embed-stall
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  RUST_BACKTRACE: 1
+
+jobs:
+  diag:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+
+      - name: single test standalone
+        run: |
+          cargo nextest run --release -E 'test(embed_lmstudio_malformed_json_returns_error)' \
+            --success-output=immediate --failure-output=immediatefinal
