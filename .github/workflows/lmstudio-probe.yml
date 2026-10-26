@@ -186,8 +186,8 @@ jobs:
               s, b, h = call(P + '/api/create', body={'model': 'x', 'quantize': 'q4'}); check('create quantize 400', s == 400, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/pull', body={'model': 'definitely-not-a-model'}); check('pull bogus errors', s >= 400, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/push', body={'model': CHAT}); check('push 501', s == 501, f"{s} {b[:200]}")
-              s, b, h = call(P + '/api/blobs/' + 'sha256-' + 'a' * 64, method='HEAD'); check('blobs unknown 404', s == 404, s)
-              s, b, h = call(P + '/api/blobs/sha256-abc', method='HEAD'); check('blobs malformed 400', s == 400, s)
+              s, b, h = call(P + '/api/blobs/sha256:' + 'a' * 64, method='HEAD'); check('blobs unknown 404', s == 404, s)
+              s, b, h = call(P + '/api/blobs/sha256-abc', method='HEAD'); check('blobs invalid digest 400', s == 400, s)
 
               s, b, h = call(P + '/api/web_fetch', body={'url': 'https://example.com'}, timeout=60); check('web_fetch public 200', s == 200, f"{s} {b[:200]}")
               s, b, h = call(P + '/api/web_fetch', body={'url': 'http://127.0.0.1:1234'}, timeout=60); check('web_fetch loopback 400', s == 400, f"{s} {b[:200]}")
