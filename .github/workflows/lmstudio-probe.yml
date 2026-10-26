@@ -66,6 +66,12 @@ jobs:
           ls -la ~/.lmstudio/models/*/*/
           lms daemon down || true
           lms daemon up
+          # same binary-settling race as the daemon step; retry until lms answers
+          for i in $(seq 1 10); do
+            lms ls && break
+            echo "lms ls retry $i"
+            sleep 3
+          done
           lms ls
 
       - name: start lm studio server
