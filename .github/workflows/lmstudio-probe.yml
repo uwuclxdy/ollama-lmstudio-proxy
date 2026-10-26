@@ -43,8 +43,15 @@ jobs:
 
       - name: start headless daemon
         timeout-minutes: 5
+        # daemon up can return while llmster is still settling its own binary
+        # (exec hits "Text file busy"); retry status until it answers.
         run: |
           lms daemon up
+          for i in $(seq 1 10); do
+            lms daemon status && break
+            echo "daemon status retry $i"
+            sleep 3
+          done
           lms daemon status
 
       - name: fetch tiny models (<0.5b)
