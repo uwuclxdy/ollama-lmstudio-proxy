@@ -39,4 +39,4 @@ jobs:
       - name: single test standalone
         run: |
           cargo nextest run --release -E 'test(embed_lmstudio_malformed_json_returns_error)' \
-            --success-output=immediate --failure-output=immediatefinal
+            --success-output=immediate --failure-output=immediate-final

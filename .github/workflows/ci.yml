@@ -82,7 +82,7 @@ jobs:
       - name: clippy (-D warnings)
         run: cargo clippy --all-targets --all-features --release -- -D warnings
       - name: test
-        run: cargo nextest run --release --all-targets --all-features
+        run: cargo nextest run --release --all-targets --all-features --success-output=immediate
       # nextest can't run doctests, so cover them with cargo test. Self-gates on
       # a doctest target so a bin-only crate (no lib) skips instead of erroring
       # with "no library targets found". shell: bash so the linux/mac/windows
