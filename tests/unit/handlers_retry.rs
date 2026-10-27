@@ -43,7 +43,7 @@ fn model_not_found_404_does_not_trigger_load() {
 #[test]
 fn loading_5xx_triggers_load() {
     assert!(should_trigger_load(503, "model is loading"));
-    assert!(should_trigger_load(500, "server error occurred"));
+    assert!(should_trigger_load(500, "model not ready"));
 }
 
 #[test]
@@ -97,15 +97,29 @@ fn loading_indicator_phrases_are_case_insensitive() {
     assert!(is_model_loading_error("UNKNOWN MODEL"));
 }
 
-// --- lm-studio-style patterns ---
+// --- bare numbers and transport words in free text are not load state ---
 
 #[test]
-fn lm_studio_loading_patterns_trigger() {
+fn numbers_in_free_text_do_not_trigger() {
+    // The decode error embeds the upstream url, so the ephemeral port can supply
+    // "500"/"503" as a substring; classification must not read numbers as load state.
+    assert!(!is_model_loading_error(
+        "invalid JSON from LM Studio: error decoding response body for url (http://127.0.0.1:50003/v1/embeddings)"
+    ));
+    assert!(!is_model_loading_error("500 internal error"));
+    assert!(!is_model_loading_error("request timeout"));
+}
+
+#[test]
+fn transport_words_do_not_trigger() {
+    assert!(!is_model_loading_error("server error occurred"));
+    assert!(!is_model_loading_error("connection refused"));
+}
+
+#[test]
+fn service_unavailable_still_triggers_via_model_ref() {
+    // "unavailable" carries both a negative and an availability model-reference.
     assert!(is_model_loading_error("503 service unavailable"));
-    assert!(is_model_loading_error("500 internal error"));
-    assert!(is_model_loading_error("server error occurred"));
-    assert!(is_model_loading_error("connection refused"));
-    assert!(is_model_loading_error("request timeout"));
 }
 
 // --- messages that should NOT trigger retry ---

@@ -51,19 +51,8 @@ pub fn is_model_loading_error(message: &str) -> bool {
         || lower.contains("ready")
         || lower.contains("initialize");
 
-    let lm_studio_loading_patterns = [
-        "service unavailable",
-        "server error",
-        "internal error",
-        "timeout",
-        "connection",
-        "503",
-        "500",
-    ];
-
-    let has_lm_studio_loading = lm_studio_loading_patterns
-        .iter()
-        .any(|&pattern| lower.contains(pattern));
-
-    (has_negative && has_model_ref) || has_lm_studio_loading
+    // Bare status codes and transport words are deliberately not matched: the
+    // message carries free text (an embedded url can supply "500" as a port
+    // substring), and the caller has the real status_code in hand.
+    has_negative && has_model_ref
 }

@@ -136,13 +136,11 @@ fn service_unavailable_phrase_is_detected() {
 }
 
 #[test]
-fn timeout_is_detected() {
-    assert!(is_model_loading_error("timeout"));
-}
-
-#[test]
-fn plain_503_in_message_is_detected() {
-    assert!(is_model_loading_error("HTTP 503 error returned"));
+fn bare_timeout_and_503_are_not_detected() {
+    // Transport words and bare status codes are not load state; a real timeout
+    // arrives as a 503 ProxyError and fails fast before classification.
+    assert!(!is_model_loading_error("timeout"));
+    assert!(!is_model_loading_error("HTTP 503 error returned"));
 }
 
 #[test]
