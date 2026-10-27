@@ -156,3 +156,46 @@ fn resolve_match_result_is_stable_across_input_order() {
         "result must be deterministic regardless of input ordering"
     );
 }
+
+// ─── available-models decode: stamped as a decode failure ────────────────────
+
+#[tokio::test]
+async fn available_models_decode_failure_is_stamped_as_decode() {
+    // A 200 whose body is not JSON is an ANSWERED response, so the retry layer
+    // must return it verbatim: without the marker its message ("invalid JSON
+    // from /api/v1/models: ...") satisfies the two-word load classifier and the
+    // request detours through an explicit load plus the load-timeout sleep.
+    let mock = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(LM_STUDIO_NATIVE_MODELS))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("<html>not json</html>"))
+        .mount(&mock)
+        .await;
+
+    let resolver = ModelResolver::new(
+        mock.uri(),
+        moka::future::Cache::builder().max_capacity(8).build(),
+    );
+    let err = resolver
+        .resolve_model_name(
+            "some-model",
+            &reqwest::Client::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("a 200 body that is not JSON must fail decoding");
+
+    assert_eq!(
+        err.status_code, 500,
+        "a decode fault on a 2xx stays a genuine 500"
+    );
+    assert!(
+        err.message.starts_with("invalid JSON from /api/v1/models"),
+        "client-visible decode wording must stay; got {}",
+        err.message
+    );
+    assert!(
+        err.is_decode_failure(),
+        "the resolver's decode failure must carry the marker the retry layer reads"
+    );
+}

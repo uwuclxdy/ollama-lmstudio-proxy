@@ -117,7 +117,7 @@ pub async fn handle_json_response(
                             status.as_u16(),
                         ))
                     } else {
-                        Err(ProxyError::internal_server_error(&format!(
+                        Err(ProxyError::lm_studio_decode_error(&format!(
                             "invalid JSON from LM Studio: {}", e
                         )))
                     }

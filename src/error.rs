@@ -19,6 +19,10 @@ pub struct ProxyError {
     /// without any outer layer having to re-read the error from response
     /// extensions (which a response-rebuilding middleware would drop).
     anthropic_surface: bool,
+    /// Set where a 2xx LM Studio body failed to decode, so the retry layer can
+    /// return the error verbatim instead of classifying its url-bearing message
+    /// as a load signal.
+    decode_failure: bool,
 }
 
 impl ProxyError {
@@ -27,6 +31,7 @@ impl ProxyError {
             message,
             status_code,
             anthropic_surface: false,
+            decode_failure: false,
         }
     }
 
@@ -61,6 +66,14 @@ impl ProxyError {
         Self::new(message.to_string(), 503)
     }
 
+    /// Build the 500 for a 2xx LM Studio response whose body failed to decode,
+    /// stamped for the retry layer.
+    pub fn lm_studio_decode_error(message: &str) -> Self {
+        let mut error = Self::new(message.to_string(), 500);
+        error.decode_failure = true;
+        error
+    }
+
     pub fn too_many_requests(message: &str) -> Self {
         Self::new(message.to_string(), 429)
     }
@@ -92,6 +105,10 @@ impl ProxyError {
 
     pub fn is_lm_studio_unavailable(&self) -> bool {
         self.status_code == 503
+    }
+
+    pub fn is_decode_failure(&self) -> bool {
+        self.decode_failure
     }
 }
 

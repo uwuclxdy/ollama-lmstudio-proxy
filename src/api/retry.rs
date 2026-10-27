@@ -2,7 +2,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
@@ -236,6 +236,74 @@ async fn record_loaded_key(
     }
 }
 
+/// Poll cadence for the post-trigger load wait.
+const LOAD_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Waits for the JIT load to become resident, bounded by `load_timeout_seconds`.
+/// Expiry returns to the retry, which stays the arbiter of whether the load
+/// worked; a failed poll is best-effort and never fails the request.
+/// Cancellation is the caller's `select!` job, which is why the token only
+/// rides the outgoing GETs.
+async fn wait_for_loaded_instance(
+    context: &RequestContext<'_>,
+    ollama_model_name: &str,
+    load_timeout_seconds: u64,
+    cancellation_token: CancellationToken,
+) {
+    // Best-effort like `record_loaded_key`: a failed resolve must not fail the
+    // wait.
+    let cache = moka::future::Cache::builder().max_capacity(64).build();
+    let resolver = ModelResolver::new(context.lmstudio_url.to_string(), cache);
+
+    let total = Duration::from_secs(load_timeout_seconds);
+    let started = Instant::now();
+    let resolved_key = match timeout(
+        total,
+        resolver.resolve_model_name(
+            ollama_model_name,
+            context.client,
+            cancellation_token.clone(),
+        ),
+    )
+    .await
+    {
+        Ok(Ok(key)) => key,
+        _ => ollama_model_name.to_string(),
+    };
+
+    loop {
+        let remaining = total.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return;
+        }
+        match timeout(
+            remaining,
+            resolver.get_loaded_models(context.client, cancellation_token.clone()),
+        )
+        .await
+        {
+            Ok(Ok(loaded)) => {
+                if loaded.iter().any(|m| m.id == resolved_key) {
+                    return;
+                }
+            }
+            Ok(Err(e)) => {
+                log::debug!(
+                    "load-event wait: models poll failed, continuing: {}",
+                    e.message
+                );
+            }
+            Err(_) => return,
+        }
+        sleep(
+            total
+                .saturating_sub(started.elapsed())
+                .min(LOAD_EVENT_POLL_INTERVAL),
+        )
+        .await;
+    }
+}
+
 /// Whether an upstream failure should trigger a best-effort model load and retry.
 ///
 /// True for a 400 carrying LM Studio's "no models loaded" (a model that exists
@@ -284,6 +352,13 @@ where
         // loading classifier — e.g. a 502 "model unreachable" — so guard them
         // here to avoid a spurious load detour before returning).
         Err(e) if e.status_code == 429 || e.status_code == 502 => Err(e),
+        // A decode failure is an ANSWERED response — LM Studio delivered a
+        // body, so no load can fix it. Its message embeds the upstream url,
+        // whose text alone can satisfy the loose classifier (a base-url path
+        // carrying "model" beside the "invalid" in the proxy's own prefix),
+        // so the decode sites stamp a marker and this arm returns the error
+        // before any message classification.
+        Err(e) if e.is_decode_failure() => Err(e),
         Err(e) => {
             if should_trigger_load(e.status_code, &e.message) {
                 let model_loading_start = Instant::now();
@@ -305,7 +380,12 @@ where
                 {
                     Ok(true) => {
                         tokio::select! {
-                            _ = sleep(Duration::from_secs(load_timeout_seconds)) => {},
+                            _ = wait_for_loaded_instance(
+                                context,
+                                ollama_model_name,
+                                load_timeout_seconds,
+                                cancellation_token.clone(),
+                            ) => {},
                             _ = cancellation_token.cancelled() => {
                                 return Err(ProxyError::request_cancelled());
                             }

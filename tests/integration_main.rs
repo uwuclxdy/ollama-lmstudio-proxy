@@ -62,5 +62,11 @@ mod auto_evict;
 #[path = "integration/cold_load_bare_key.rs"]
 mod cold_load_bare_key;
 
+#[path = "integration/cold_load_event_wait.rs"]
+mod cold_load_event_wait;
+
+#[path = "integration/decode_error_never_load_retry.rs"]
+mod decode_error_never_load_retry;
+
 #[path = "integration/envelope_rebuild.rs"]
 mod envelope_rebuild;

@@ -121,7 +121,7 @@ impl ModelResolver {
         }
 
         let native_response = response.json::<NativeModelsResponse>().await.map_err(|e| {
-            ProxyError::internal_server_error(&format!(
+            ProxyError::lm_studio_decode_error(&format!(
                 "invalid JSON from {}: {}. Ensure LM Studio 0.4.0+ is running",
                 LM_STUDIO_NATIVE_MODELS, e
             ))

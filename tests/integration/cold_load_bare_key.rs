@@ -17,8 +17,9 @@
 //      at p.mock.verify().
 //   3. Returning 200 on the retry chat completions call.
 //
-// `load_timeout_seconds` is set to 1 so the sleep between trigger and retry is
-// 1 second, keeping the test fast.
+// `load_timeout_seconds` is set to 1 so the post-trigger event wait is short:
+// the mock catalog shows the model UNLOADED forever, so the waiter runs to its
+// 1 s bound before the retry, keeping the test fast.
 
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method, path};
@@ -63,14 +64,15 @@ fn lm_chat_ok() -> Value {
 // The cold-load-on-error path triggers when the first chat attempt returns LM
 // Studio's literal "No models loaded" 400. The proxy must:
 //   a) POST /api/v1/models/load with {"model":"some-model"} (bare key, no tag)
-//   b) sleep load_timeout_seconds
+//   b) wait for the load event, bounded by load_timeout_seconds (the catalog
+//      below never shows a loaded instance, so the wait runs to its bound)
 //   c) retry POST /api/v0/chat/completions → 200
 //
 // The bare-key assertion is enforced by the body_partial_json matcher on the
 // load mock: if ":latest" leaks in, the matcher won't fire and .expect(1) fails.
 #[tokio::test]
 async fn cold_load_uses_bare_key_not_latest_tag() {
-    // 1-second sleep between trigger and retry → test completes in ~1-2 s.
+    // 1-second event-wait bound between trigger and retry → test completes in ~1-2 s.
     let p = spawn_proxy_with_load_timeout(1).await;
 
     // Catalog: model exists but has no loaded instances (cold).
@@ -115,8 +117,8 @@ async fn cold_load_uses_bare_key_not_latest_tag() {
         .mount(&p.mock)
         .await;
 
-    // Use a longer client timeout: proxy sleeps load_timeout_seconds (1s) plus
-    // the two round-trip calls before returning, so 10s total is enough.
+    // Use a longer client timeout: proxy waits up to load_timeout_seconds (1s)
+    // plus the two round-trip calls before returning, so 10s total is enough.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()

@@ -1168,9 +1168,11 @@ async fn embed_jit_loads_model_on_no_models_loaded_then_retries() {
         .mount(&p.mock)
         .await;
 
-    // The proxy sleeps `load_timeout_seconds` (15s in the test config) between the
-    // trigger and the retry, which exceeds the shared client's 10s timeout — use a
-    // local client with a longer timeout to observe the full retry round-trip.
+    // The proxy waits up to `load_timeout_seconds` (15s in the test config; the
+    // catalog above never shows a loaded instance, so the wait runs to its bound)
+    // between the trigger and the retry, which exceeds the shared client's 10s
+    // timeout — use a local client with a longer timeout to observe the full
+    // retry round-trip.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()

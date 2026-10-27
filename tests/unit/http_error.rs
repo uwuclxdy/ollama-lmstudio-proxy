@@ -89,6 +89,21 @@ fn is_lm_studio_unavailable_false_for_non_503() {
 }
 
 #[test]
+fn decode_failure_marker_rides_only_the_decode_ctor() {
+    // A decode error's message embeds the upstream url, so its text alone can
+    // satisfy the load classifier (a base-url path carrying "model" beside the
+    // "invalid" in the proxy's own prefix); the marker — never the wording —
+    // is what the retry layer checks to return it verbatim.
+    let url_message = "invalid JSON from LM Studio: error decoding response body for url (http://127.0.0.1:50003/model-proxy/v1/api/v0/chat/completions)";
+    let e = ProxyError::lm_studio_decode_error(url_message);
+    assert_eq!(e.status_code, 500);
+    assert!(e.is_decode_failure());
+    // The marker, not the wording, discriminates: the identical load-worded
+    // text built without the decode ctor stays unmarked.
+    assert!(!ProxyError::internal_server_error(url_message).is_decode_failure());
+}
+
+#[test]
 fn display_includes_code_and_message() {
     let e = ProxyError::new("some error".to_string(), 422);
     let s = format!("{e}");
