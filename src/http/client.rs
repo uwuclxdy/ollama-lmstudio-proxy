@@ -109,11 +109,8 @@ pub async fn handle_json_response(
                     if is_error {
                         // Non-JSON error body: preserve the upstream status
                         // instead of masking it as 500 (matches the streaming
-                        // path's reject_pre_stream_error). The message is kept
-                        // neutral on purpose — echoing the raw body or the status
-                        // phrase (e.g. "500 Internal Server Error") would trip the
-                        // loading-error classifier and cause a spurious
-                        // load-retry. A parse failure on a 2xx is still a genuine
+                        // path's reject_pre_stream_error). The message stays
+                        // neutral; a parse failure on a 2xx is still a genuine
                         // 500 (garbage where JSON was expected).
                         Err(ProxyError::new(
                             "LM Studio returned a non-JSON error body".to_string(),

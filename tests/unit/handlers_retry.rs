@@ -1,6 +1,6 @@
 // with_retry_and_cancellation / with_simple_retry / execute_request_with_retry
 // all require a live RequestContext (network) and async runtime with tokio::select!.
-// The only pure-classification logic lives in crate::error::is_model_loading_error,
+// The only pure-classification logic lives in crate::lmstudio::is_model_loading_error,
 // which is imported here for exhaustive coverage.
 use crate::api::retry::should_trigger_load;
 use crate::lmstudio::is_model_loading_error;
