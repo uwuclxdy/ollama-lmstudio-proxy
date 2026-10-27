@@ -300,7 +300,12 @@ impl ResponseTransformer {
         start_time: Instant,
     ) -> Value {
         let content = Self::extract_completion_content(lm_response);
-        let thinking = extract_completion_thinking(lm_response);
+        // A field-carried trace wins: the text then stays verbatim. Only when
+        // the backend reports no reasoning is an inline block split out.
+        let (thinking, content) = match extract_completion_thinking(lm_response) {
+            Some(thinking) => (Some(thinking), content),
+            None => split_leading_think_block(&content),
+        };
 
         let timing = TimingInfo::from_native_stats(
             lm_response,
@@ -474,6 +479,28 @@ fn extract_completion_thinking(lm_response: &Value) -> Option<String> {
     } else {
         Some(s.to_string())
     }
+}
+
+/// Split a `<think>...</think>` block that opens the completion text into its
+/// trace and the remaining answer.
+///
+/// The split is start-anchored: leading whitespace before `<think>` is
+/// tolerated, but a tag after other content is content. An opening tag with no
+/// closing tag leaves the text untouched. The trace keeps its exact bytes; the
+/// whitespace after the closing tag is separator, so it is trimmed.
+fn split_leading_think_block(content: &str) -> (Option<String>, String) {
+    let Some(rest) = content.trim_start().strip_prefix("<think>") else {
+        return (None, content.to_string());
+    };
+    let Some(end) = rest.find("</think>") else {
+        return (None, content.to_string());
+    };
+    let trace = &rest[..end];
+    let thinking = (!trace.is_empty()).then(|| trace.to_string());
+    (
+        thinking,
+        rest[end + "</think>".len()..].trim_start().to_string(),
+    )
 }
 
 pub fn estimate_token_count(text: &str) -> u64 {

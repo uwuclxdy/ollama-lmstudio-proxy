@@ -178,6 +178,127 @@ fn generate_response_no_thinking_field_when_absent() {
 }
 
 // =========================================================================
+// inline <think> block split (start-anchored)
+// =========================================================================
+
+#[test]
+fn generate_response_splits_leading_inline_think_block() {
+    let lm = lm_completion_response("<think>hidden reasoning</think>\n\nThe answer is 42.", None);
+    let result = ResponseTransformer::convert_to_ollama_generate(
+        &lm,
+        "mymodel",
+        "what is the answer?",
+        Instant::now(),
+    );
+    assert_eq!(
+        result.get("thinking").and_then(|v| v.as_str()),
+        Some("hidden reasoning"),
+        "a leading inline think block must move to the thinking field"
+    );
+    assert_eq!(
+        result.get("response").and_then(|v| v.as_str()),
+        Some("The answer is 42."),
+        "the trace block and its separator whitespace must not stay in the response"
+    );
+}
+
+#[test]
+fn generate_response_splits_think_block_after_leading_whitespace() {
+    let lm = lm_completion_response("\n\n<think>r</think>answer", None);
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(result.get("thinking").and_then(|v| v.as_str()), Some("r"));
+    assert_eq!(
+        result.get("response").and_then(|v| v.as_str()),
+        Some("answer")
+    );
+}
+
+#[test]
+fn generate_response_mid_text_think_tag_stays_inline() {
+    // A literal tag after other content is content, never a trace: the split
+    // is start-anchored.
+    let text = "The tag <think>hi</think> is content";
+    let lm = lm_completion_response(text, None);
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(result.get("response").and_then(|v| v.as_str()), Some(text));
+    assert!(result.get("thinking").is_none());
+}
+
+#[test]
+fn generate_response_unclosed_think_block_stays_inline() {
+    let text = "<think>truncated mid-generation";
+    let lm = lm_completion_response(text, None);
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(result.get("response").and_then(|v| v.as_str()), Some(text));
+    assert!(result.get("thinking").is_none());
+}
+
+#[test]
+fn generate_response_empty_think_block_leaves_no_thinking_field() {
+    let lm = lm_completion_response("<think></think>answer", None);
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(
+        result.get("response").and_then(|v| v.as_str()),
+        Some("answer")
+    );
+    assert!(result.get("thinking").is_none());
+}
+
+#[test]
+fn generate_response_reasoning_field_wins_over_inline_block() {
+    // When the backend populates the reasoning field itself, the text is
+    // taken verbatim — the inline split only covers the field-absent path.
+    let lm = lm_completion_response("<think>inline</think>answer", Some("field reasoning"));
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(
+        result.get("thinking").and_then(|v| v.as_str()),
+        Some("field reasoning")
+    );
+    assert_eq!(
+        result.get("response").and_then(|v| v.as_str()),
+        Some("<think>inline</think>answer")
+    );
+}
+
+#[test]
+fn generate_response_splits_inline_think_block_in_message_content_fallback() {
+    // A generate with a system prompt routes through /api/v0/chat/completions,
+    // where the text arrives under message.content; the same inline-trace
+    // symptom splits there too.
+    let lm = json!({
+        "choices": [{
+            "message": { "content": "<think>r</think>answer" },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(result.get("thinking").and_then(|v| v.as_str()), Some("r"));
+    assert_eq!(
+        result.get("response").and_then(|v| v.as_str()),
+        Some("answer")
+    );
+}
+
+#[test]
+fn generate_response_estimates_tokens_on_post_split_text() {
+    // Without usage stats the estimate is the only count source; it must measure
+    // the answer text after the trace is removed ("answer" = 6 bytes -> 2).
+    let lm = json!({
+        "choices": [{ "text": "<think>reasoning</think>answer", "finish_reason": "stop" }]
+    });
+    let result =
+        ResponseTransformer::convert_to_ollama_generate(&lm, "mymodel", "q", Instant::now());
+    assert_eq!(result.get("eval_count").and_then(|v| v.as_u64()), Some(2));
+}
+
+// =========================================================================
 // generate_context (from translation_generate_context)
 // =========================================================================
 
