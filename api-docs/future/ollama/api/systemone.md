@@ -176,8 +176,8 @@ components:
           type: array
           description: >-
             Base64-encoded images shared by all questions, in request order.
-            Requires a model with vision, such as Clef. URLs and data URLs are
-            not supported.
+            Requires a model with vision, such as Clef. Models with audio input
+            also accept WAV clips here. URLs and data URLs are not supported.
           items:
             type: string
             format: byte
