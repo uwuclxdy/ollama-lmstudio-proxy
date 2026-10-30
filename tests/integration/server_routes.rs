@@ -403,6 +403,84 @@ async fn route_audio_speech_is_present_and_returns_501() {
 }
 
 #[tokio::test]
+async fn route_audio_transcriptions_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    // A transcription request carries a `file` upload (multipart/form-data
+    // in the OpenAI spec these endpoints mirror), so the stub must answer it
+    // itself instead of failing inside a JSON body extractor.
+    let boundary = "proxytestboundary7351";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfakeaudio\r\n--{boundary}--\r\n"
+    );
+    let resp = p
+        .client
+        .post(p.url("/v1/audio/transcriptions"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/audio/transcriptions");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/v1/audio/transcriptions must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/v1/audio/transcriptions must return 501: LM Studio has no audio transcription endpoint to forward to"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("transcription"),
+        "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn route_audio_translations_is_present_and_returns_501() {
+    let p = spawn_proxy().await;
+    // Same upload shape as transcriptions, with the Ollama extension field
+    // `to_language` alongside the file part.
+    let boundary = "proxytestboundary7351";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfakeaudio\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"to_language\"\r\n\r\nen\r\n--{boundary}--\r\n"
+    );
+    let resp = p
+        .client
+        .post(p.url("/v1/audio/translations"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/audio/translations");
+    assert_ne!(
+        resp.status(),
+        404,
+        "/v1/audio/translations must be a recognised route"
+    );
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/v1/audio/translations must return 501: LM Studio has no audio translation endpoint to forward to"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("translation"),
+        "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+#[tokio::test]
 async fn route_web_fetch_is_present_and_fetches() {
     let p = spawn_proxy().await;
     // web_fetch hits an arbitrary URL with its own client; point it at the mock

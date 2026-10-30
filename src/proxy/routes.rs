@@ -150,6 +150,8 @@ pub fn create_router(server: AppState) -> Router {
         .route("/api/push", post(push_handler))
         .route("/v1/systemone", post(systemone_handler))
         .route("/v1/audio/speech", post(speech_handler))
+        .route("/v1/audio/transcriptions", post(transcriptions_handler))
+        .route("/v1/audio/translations", post(translations_handler))
         .route("/api/web_search", post(web_search_handler))
         .route("/api/web_fetch", post(web_fetch_handler))
         .route("/api/show", post(show_handler))
@@ -347,6 +349,27 @@ async fn systemone_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, Pro
 async fn speech_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
     Err(ProxyError::not_implemented(
         "audio speech is not supported: LM Studio has no TTS endpoint",
+    ))
+}
+
+// Upstream OpenAI audio transcription/translation endpoints
+// (api-docs/ollama/api/openai-compatibility.md §/v1/audio/transcriptions and
+// §/v1/audio/translations; translations is noted upstream as added in Ollama
+// v0.40.12). LM Studio exposes no audio-input surface (no transcription page
+// anywhere in api-docs/lmstudio/), and its catch-all answers unknown /v1
+// paths with a misleading `200 {"error":"Unexpected endpoint..."}` — an
+// explicit 501 beats it. The upload is consumed up to the router body
+// limit, so the client reliably gets the answer instead of a mid-upload
+// connection close.
+async fn transcriptions_handler(BodyBytes(_): BodyBytes) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "audio transcriptions are not supported: LM Studio has no audio transcription endpoint",
+    ))
+}
+
+async fn translations_handler(BodyBytes(_): BodyBytes) -> Result<Response, ProxyError> {
+    Err(ProxyError::not_implemented(
+        "audio translations are not supported: LM Studio has no audio translation endpoint",
     ))
 }
 
