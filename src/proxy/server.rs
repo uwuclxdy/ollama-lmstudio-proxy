@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use moka::future::Cache;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::normalize_path::NormalizePath;
 
 use crate::config::Config;
 use crate::logging::LogConfig;
@@ -114,9 +116,14 @@ impl ProxyServer {
             shutdown.cancel();
         });
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(server.shutdown.clone().cancelled_owned())
-            .await?;
+        let app = normalize_path(app);
+
+        axum::serve(
+            listener,
+            axum::ServiceExt::<axum::extract::Request>::into_make_service(app),
+        )
+        .with_graceful_shutdown(server.shutdown.clone().cancelled_owned())
+        .await?;
 
         log::info!("server stopped");
         Ok(())
@@ -183,6 +190,18 @@ pub fn cors_layer() -> CorsLayer {
             Method::HEAD,
         ])
         .allow_headers(Any)
+}
+
+/// Trim trailing slashes off every incoming request path before routing, so
+/// `/v1/models/` reaches the same handler as `/v1/models` instead of falling
+/// through to the `/v1/{*path}` passthrough and LM Studio's catch-all. This
+/// must wrap the finished router, not sit in a `Router::layer`: router layers
+/// run after path matching, so a layer would rename the path only after the
+/// endpoint was already picked. Wrapping outermost also means the auth gate
+/// sees the trimmed path, keeping its `/api/version` exemption
+/// slash-insensitive.
+pub fn normalize_path(app: Router) -> NormalizePath<Router> {
+    NormalizePath::trim_trailing_slash(app)
 }
 
 #[cfg(test)]

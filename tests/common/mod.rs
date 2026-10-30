@@ -19,6 +19,7 @@ use ollama_lmstudio_proxy::logging::LogConfig;
 use ollama_lmstudio_proxy::proxy::ProxyServer;
 use ollama_lmstudio_proxy::proxy::routes::create_router;
 use ollama_lmstudio_proxy::proxy::server::cors_layer;
+use ollama_lmstudio_proxy::proxy::server::normalize_path;
 
 static INIT_RUNTIME: Once = Once::new();
 
@@ -228,9 +229,10 @@ async fn spawn_proxy_inner(
     let server = Arc::new(server);
 
     // Replicate the production layer stack from `ProxyServer::run` so the test
-    // harness exercises the same middleware: access_log → api_key_gate → cors.
-    // The api_key gate is a no-op when `api_key` is None, so existing tests are
-    // unaffected.
+    // harness exercises the same middleware: api_key_gate → cors. Like `run`,
+    // wrap the finished router in `normalize_path` so trailing-slash handling
+    // matches production. The api_key gate is a no-op when `api_key` is None,
+    // so existing tests are unaffected.
     let api_key = Arc::new(server.config.api_key.clone());
     let app = create_router(server)
         .layer(axum::middleware::from_fn_with_state(
@@ -257,13 +259,20 @@ async fn spawn_proxy_inner(
         app
     };
 
+    let app = normalize_path(app);
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local_addr");
 
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("axum::serve");
+        axum::serve(
+            listener,
+            axum::ServiceExt::<axum::extract::Request>::into_make_service(app),
+        )
+        .await
+        .expect("axum::serve");
     });
 
     let client = reqwest::Client::builder()

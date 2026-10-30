@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
-use crate::common::{TestProxy, spawn_proxy};
+use crate::common::{TestProxy, spawn_proxy, spawn_proxy_with_api_key};
 
 // ---------------------------------------------------------------------------
 // Original tests (preserved)
@@ -477,6 +477,106 @@ async fn route_audio_translations_is_present_and_returns_501() {
     assert!(
         body["error"].as_str().unwrap_or("").contains("translation"),
         "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+// A trailing slash must not turn an explicit route into a passthrough request:
+// `/v1/{*path}` would otherwise swallow it and forward to LM Studio's
+// catch-all. Normalization runs outside the router so every explicit route
+// answers its own handler, including ahead of the auth gate.
+
+#[tokio::test]
+async fn trailing_slash_on_stub_route_returns_501() {
+    let p = spawn_proxy().await;
+    let boundary = "proxytestboundary7351";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfakeaudio\r\n--{boundary}--\r\n"
+    );
+    let resp = p
+        .client
+        .post(p.url("/v1/audio/transcriptions/"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/audio/transcriptions/");
+    assert_eq!(
+        resp.status().as_u16(),
+        501,
+        "/v1/audio/transcriptions/ must reach the stub, not the passthrough"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("transcription"),
+        "the 501 body must name the endpoint; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn trailing_slash_on_local_route_reaches_handler() {
+    let p = spawn_proxy().await;
+    let resp = p
+        .client
+        .get(p.url("/api/version/"))
+        .send()
+        .await
+        .expect("GET /api/version/");
+    assert_eq!(
+        resp.status(),
+        200,
+        "GET /api/version/ must be served locally"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body.get("version")
+            .map(serde_json::Value::is_string)
+            .unwrap_or(false),
+        "GET /api/version/ must answer the version handler; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn trailing_slash_on_passthrough_is_trimmed_before_forwarding() {
+    let p = spawn_proxy().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{\"data\":[]}"))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models/"))
+        .send()
+        .await
+        .expect("GET /v1/models/");
+    assert_eq!(
+        resp.status(),
+        200,
+        "the passthrough must forward the trimmed path to the backend"
+    );
+    assert_eq!(resp.text().await.expect("body"), "{\"data\":[]}");
+}
+
+#[tokio::test]
+async fn trailing_slash_keeps_version_exempt_from_auth() {
+    let p = spawn_proxy_with_api_key("s3cret-test-key").await;
+    let resp = p
+        .client
+        .get(p.url("/api/version/"))
+        .send()
+        .await
+        .expect("GET /api/version/ without a key");
+    assert_eq!(
+        resp.status(),
+        200,
+        "/api/version/ must stay exempt from the auth gate like /api/version"
     );
 }
 
