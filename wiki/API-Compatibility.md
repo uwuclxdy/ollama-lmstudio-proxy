@@ -49,6 +49,7 @@ before forwarding. A few compatibility shims apply on top:
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
 - `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers `501`: LM Studio's Jev-compatible `/v1/systemone` is documented only in the future mirror, so the proxy keeps an explicit 501 instead of forwarding to LM Studio's misleading `200 {"error":"Unexpected endpoint..."}` envelope.
 - `POST /v1/audio/speech` (upstream v0.40.8 OpenAI audio-speech endpoint) answers `501`: LM Studio has no TTS surface, and its catch-all answers unknown `/v1` paths with the misleading `200 {"error":"Unexpected endpoint..."}` envelope.
+- `POST /v1/audio/transcriptions` and `POST /v1/audio/translations` (upstream OpenAI audio transcription/translation endpoints; translations is noted as added in Ollama v0.40.12) answer `501` for the same reason: LM Studio exposes no audio-input surface, so forwarding would hit the same misleading envelope. Requests carry a `file` upload (multipart/form-data in the OpenAI spec these endpoints mirror); the proxy consumes the upload up to the body limit so the client reliably receives the 501 instead of a mid-upload connection close.
 
 Anthropic clients such as Claude Code work against `/v1/messages` with no extra setup: point `ANTHROPIC_BASE_URL` at the proxy.
 
