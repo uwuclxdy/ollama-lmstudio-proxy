@@ -1,0 +1,36 @@
+name: api delta verdict
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/api-delta-verdict.py
+      - scripts/test_api_delta_verdict.py
+      - .github/workflows/api-delta-verdict.yml
+  pull_request:
+    paths:
+      - scripts/api-delta-verdict.py
+      - scripts/test_api_delta_verdict.py
+      - .github/workflows/api-delta-verdict.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # The classifier reads yaml structurally when pyyaml is present; install
+      # it so the yaml cases run instead of skipping.
+      - name: install pyyaml
+        run: python3 -m pip install "pyyaml>=6"
+      - name: unittest corpus
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
