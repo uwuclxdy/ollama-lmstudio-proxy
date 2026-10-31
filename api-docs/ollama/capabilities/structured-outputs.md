@@ -12,42 +12,42 @@ Structured outputs let you enforce a JSON schema on model responses so you can r
 
 ## Generating structured JSON
 
-**cURL**
+> [tab] cURL
+>
+> ```shell theme={"system"}
+> curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+>   "model": "gpt-oss",
+>   "messages": [{"role": "user", "content": "Tell me about Canada in one line"}],
+>   "stream": false,
+>   "format": "json"
+> }'
+> ```
 
-```shell theme={"system"}
-curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
-  "model": "gpt-oss",
-  "messages": [{"role": "user", "content": "Tell me about Canada in one line"}],
-  "stream": false,
-  "format": "json"
-}'
-```
+> [tab] Python
+>
+> ```python theme={"system"}
+> from ollama import chat
+>
+> response = chat(
+>   model='gpt-oss',
+>   messages=[{'role': 'user', 'content': 'Tell me about Canada.'}],
+>   format='json'
+> )
+> print(response.message.content)
+> ```
 
-**Python**
-
-```python theme={"system"}
-from ollama import chat
-
-response = chat(
-  model='gpt-oss',
-  messages=[{'role': 'user', 'content': 'Tell me about Canada.'}],
-  format='json'
-)
-print(response.message.content)
-```
-
-**JavaScript**
-
-```javascript theme={"system"}
-import ollama from 'ollama'
-
-const response = await ollama.chat({
-  model: 'gpt-oss',
-  messages: [{ role: 'user', content: 'Tell me about Canada.' }],
-  format: 'json'
-})
-console.log(response.message.content)
-```
+> [tab] JavaScript
+>
+> ```javascript theme={"system"}
+> import ollama from 'ollama'
+>
+> const response = await ollama.chat({
+>   model: 'gpt-oss',
+>   messages: [{ role: 'user', content: 'Tell me about Canada.' }],
+>   format: 'json'
+> })
+> console.log(response.message.content)
+> ```
 
 ## Generating structured JSON with a schema
 
@@ -57,74 +57,74 @@ Provide a JSON schema to the `format` field.
 >
 > It is ideal to also pass the JSON schema as a string in the prompt to ground the model's response.
 
-**cURL**
+> [tab] cURL
+>
+> ```shell theme={"system"}
+> curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+>   "model": "gpt-oss",
+>   "messages": [{"role": "user", "content": "Tell me about Canada."}],
+>   "stream": false,
+>   "format": {
+>     "type": "object",
+>     "properties": {
+>       "name": {"type": "string"},
+>       "capital": {"type": "string"},
+>       "languages": {
+>         "type": "array",
+>         "items": {"type": "string"}
+>       }
+>     },
+>     "required": ["name", "capital", "languages"]
+>   }
+> }'
+> ```
 
-```shell theme={"system"}
-curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
-  "model": "gpt-oss",
-  "messages": [{"role": "user", "content": "Tell me about Canada."}],
-  "stream": false,
-  "format": {
-    "type": "object",
-    "properties": {
-      "name": {"type": "string"},
-      "capital": {"type": "string"},
-      "languages": {
-        "type": "array",
-        "items": {"type": "string"}
-      }
-    },
-    "required": ["name", "capital", "languages"]
-  }
-}'
-```
+> [tab] Python
+>
+> Use Pydantic models and pass `model_json_schema()` to `format`, then validate the response:
+>
+> ```python theme={"system"}
+> from ollama import chat
+> from pydantic import BaseModel
+>
+> class Country(BaseModel):
+>   name: str
+>   capital: str
+>   languages: list[str]
+>
+> response = chat(
+>   model='gpt-oss',
+>   messages=[{'role': 'user', 'content': 'Tell me about Canada.'}],
+>   format=Country.model_json_schema(),
+> )
+>
+> country = Country.model_validate_json(response.message.content)
+> print(country)
+> ```
 
-**Python**
-
-Use Pydantic models and pass `model_json_schema()` to `format`, then validate the response:
-
-```python theme={"system"}
-from ollama import chat
-from pydantic import BaseModel
-
-class Country(BaseModel):
-  name: str
-  capital: str
-  languages: list[str]
-
-response = chat(
-  model='gpt-oss',
-  messages=[{'role': 'user', 'content': 'Tell me about Canada.'}],
-  format=Country.model_json_schema(),
-)
-
-country = Country.model_validate_json(response.message.content)
-print(country)
-```
-
-**JavaScript**
-
-Serialize a Zod schema with `z.toJSONSchema()` and parse the structured response:
-
-```javascript theme={"system"}
-import ollama from 'ollama'
-import * as z from 'zod'
-
-const Country = z.object({
-  name: z.string(),
-  capital: z.string(),
-  languages: z.array(z.string()),
-})
-
-const response = await ollama.chat({
-  model: 'gpt-oss',
-  messages: [{ role: 'user', content: 'Tell me about Canada.' }],
-  format: z.toJSONSchema(Country),
-})
-
-const country = Country.parse(JSON.parse(response.message.content))
-console.log(country)
-```
+> [tab] JavaScript
+>
+> Serialize a Zod schema with `z.toJSONSchema()` and parse the structured response:
+>
+> ```javascript theme={"system"}
+> import ollama from 'ollama'
+> import * as z from 'zod'
+>
+> const Country = z.object({
+>   name: z.string(),
+>   capital: z.string(),
+>   languages: z.array(z.string()),
+> })
+>
+> const response = await ollama.chat({
+>   model: 'gpt-oss',
+>   messages: [{ role: 'user', content: 'Tell me about Canada.' }],
+>   format: z.toJSONSchema(Country),
+> })
+>
+> const country = Country.parse(JSON.parse(response.message.content))
+> console.log(country)
+> ```
 
 ## Example: Extract structured data
 

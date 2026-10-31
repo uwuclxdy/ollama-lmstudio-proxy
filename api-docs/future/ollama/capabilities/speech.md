@@ -60,50 +60,50 @@ OLLAMA_HOST=my-server:11434 ollama run phonon "Hello from the server."
 
 Use the OpenAI-compatible `/v1/audio/speech` endpoint:
 
-**cURL**
+> [tab] cURL
+>
+> ```shell theme={"system"}
+> curl http://localhost:11434/v1/audio/speech \
+>   -H "Content-Type: application/json" \
+>   -d '{
+>     "model": "phonon",
+>     "input": "Hello from Ollama.",
+>     "voice": "default"
+>   }' --output speech.wav
+> ```
 
-```shell theme={"system"}
-curl http://localhost:11434/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "phonon",
-    "input": "Hello from Ollama.",
-    "voice": "default"
-  }' --output speech.wav
-```
+> [tab] Python
+>
+> ```python theme={"system"}
+> from openai import OpenAI
+>
+> client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+>
+> with client.audio.speech.with_streaming_response.create(
+>     model="phonon",
+>     voice="default",
+>     input="Hello from Ollama.",
+>     response_format="wav",
+> ) as response:
+>     response.stream_to_file("speech.wav")
+> ```
 
-**Python**
-
-```python theme={"system"}
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-
-with client.audio.speech.with_streaming_response.create(
-    model="phonon",
-    voice="default",
-    input="Hello from Ollama.",
-    response_format="wav",
-) as response:
-    response.stream_to_file("speech.wav")
-```
-
-**JavaScript**
-
-```javascript theme={"system"}
-import fs from 'node:fs'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({ baseURL: 'http://localhost:11434/v1', apiKey: 'ollama' })
-
-const response = await openai.audio.speech.create({
-  model: 'phonon',
-  voice: 'default',
-  input: 'Hello from Ollama.',
-  response_format: 'wav',
-})
-fs.writeFileSync('speech.wav', Buffer.from(await response.arrayBuffer()))
-```
+> [tab] JavaScript
+>
+> ```javascript theme={"system"}
+> import fs from 'node:fs'
+> import OpenAI from 'openai'
+>
+> const openai = new OpenAI({ baseURL: 'http://localhost:11434/v1', apiKey: 'ollama' })
+>
+> const response = await openai.audio.speech.create({
+>   model: 'phonon',
+>   voice: 'default',
+>   input: 'Hello from Ollama.',
+>   response_format: 'wav',
+> })
+> fs.writeFileSync('speech.wav', Buffer.from(await response.arrayBuffer()))
+> ```
 
 The response streams while audio is generated, so you can start playing it right away:
 

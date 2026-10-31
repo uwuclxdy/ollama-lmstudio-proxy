@@ -109,7 +109,7 @@ FROM <model name>:<tag>
 FROM llama3.2
 ```
 
-> **[Model library](https://ollama.com/library)**
+> [card] [Model library](https://ollama.com/library)
 >
 > Browse available models
 
