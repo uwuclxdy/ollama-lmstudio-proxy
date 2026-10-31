@@ -124,7 +124,7 @@ The response includes `groups` in both `totals` and every bucket.
 }
 ```
 
-> **Example with multiple models and buckets**
+> [accordion] Example with multiple models and buckets
 >
 > ```json Response (6 empty buckets omitted) theme={"system"}
 > {
@@ -233,7 +233,7 @@ Every bucket uses the same selection and order. Groups with no requests in a buc
 
 Additional groups are combined under `remainder`, omitted when empty. Totals always include all usage.
 
-> **Legacy plans**
+> [accordion] Legacy plans
 >
 > For usage that includes requests from legacy plans, only request counts are available. If the range includes legacy requests, groups are ranked by request count instead of cost.
 

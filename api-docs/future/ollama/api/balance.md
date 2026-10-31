@@ -35,7 +35,7 @@ The included period follows your plan's monthly reset schedule, including for an
 
 The purchased balance includes only unexpired credits.
 
-> **Legacy plans**
+> [accordion] Legacy plans
 >
 > Plans with session and weekly limits return `session` and `weekly` in `included`:
 >

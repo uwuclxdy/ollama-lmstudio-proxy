@@ -49,117 +49,117 @@ If the model resolves named levels from `/api/show` metadata, Ollama applies sup
 
 The reasoning output and answer use separate fields. Chat returns `message.thinking` and `message.content`. Generate returns `thinking` and `response`.
 
-**cURL**
+> [tab] cURL
+>
+> ```shell theme={"system"}
+> curl http://localhost:11434/api/chat -d '{
+>   "model": "qwen3",
+>   "messages": [{
+>     "role": "user",
+>     "content": "How many letter r are in strawberry?"
+>   }],
+>   "think": true,
+>   "stream": false
+> }'
+> ```
 
-```shell theme={"system"}
-curl http://localhost:11434/api/chat -d '{
-  "model": "qwen3",
-  "messages": [{
-    "role": "user",
-    "content": "How many letter r are in strawberry?"
-  }],
-  "think": true,
-  "stream": false
-}'
-```
+> [tab] Python
+>
+> ```python theme={"system"}
+> from ollama import chat
+>
+> response = chat(
+>   model='qwen3',
+>   messages=[{'role': 'user', 'content': 'How many letter r are in strawberry?'}],
+>   think=True,
+>   stream=False,
+> )
+>
+> print('Thinking:\n', response.message.thinking)
+> print('Answer:\n', response.message.content)
+> ```
 
-**Python**
-
-```python theme={"system"}
-from ollama import chat
-
-response = chat(
-  model='qwen3',
-  messages=[{'role': 'user', 'content': 'How many letter r are in strawberry?'}],
-  think=True,
-  stream=False,
-)
-
-print('Thinking:\n', response.message.thinking)
-print('Answer:\n', response.message.content)
-```
-
-**JavaScript**
-
-```javascript theme={"system"}
-import ollama from 'ollama'
-
-const response = await ollama.chat({
-  model: 'deepseek-r1',
-  messages: [{ role: 'user', content: 'How many letter r are in strawberry?' }],
-  think: true,
-  stream: false,
-})
-
-console.log('Thinking:\n', response.message.thinking)
-console.log('Answer:\n', response.message.content)
-```
+> [tab] JavaScript
+>
+> ```javascript theme={"system"}
+> import ollama from 'ollama'
+>
+> const response = await ollama.chat({
+>   model: 'deepseek-r1',
+>   messages: [{ role: 'user', content: 'How many letter r are in strawberry?' }],
+>   think: true,
+>   stream: false,
+> })
+>
+> console.log('Thinking:\n', response.message.thinking)
+> console.log('Answer:\n', response.message.content)
+> ```
 
 ## Stream the reasoning trace
 
 Thinking streams interleave reasoning tokens before answer tokens. Detect the first `thinking` chunk to render a "thinking" section, then switch to the final reply once `message.content` arrives.
 
-**Python**
+> [tab] Python
+>
+> ```python theme={"system"}
+> from ollama import chat
+>
+> stream = chat(
+>   model='qwen3',
+>   messages=[{'role': 'user', 'content': 'What is 17 × 23?'}],
+>   think=True,
+>   stream=True,
+> )
+>
+> in_thinking = False
+>
+> for chunk in stream:
+>   if chunk.message.thinking and not in_thinking:
+>     in_thinking = True
+>     print('Thinking:\n', end='')
+>
+>   if chunk.message.thinking:
+>     print(chunk.message.thinking, end='')
+>   elif chunk.message.content:
+>     if in_thinking:
+>       print('\n\nAnswer:\n', end='')
+>       in_thinking = False
+>     print(chunk.message.content, end='')
+>
+> ```
 
-```python theme={"system"}
-from ollama import chat
-
-stream = chat(
-  model='qwen3',
-  messages=[{'role': 'user', 'content': 'What is 17 × 23?'}],
-  think=True,
-  stream=True,
-)
-
-in_thinking = False
-
-for chunk in stream:
-  if chunk.message.thinking and not in_thinking:
-    in_thinking = True
-    print('Thinking:\n', end='')
-
-  if chunk.message.thinking:
-    print(chunk.message.thinking, end='')
-  elif chunk.message.content:
-    if in_thinking:
-      print('\n\nAnswer:\n', end='')
-      in_thinking = False
-    print(chunk.message.content, end='')
-
-```
-
-**JavaScript**
-
-```javascript theme={"system"}
-import ollama from 'ollama'
-
-async function main() {
-  const stream = await ollama.chat({
-    model: 'qwen3',
-    messages: [{ role: 'user', content: 'What is 17 × 23?' }],
-    think: true,
-    stream: true,
-  })
-
-  let inThinking = false
-
-  for await (const chunk of stream) {
-    if (chunk.message.thinking && !inThinking) {
-      inThinking = true
-      process.stdout.write('Thinking:\n')
-    }
-
-    if (chunk.message.thinking) {
-      process.stdout.write(chunk.message.thinking)
-    } else if (chunk.message.content) {
-      if (inThinking) {
-        process.stdout.write('\n\nAnswer:\n')
-        inThinking = false
-      }
-      process.stdout.write(chunk.message.content)
-    }
-  }
-}
-
-main()
-```
+> [tab] JavaScript
+>
+> ```javascript theme={"system"}
+> import ollama from 'ollama'
+>
+> async function main() {
+>   const stream = await ollama.chat({
+>     model: 'qwen3',
+>     messages: [{ role: 'user', content: 'What is 17 × 23?' }],
+>     think: true,
+>     stream: true,
+>   })
+>
+>   let inThinking = false
+>
+>   for await (const chunk of stream) {
+>     if (chunk.message.thinking && !inThinking) {
+>       inThinking = true
+>       process.stdout.write('Thinking:\n')
+>     }
+>
+>     if (chunk.message.thinking) {
+>       process.stdout.write(chunk.message.thinking)
+>     } else if (chunk.message.content) {
+>       if (inThinking) {
+>         process.stdout.write('\n\nAnswer:\n')
+>         inThinking = false
+>       }
+>       process.stdout.write(chunk.message.content)
+>     }
+>   }
+> }
+>
+> main()
+> ```
