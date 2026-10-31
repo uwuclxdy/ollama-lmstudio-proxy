@@ -8,11 +8,11 @@ reformat noise:
 - yaml: structural compare. Added/removed keys, enum/required list items and
   changed scalars are substantive, except scalars under pure-prose keys
   (description/summary/title/example) — those and key reordering are chrome.
-- md / mdx / html snapshots: markup stripped, build tokens (deploy ids, build
-  hashes, asset bundle names, client version) filtered, then a text diff.
-  Fragments made only of site-chrome strings (nav furniture) clear as
-  informational; anything else reports "text changed" for review — prose is
-  never auto-cleared.
+- md / mdx / html snapshots: markup stripped (renderer component markers,
+  blockquote prefixes, bold markers, build tokens), an html document reduced
+  to its rendered <main> body (full text when it has none), then a text diff.
+  Fragments made only of site-chrome strings clear as informational; anything
+  else reports "text changed" for review — prose is never auto-cleared.
 
 Prints a markdown section for the refresh PR body; prints nothing when no
 api-docs/ file changed, so the body stays untouched on no-op refreshes.
@@ -44,6 +44,18 @@ CHROME_KEYS = {"description", "summary", "title", "example", "examples"}
 # Site furniture Mintlify injects around docs content; text fragments made only
 # of these are chrome, not API change.
 SITE_CHROME = {"back to top", "previous", "next", "on this page", "skip to main content"}
+# Renderer components the markdown mirrors carry as literal text.
+COMPONENT_MARKER = re.compile(r"\[(?:tab|card|accordion)\]")
+# Blockquote prefix the renderer wraps each component body line in.
+QUOTE_PREFIX = re.compile(r"(?m)^[ \t]*>[ \t]?")
+# Bold label the renderer turns into a component marker.
+BOLD = re.compile(r"(?<![\w*])\*\*(?=\S)(.+?)(?<=\S)\*\*(?![\w*])")
+# An html snapshot: the mirror serves html pages for some paths.
+HTML_DOC = re.compile(r"\s*(?:<!doctype html\b|<html\b)", re.I)
+# Rendered page body; the rest of an html snapshot is site chrome. Greedy to
+# the last close, so a stray "</main>" in an embedded payload or a second main
+# block cannot truncate the compared body.
+MAIN = re.compile(r"<main(?=[\s>]).*</main\s*>", re.S | re.I)
 CHROME_TOKEN = re.compile(
     r"dpl_[A-Za-z0-9]+"                      # deploy ids
     r"|\b[0-9a-f]{16,}\b"                    # build hashes
@@ -72,12 +84,14 @@ def worktree(path: str) -> str | None:
 
 
 def visible_text(text: str) -> str:
+    text = QUOTE_PREFIX.sub("", text)
+    text = BOLD.sub(r"\1", text)
     return WHITESPACE.sub(" ", html.unescape(TAGS.sub(" ", text))).strip()
 
 
 def text_fragments(old: str, new: str) -> list[str]:
-    to = CHROME_TOKEN.sub(" ", visible_text(old))
-    tn = CHROME_TOKEN.sub(" ", visible_text(new))
+    to = CHROME_TOKEN.sub(" ", COMPONENT_MARKER.sub(" ", visible_text(old)))
+    tn = CHROME_TOKEN.sub(" ", COMPONENT_MARKER.sub(" ", visible_text(new)))
     sm = difflib.SequenceMatcher(None, to, tn, autojunk=False)
     frags = []
     for op, a1, a2, b1, b2 in sm.get_opcodes():
@@ -130,6 +144,13 @@ def walk(old: object, new: object, path: str, out: list[tuple[str, str, str, str
                 out.append(("added item", path, "", text[:MAX_CHARS]))
 
 
+def rendered_main(text: str) -> str:
+    if not HTML_DOC.match(text):
+        return text
+    body = MAIN.search(text)
+    return body.group(0) if body else text
+
+
 def compare_file(path: str, old_text: str, new_text: str) -> tuple[str, list[str]]:
     """Verdict + detail lines for one file's old/new contents."""
     if path.endswith((".yaml", ".yml")):
@@ -146,6 +167,8 @@ def compare_file(path: str, old_text: str, new_text: str) -> tuple[str, list[str
             return "structural no-change (formatting only)", []
         return f"substantive ({len(out)} delta(s))", [_render(*entry) for entry in out]
 
+    if not path.lower().endswith((".md", ".mdx")):
+        old_text, new_text = rendered_main(old_text), rendered_main(new_text)
     frags = text_fragments(old_text, new_text)
     if not frags:
         return "no text change", []
