@@ -49,7 +49,8 @@ ollama-lmstudio-proxy
 ollama-lmstudio-proxy \
   --listen 0.0.0.0:11434 \
   --lmstudio-url http://localhost:1234 \
-  --load-timeout-seconds 30
+  --load-timeout-seconds 30 \
+  --stream-timeout-seconds 90
 ```
 
 > [!WARNING]

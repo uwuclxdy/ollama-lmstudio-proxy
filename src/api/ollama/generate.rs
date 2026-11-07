@@ -35,6 +35,7 @@ pub async fn handle_ollama_generate(
     body: Value,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    stream_timeout_seconds: u64,
     auto_evict: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
@@ -259,6 +260,7 @@ pub async fn handle_ollama_generate(
                         prompt: prompt_for_estimation.to_string(),
                     },
                     cancellation_token,
+                    stream_timeout_seconds,
                 })
                 .await
             }
@@ -271,6 +273,7 @@ pub async fn handle_ollama_generate(
         body,
         cancellation: cancellation_token,
         load_timeout_seconds,
+        stream_timeout_seconds,
         ollama_model_name,
         keep_alive_seconds,
         start_time,

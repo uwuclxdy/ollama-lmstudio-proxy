@@ -38,6 +38,7 @@ pub async fn handle_ollama_embeddings(
     response_mode: EmbeddingResponseMode,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    stream_timeout_seconds: u64,
     auto_evict: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
@@ -136,6 +137,7 @@ pub async fn handle_ollama_embeddings(
         body,
         cancellation: cancellation_token,
         load_timeout_seconds,
+        stream_timeout_seconds,
         ollama_model_name,
         keep_alive_seconds,
         start_time,

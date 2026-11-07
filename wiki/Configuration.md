@@ -12,6 +12,7 @@ Every setting is a CLI flag. Where a flag reads an environment variable too, the
 | `--lmstudio-url` | `http://localhost:1234` | LM Studio URL |
 | `--log-level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace` (`RUST_LOG` env) |
 | `--load-timeout-seconds` | `15` | Model loading wait timeout in seconds (after trigger) |
+| `--stream-timeout-seconds` | `60` | Maximum time in seconds between streaming response chunks |
 | `--model-resolution-cache-ttl-seconds` | `300` | Cache TTL for model resolution |
 | `--max-buffer-size` | `262144` | Initial buffer size for SSE message assembly (bytes) |
 | `--enable-chunk-recovery` | `false` | Enable partial chunk recovery for streams |

@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 
-use crate::constants::OLLAMA_SERVER_VERSION;
+use crate::constants::{OLLAMA_SERVER_VERSION, STREAM_TIMEOUT_SECONDS};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "ollama-lmstudio-proxy")]
@@ -32,6 +32,13 @@ pub struct Config {
         help = "model loading wait timeout in seconds (after trigger)"
     )]
     pub load_timeout_seconds: u64,
+
+    #[arg(
+        long,
+        default_value_t = STREAM_TIMEOUT_SECONDS,
+        help = "maximum time in seconds between stream chunks"
+    )]
+    pub stream_timeout_seconds: u64,
 
     #[arg(
         long,
@@ -188,4 +195,23 @@ pub fn validate_config(config: &Config) -> Result<(), String> {
         return Err(format!("invalid LM Studio URL format: {}", e));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use crate::constants::STREAM_TIMEOUT_SECONDS;
+    use clap::Parser;
+
+    #[test]
+    fn stream_timeout_seconds_is_configurable() {
+        let default_config = Config::try_parse_from(["proxy"]).unwrap();
+        assert_eq!(
+            default_config.stream_timeout_seconds,
+            STREAM_TIMEOUT_SECONDS
+        );
+
+        let config = Config::try_parse_from(["proxy", "--stream-timeout-seconds", "12"]).unwrap();
+        assert_eq!(config.stream_timeout_seconds, 12);
+    }
 }
