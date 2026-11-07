@@ -31,16 +31,28 @@ pub enum EmbeddingResponseMode {
     LegacyEmbeddings,
 }
 
+/// Route and server-config knobs the embeddings handler reads, bundled so the
+/// entry point stays under clippy's argument limit.
+pub struct EmbeddingsOptions {
+    pub response_mode: EmbeddingResponseMode,
+    pub load_timeout_seconds: u64,
+    pub stream_timeout_seconds: u64,
+    pub auto_evict: bool,
+}
+
 pub async fn handle_ollama_embeddings(
     context: RequestContext<'_>,
     model_resolver: Arc<ModelResolver>,
     body: Value,
-    response_mode: EmbeddingResponseMode,
     cancellation_token: CancellationToken,
-    load_timeout_seconds: u64,
-    stream_timeout_seconds: u64,
-    auto_evict: bool,
+    options: EmbeddingsOptions,
 ) -> Result<axum::response::Response, ProxyError> {
+    let EmbeddingsOptions {
+        response_mode,
+        load_timeout_seconds,
+        stream_timeout_seconds,
+        auto_evict,
+    } = options;
     let start_time = Instant::now();
     let mut body = body;
     lift_embed_top_level_params(&mut body);

@@ -29,15 +29,26 @@ use super::unload_only::{
     respond_unload_only, respond_warm_only,
 };
 
+/// Server-config knobs the generate handler reads, bundled so the entry point
+/// stays under clippy's argument limit.
+pub struct GenerateOptions {
+    pub load_timeout_seconds: u64,
+    pub stream_timeout_seconds: u64,
+    pub auto_evict: bool,
+}
+
 pub async fn handle_ollama_generate(
     context: RequestContext<'_>,
     model_resolver: Arc<ModelResolver>,
     body: Value,
     cancellation_token: CancellationToken,
-    load_timeout_seconds: u64,
-    stream_timeout_seconds: u64,
-    auto_evict: bool,
+    options: GenerateOptions,
 ) -> Result<axum::response::Response, ProxyError> {
+    let GenerateOptions {
+        load_timeout_seconds,
+        stream_timeout_seconds,
+        auto_evict,
+    } = options;
     let start_time = Instant::now();
     let ollama_model_name = extract_required_model_name(&body)?.to_string();
     let keep_alive_seconds = parse_keep_alive_seconds(body.get("keep_alive"))?;

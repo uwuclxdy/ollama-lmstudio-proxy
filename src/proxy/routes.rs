@@ -237,9 +237,11 @@ async fn generate_handler(
         s.model_resolver.clone(),
         body,
         s.shutdown.child_token(),
-        s.config.load_timeout_seconds,
-        s.config.stream_timeout_seconds,
-        s.config.auto_evict,
+        ollama::generate::GenerateOptions {
+            load_timeout_seconds: s.config.load_timeout_seconds,
+            stream_timeout_seconds: s.config.stream_timeout_seconds,
+            auto_evict: s.config.auto_evict,
+        },
     )
     .await
 }
@@ -268,11 +270,13 @@ async fn embedding_handler_inner(
         context,
         s.model_resolver.clone(),
         body,
-        mode,
         s.shutdown.child_token(),
-        s.config.load_timeout_seconds,
-        s.config.stream_timeout_seconds,
-        s.config.auto_evict,
+        ollama::embeddings::EmbeddingsOptions {
+            response_mode: mode,
+            load_timeout_seconds: s.config.load_timeout_seconds,
+            stream_timeout_seconds: s.config.stream_timeout_seconds,
+            auto_evict: s.config.auto_evict,
+        },
     )
     .await
 }
