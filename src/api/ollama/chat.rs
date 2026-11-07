@@ -8,10 +8,7 @@ use crate::api::RequestContext;
 use crate::api::pipeline::ChatLikeCall;
 use crate::api::response::{ResponseContext, ResponseParams, handle_response};
 use crate::config::get_runtime_config;
-use crate::constants::{
-    DEFAULT_STREAM_TIMEOUT_SECONDS, ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT,
-    LM_STUDIO_V1_CHAT,
-};
+use crate::constants::{ERROR_MISSING_MESSAGES, LM_STUDIO_NATIVE_CHAT, LM_STUDIO_V1_CHAT};
 use crate::error::ProxyError;
 use crate::http::client::{CancellableRequest, handle_json_response};
 use crate::http::json_response;
@@ -40,6 +37,7 @@ use super::unload_only::{
 /// stays under clippy's argument limit.
 pub struct ChatOptions {
     pub load_timeout_seconds: u64,
+    pub stream_timeout_seconds: u64,
     pub use_native_chat: bool,
     pub native_chat_streaming: bool,
     pub auto_evict: bool,
@@ -54,6 +52,7 @@ pub async fn handle_ollama_chat(
 ) -> Result<axum::response::Response, ProxyError> {
     let ChatOptions {
         load_timeout_seconds,
+        stream_timeout_seconds,
         use_native_chat,
         native_chat_streaming,
         auto_evict,
@@ -217,7 +216,7 @@ pub async fn handle_ollama_chat(
                             &ollama_model_name,
                             start_time,
                             cancellation_token,
-                            DEFAULT_STREAM_TIMEOUT_SECONDS,
+                            stream_timeout_seconds,
                             NativeFinalizeOptions {
                                 requested_max_tokens,
                                 warning: drop_warning,
@@ -301,6 +300,7 @@ pub async fn handle_ollama_chat(
                         input_chars,
                     },
                     cancellation_token,
+                    stream_timeout_seconds,
                 })
                 .await
             }
@@ -313,6 +313,7 @@ pub async fn handle_ollama_chat(
         body,
         cancellation: cancellation_token,
         load_timeout_seconds,
+        stream_timeout_seconds,
         ollama_model_name,
         keep_alive_seconds,
         start_time,

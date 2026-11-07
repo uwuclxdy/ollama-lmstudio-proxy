@@ -15,10 +15,7 @@ use axum::response::Response;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::constants::{
-    DEFAULT_STREAM_TIMEOUT_SECONDS, LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD,
-    LOG_PREFIX_SUCCESS,
-};
+use crate::constants::{LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD, LOG_PREFIX_SUCCESS};
 use crate::error::ProxyError;
 use crate::lmstudio::keep_alive::{proactive_evict_if_unloaded, spawn_model_unload_if_needed};
 use crate::logging::log_timed;
@@ -35,6 +32,7 @@ pub struct ChatLikeCall<'a> {
     pub body: Value,
     pub cancellation: CancellationToken,
     pub load_timeout_seconds: u64,
+    pub stream_timeout_seconds: u64,
     pub ollama_model_name: String,
     pub keep_alive_seconds: Option<i64>,
     pub start_time: Instant,
@@ -58,6 +56,7 @@ impl ChatLikeCall<'_> {
             body,
             cancellation,
             load_timeout_seconds,
+            stream_timeout_seconds,
             ollama_model_name,
             keep_alive_seconds,
             start_time,
@@ -146,7 +145,7 @@ impl ChatLikeCall<'_> {
 
         if spawn_unload {
             let unload_delay = if is_streaming_request(&body) {
-                DEFAULT_STREAM_TIMEOUT_SECONDS
+                stream_timeout_seconds
             } else {
                 0
             };

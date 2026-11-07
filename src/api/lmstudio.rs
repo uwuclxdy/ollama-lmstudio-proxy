@@ -35,6 +35,7 @@ pub async fn handle_lmstudio_passthrough(
     request: LmStudioPassthroughRequest,
     cancellation_token: CancellationToken,
     load_timeout_seconds: u64,
+    stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = Instant::now();
     let LmStudioPassthroughRequest {
@@ -180,6 +181,7 @@ pub async fn handle_lmstudio_passthrough(
                         original_model_name: original_model_name.as_deref(),
                         transcode_base64,
                         cancellation_token,
+                        stream_timeout_seconds,
                     })
                     .await
                 } else {
@@ -229,6 +231,7 @@ struct ForwardJsonRequest<'a> {
     original_model_name: Option<&'a str>,
     transcode_base64: bool,
     cancellation_token: CancellationToken,
+    stream_timeout_seconds: u64,
 }
 
 async fn forward_json_body_request(
@@ -245,6 +248,7 @@ async fn forward_json_body_request(
         original_model_name,
         transcode_base64,
         cancellation_token,
+        stream_timeout_seconds,
     } = req;
     let is_streaming = is_streaming_request(&body_json);
     let prepared_body = prepare_request_body(Some(body_json), body_bytes)?;
@@ -277,6 +281,7 @@ async fn forward_json_body_request(
         transcode_base64,
         protocol,
         cancellation_token,
+        stream_timeout_seconds,
     )
     .await
 }
@@ -306,6 +311,7 @@ async fn route_response(
     transcode_base64: bool,
     protocol: PassthroughProtocol,
     cancellation_token: CancellationToken,
+    stream_timeout_seconds: u64,
 ) -> Result<axum::response::Response, ProxyError> {
     if is_streaming {
         // A non-2xx status on a stream:true request means the backend sent a
@@ -319,7 +325,13 @@ async fn route_response(
         if LogConfig::get().debug_enabled {
             log::debug!("passthrough response: (streaming)");
         }
-        handle_passthrough_streaming_response(response, protocol, cancellation_token, 60).await
+        handle_passthrough_streaming_response(
+            response,
+            protocol,
+            cancellation_token,
+            stream_timeout_seconds,
+        )
+        .await
     } else {
         route_non_streaming_response(response, transcode_base64, cancellation_token).await
     }

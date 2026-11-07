@@ -15,6 +15,7 @@ use tokio::task::JoinHandle;
 use wiremock::MockServer;
 
 use ollama_lmstudio_proxy::config::{Config, RuntimeConfig, init_runtime_config};
+use ollama_lmstudio_proxy::constants::STREAM_TIMEOUT_SECONDS;
 use ollama_lmstudio_proxy::logging::LogConfig;
 use ollama_lmstudio_proxy::proxy::ProxyServer;
 use ollama_lmstudio_proxy::proxy::routes::create_router;
@@ -206,6 +207,7 @@ async fn spawn_proxy_inner(
         },
         log_level: "off".to_string(),
         load_timeout_seconds,
+        stream_timeout_seconds: STREAM_TIMEOUT_SECONDS,
         max_buffer_size: 262_144,
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,

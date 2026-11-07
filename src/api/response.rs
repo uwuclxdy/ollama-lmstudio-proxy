@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use crate::constants::DEFAULT_STREAM_TIMEOUT_SECONDS;
 use crate::error::ProxyError;
 use crate::http::client::handle_json_response;
 use crate::http::json_response;
@@ -31,6 +30,7 @@ pub struct ResponseParams<'a> {
     pub start_time: Instant,
     pub context: ResponseContext,
     pub cancellation_token: CancellationToken,
+    pub stream_timeout_seconds: u64,
 }
 
 pub async fn handle_response(
@@ -44,6 +44,7 @@ pub async fn handle_response(
         start_time,
         context,
         cancellation_token,
+        stream_timeout_seconds,
     } = params;
 
     if stream {
@@ -57,7 +58,7 @@ pub async fn handle_response(
             model_name,
             start_time,
             cancellation_token,
-            DEFAULT_STREAM_TIMEOUT_SECONDS,
+            stream_timeout_seconds,
             prompt_tokens_estimate,
         )
         .await
