@@ -42,6 +42,12 @@ pub struct NativeChatRequestParams<'a> {
     /// Whether the resolved model exposes reasoning configuration; `reasoning`
     /// is dropped for models without it (upstream errors on the field).
     pub model_supports_thinking: bool,
+    /// Tier substituted for a normalized `reasoning:"off"` when the resolved
+    /// model cannot disable thinking
+    /// (`NativeReasoningCapability::reasoning_disable_fallback`). `None` keeps
+    /// the client's value verbatim — models with an off option, an unknown
+    /// vocabulary or no reasoning metadata are untouched.
+    pub reasoning_disable_fallback: Option<&'a str>,
     pub stream: bool,
     /// MCP integrations forwarded verbatim from the incoming Ollama body.
     ///
@@ -76,7 +82,17 @@ pub fn build_native_chat_request(params: NativeChatRequestParams<'_>) -> Value {
     apply_native_sampling(params.ollama_options, &mut body);
 
     if let Some(think_val) = params.think {
-        let normalized = normalize_reasoning(think_val);
+        let mut normalized = normalize_reasoning(think_val);
+        // A model that cannot disable thinking has no meaning for "off": send
+        // its lowest supported tier instead
+        // (api-docs/ollama/capabilities/thinking.md). Only a normalized "off"
+        // substitutes — true/"max" and arbitrary model-defined strings pass
+        // through untouched.
+        if normalized.as_str() == Some("off")
+            && let Some(tier) = params.reasoning_disable_fallback
+        {
+            normalized = json!(tier);
+        }
         // `reasoning` on a model with no reasoning configuration is a hard
         // upstream error (api-docs/lmstudio/1_developer/2_rest/chat.md), but
         // "off" is a no-op there — drop it instead of failing the request.

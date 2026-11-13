@@ -17,8 +17,15 @@ pub struct TopLevelParams<'a> {
     /// Whether the resolved model is reasoning-capable. When `think` is absent
     /// and this is true, the proxy defaults `reasoning` to `"on"`, matching real
     /// Ollama (thinking models reason by default). An explicit `think` always
-    /// wins (`think:false` → `"off"` stays authoritative).
+    /// wins; `think:false` → `"off"`, re-expressed as the model's lowest tier
+    /// when it cannot disable thinking (see `reasoning_disable_fallback`).
     pub model_is_thinking: bool,
+    /// Tier substituted for a normalized `reasoning:"off"` when the resolved
+    /// model cannot disable thinking
+    /// (`NativeReasoningCapability::reasoning_disable_fallback`). `None` keeps
+    /// the client's value verbatim — models with an off option, an unknown
+    /// vocabulary or no reasoning metadata are untouched.
+    pub reasoning_disable_fallback: Option<&'a str>,
 }
 
 pub fn map_ollama_to_lmstudio_params(
@@ -65,7 +72,18 @@ fn apply_top_level_params(
     request_obj: &mut serde_json::Map<String, Value>,
 ) {
     if let Some(think_val) = top.think {
-        request_obj.insert("reasoning".to_string(), normalize_reasoning(think_val));
+        let mut reasoning = normalize_reasoning(think_val);
+        // A model that cannot disable thinking has no meaning for "off": send
+        // its lowest supported tier instead
+        // (api-docs/ollama/capabilities/thinking.md). Only a normalized "off"
+        // substitutes — true/"max" and arbitrary model-defined strings pass
+        // through untouched.
+        if reasoning.as_str() == Some("off")
+            && let Some(tier) = top.reasoning_disable_fallback
+        {
+            reasoning = json!(tier);
+        }
+        request_obj.insert("reasoning".to_string(), reasoning);
     } else if top.model_is_thinking {
         // No explicit `think`, but the model reasons by default → enable it,
         // mirroring real Ollama. Explicit `think` (handled above) always wins.

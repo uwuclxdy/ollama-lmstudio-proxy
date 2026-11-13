@@ -76,6 +76,31 @@ fn is_reasoning_off(option: &str) -> bool {
     option.eq_ignore_ascii_case("off") || option.eq_ignore_ascii_case("disabled")
 }
 
+impl NativeReasoningCapability {
+    /// The tier the proxy sends when a client asks to disable thinking on a
+    /// model whose backend vocabulary has no off/disabled option
+    /// (api-docs/ollama/capabilities/thinking.md: "Models that cannot disable
+    /// thinking use their lowest supported level instead").
+    ///
+    /// `Some(lowest)` only when `allowed_options` names a known tier
+    /// (`low`/`medium`/`high`, tried lowest effort first, matched
+    /// case-insensitively; the backend's own spelling is returned) and has no
+    /// off entry. `None` leaves the client's value untouched: a model that can
+    /// disable thinking keeps `"off"`, and an unknown vocabulary is the
+    /// backend's to decide, never the proxy's to guess.
+    pub fn reasoning_disable_fallback(&self) -> Option<&str> {
+        if self.allowed_options.iter().any(|opt| is_reasoning_off(opt)) {
+            return None;
+        }
+        ["low", "medium", "high"].into_iter().find_map(|tier| {
+            self.allowed_options
+                .iter()
+                .find(|opt| opt.eq_ignore_ascii_case(tier))
+                .map(String::as_str)
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NativeQuantization {
     pub name: Option<String>,

@@ -16,6 +16,7 @@ fn build(messages: &Value, options: Option<&Value>, think: Option<&Value>) -> Va
         ollama_options: options,
         think,
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: None,
     })
@@ -179,6 +180,7 @@ fn request_drops_reasoning_off_for_model_without_thinking() {
         ollama_options: None,
         think: Some(&think),
         model_supports_thinking: false,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: None,
     });
@@ -196,10 +198,80 @@ fn request_keeps_reasoning_off_for_thinking_model() {
         ollama_options: None,
         think: Some(&think),
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: None,
     });
     assert_eq!(body["reasoning"], json!("off"));
+}
+
+#[test]
+fn request_substitutes_lowest_tier_when_model_cannot_disable() {
+    // No off option in the backend vocabulary: think:false must reach the
+    // model as its lowest supported tier (thinking.md), not an "off" it has no
+    // meaning for.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let think = json!(false);
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: Some(&think),
+        model_supports_thinking: true,
+        reasoning_disable_fallback: Some("low"),
+        stream: false,
+        integrations: None,
+    });
+    assert_eq!(body["reasoning"], json!("low"));
+}
+
+#[test]
+fn request_substitutes_tier_for_none_string() {
+    // `"none"` normalizes to "off", so it substitutes like think:false.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    let think = json!("none");
+    let body = build_native_chat_request(NativeChatRequestParams {
+        model_lm_studio_id: "m",
+        messages: &messages,
+        system_prompt: None,
+        ollama_options: None,
+        think: Some(&think),
+        model_supports_thinking: true,
+        reasoning_disable_fallback: Some("low"),
+        stream: false,
+        integrations: None,
+    });
+    assert_eq!(body["reasoning"], json!("low"));
+}
+
+#[test]
+fn request_never_substitutes_for_non_off_values() {
+    // Only a normalized "off" substitutes: true, "max" and arbitrary
+    // model-defined strings pass through untouched.
+    let messages = json!([{ "role": "user", "content": "hi" }]);
+    for (think, expected) in [
+        (json!(true), json!("on")),
+        (json!("max"), json!("high")),
+        (json!("medium"), json!("medium")),
+        (json!("super-thinky"), json!("super-thinky")),
+    ] {
+        let body = build_native_chat_request(NativeChatRequestParams {
+            model_lm_studio_id: "m",
+            messages: &messages,
+            system_prompt: None,
+            ollama_options: None,
+            think: Some(&think),
+            model_supports_thinking: true,
+            reasoning_disable_fallback: Some("low"),
+            stream: false,
+            integrations: None,
+        });
+        assert_eq!(
+            body["reasoning"], expected,
+            "{think} must pass through untouched"
+        );
+    }
 }
 
 #[test]
@@ -215,6 +287,7 @@ fn request_forwards_reasoning_level_for_non_thinking_model() {
         ollama_options: None,
         think: Some(&think),
         model_supports_thinking: false,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: None,
     });
@@ -231,6 +304,7 @@ fn request_omits_reasoning_and_system_when_absent() {
         ollama_options: None,
         think: None,
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: true,
         integrations: None,
     });
@@ -483,6 +557,7 @@ fn request_forwards_integrations_array() {
         ollama_options: None,
         think: None,
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: Some(&integrations),
     });
@@ -504,6 +579,7 @@ fn request_omits_integrations_when_absent() {
         ollama_options: None,
         think: None,
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: None,
     });
@@ -522,6 +598,7 @@ fn request_omits_integrations_when_not_array() {
         ollama_options: None,
         think: None,
         model_supports_thinking: true,
+        reasoning_disable_fallback: None,
         stream: false,
         integrations: Some(&non_array),
     });

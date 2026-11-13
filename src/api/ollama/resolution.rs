@@ -8,6 +8,7 @@ use crate::error::ProxyError;
 use crate::lmstudio::request::TopLevelParams;
 use crate::model::ModelInfo;
 use crate::model::ModelResolver;
+use crate::model::types::NativeReasoningCapability;
 use crate::storage::VirtualModelEntry;
 
 /// Pull the three Ollama top-level forwarded keys (`think`, `logprobs`,
@@ -29,9 +30,11 @@ pub fn make_top_level_params(body: &Value) -> TopLevelParams<'_> {
             .or_else(|| body.get("reasoning_effort").filter(|v| !v.is_null())),
         logprobs: body.get("logprobs"),
         top_logprobs: body.get("top_logprobs"),
-        // Caller fills this from the resolved model's capability after building
-        // the params (the body alone can't say whether the model reasons).
+        // Caller fills these from the resolved model's capability after building
+        // the params (the body alone can't say whether the model reasons or can
+        // disable thinking).
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     }
 }
 
@@ -60,6 +63,12 @@ pub struct ModelResolutionContext {
     /// Whether the resolved model is reasoning-capable (`ModelInfo::is_thinking_model`).
     /// Drives the default-`reasoning:on` behavior when the caller omits `think`.
     pub model_supports_thinking: bool,
+    /// Tier substituted for a normalized `reasoning:"off"` when the resolved
+    /// model cannot disable thinking
+    /// (`NativeReasoningCapability::reasoning_disable_fallback`). None when the
+    /// model can disable thinking, has an unknown vocabulary or no reasoning
+    /// metadata — the client's value passes through untouched.
+    pub reasoning_disable_fallback: Option<String>,
 }
 
 pub async fn resolve_model_target<'a>(
@@ -119,16 +128,18 @@ pub async fn resolve_model_with_context<'a>(
 
     // Resolve the model's reasoning capability so the inference path can default
     // `reasoning:on` for thinking models when the caller omitted `think`
-    // (matching real Ollama), and so the native path can suppress an explicit
+    // (matching real Ollama), so the native path can suppress an explicit
     // `think:false`/`"none"` on a model with no reasoning configuration —
     // upstream hard-errors on `reasoning` for such models instead of ignoring
-    // it, so the drop must be capability-aware, not just default-aware. The
-    // lookup costs an uncached `GET /api/v1/models` per inference call.
+    // it, so the drop must be capability-aware, not just default-aware — and so
+    // a cannot-disable model can swap the client's disable request for its
+    // lowest tier (`reasoning_disable_fallback`). The lookup costs an uncached
+    // `GET /api/v1/models` per inference call.
     // Embeddings pass `false` — they never reason, and the legacy
     // `/api/embeddings` shape carries a `prompt` that must NOT be mistaken for
     // an inference body. Best-effort: an unknown / unfetchable model is
     // non-thinking.
-    let model_supports_thinking = if wants_thinking_default {
+    let (model_supports_thinking, reasoning_disable_fallback) = if wants_thinking_default {
         let model_info = fetch_model_info_for_id(
             context,
             model_resolver,
@@ -136,11 +147,19 @@ pub async fn resolve_model_with_context<'a>(
             cancellation_token,
         )
         .await?;
-        model_info
-            .map(|info| info.is_thinking_model())
-            .unwrap_or(false)
+        let reasoning_disable_fallback = model_info
+            .as_ref()
+            .and_then(|info| info.reasoning_capability.as_ref())
+            .and_then(NativeReasoningCapability::reasoning_disable_fallback)
+            .map(str::to_string);
+        (
+            model_info
+                .map(|info| info.is_thinking_model())
+                .unwrap_or(false),
+            reasoning_disable_fallback,
+        )
     } else {
-        false
+        (false, None)
     };
 
     Ok(ModelResolutionContext {
@@ -149,6 +168,7 @@ pub async fn resolve_model_with_context<'a>(
         effective_format,
         system_prompt,
         model_supports_thinking,
+        reasoning_disable_fallback,
     })
 }
 

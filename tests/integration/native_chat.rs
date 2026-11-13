@@ -191,6 +191,148 @@ async fn native_think_false_suppresses_reasoning_on_thinking_model() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// think:false on a model that cannot disable thinking
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_think_false_uses_lowest_tier_when_model_cannot_disable() {
+    let p = spawn_proxy_with_native().await;
+    // The backend advertises reasoning tiers with no off/disabled option: the
+    // model cannot disable thinking, so think:false must reach it as the
+    // lowest supported tier (api-docs/ollama/capabilities/thinking.md), not an
+    // `off` the backend has no meaning for.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{
+                "key": "gpt-oss-cannot-disable",
+                "type": "llm",
+                "publisher": "openai",
+                "architecture": "llama",
+                "format": "gguf",
+                "quantization": { "name": "Q4_K_M", "bits_per_weight": 4.5 },
+                "max_context_length": 8192,
+                "loaded_instances": [
+                    { "id": "inst-0", "config": { "context_length": 4096 } }
+                ],
+                "capabilities": {
+                    "vision": false,
+                    "trained_for_tool_use": true,
+                    "reasoning": { "allowed_options": ["low", "medium", "high"], "default": "medium" }
+                }
+            }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .and(body_partial_json(json!({
+            "model": "gpt-oss-cannot-disable",
+            "reasoning": "low"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "gpt-oss-cannot-disable",
+            "output": [{ "type": "message", "content": "Hello!" }],
+            "stats": {
+                "input_tokens": 5,
+                "total_output_tokens": 2,
+                "tokens_per_second": 30.0,
+                "time_to_first_token_seconds": 0.1
+            },
+            "response_id": "resp_x"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "gpt-oss-cannot-disable",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "think": false,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat (native, think:false, cannot disable)");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+}
+
+#[tokio::test]
+async fn native_think_false_keeps_off_when_model_can_disable() {
+    let p = spawn_proxy_with_native().await;
+    // Contrast guard: with an off option advertised, think:false still maps to
+    // reasoning:"off" — the lowest-tier substitution must not fire here.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{
+                "key": "gpt-oss-cannot-disable",
+                "type": "llm",
+                "publisher": "openai",
+                "architecture": "llama",
+                "format": "gguf",
+                "quantization": { "name": "Q4_K_M", "bits_per_weight": 4.5 },
+                "max_context_length": 8192,
+                "loaded_instances": [
+                    { "id": "inst-0", "config": { "context_length": 4096 } }
+                ],
+                "capabilities": {
+                    "vision": false,
+                    "trained_for_tool_use": true,
+                    "reasoning": { "allowed_options": ["off", "on"], "default": "on" }
+                }
+            }]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .and(body_partial_json(json!({
+            "model": "gpt-oss-cannot-disable",
+            "reasoning": "off"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "gpt-oss-cannot-disable",
+            "output": [{ "type": "message", "content": "Hello!" }],
+            "stats": {
+                "input_tokens": 5,
+                "total_output_tokens": 2,
+                "tokens_per_second": 30.0,
+                "time_to_first_token_seconds": 0.1
+            },
+            "response_id": "resp_x"
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "gpt-oss-cannot-disable",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "think": false,
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat (native, think:false, can disable)");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert_eq!(body["done"], true);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Integrations passthrough
 // ═══════════════════════════════════════════════════════════════════════════
 

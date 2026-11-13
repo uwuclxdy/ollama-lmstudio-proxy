@@ -196,6 +196,9 @@ pub async fn handle_ollama_chat(
                         ollama_options: resolution_ctx.effective_options.as_ref(),
                         think: native_think,
                         model_supports_thinking: resolution_ctx.model_supports_thinking,
+                        reasoning_disable_fallback: resolution_ctx
+                            .reasoning_disable_fallback
+                            .as_deref(),
                         stream,
                         integrations,
                     });
@@ -253,6 +256,8 @@ pub async fn handle_ollama_chat(
 
                 let mut top_level_params = make_top_level_params(&body);
                 top_level_params.model_is_thinking = resolution_ctx.model_supports_thinking;
+                top_level_params.reasoning_disable_fallback =
+                    resolution_ctx.reasoning_disable_fallback.as_deref();
                 let mut lm_request = build_lm_studio_request(
                     &resolution_ctx.lm_studio_model_id,
                     LMStudioRequestType::Chat {

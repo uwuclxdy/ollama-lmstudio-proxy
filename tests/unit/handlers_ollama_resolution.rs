@@ -43,6 +43,7 @@ fn suffix_inserted_into_lm_request() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
 
     let mut lm_request = build_lm_studio_request(

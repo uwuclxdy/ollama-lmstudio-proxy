@@ -320,6 +320,100 @@ fn show_thinking_absent_when_reasoning_options_empty() {
     assert!(info.to_show_response(None, false).get("thinking").is_none());
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// cannot-disable fallback tier (think:false on a model with no off option)
+// ════════════════════════════════════════════════════════════════════════════
+
+fn reasoning_caps(options: &[&str]) -> NativeReasoningCapability {
+    NativeReasoningCapability {
+        allowed_options: options.iter().map(|s| (*s).to_string()).collect(),
+        default: None,
+    }
+}
+
+#[test]
+fn reasoning_disable_fallback_picks_lowest_known_tier() {
+    // The lowest KNOWN tier wins regardless of the backend's list order, so
+    // "medium" listed first still resolves to "low".
+    let caps = reasoning_caps(&["medium", "high", "low"]);
+    assert_eq!(caps.reasoning_disable_fallback(), Some("low"));
+
+    let caps = reasoning_caps(&["low", "medium", "high"]);
+    assert_eq!(caps.reasoning_disable_fallback(), Some("low"));
+
+    let caps = reasoning_caps(&["high"]);
+    assert_eq!(caps.reasoning_disable_fallback(), Some("high"));
+}
+
+#[test]
+fn reasoning_disable_fallback_keeps_backend_spelling() {
+    // Tier match is case-insensitive but the returned value is the backend's
+    // own spelling — LM Studio accepts exactly what it advertised.
+    let caps = reasoning_caps(&["LOW"]);
+    assert_eq!(caps.reasoning_disable_fallback(), Some("LOW"));
+
+    let caps = reasoning_caps(&["Low", "HIGH"]);
+    assert_eq!(caps.reasoning_disable_fallback(), Some("Low"));
+}
+
+#[test]
+fn reasoning_disable_fallback_none_when_off_available() {
+    // An off/disabled option means the model CAN disable thinking: "off"
+    // stays authoritative, even when a known tier also exists.
+    let caps = reasoning_caps(&["off", "low"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+
+    let caps = reasoning_caps(&["disabled", "high"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+
+    let caps = reasoning_caps(&["off", "on"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+}
+
+#[test]
+fn reasoning_disable_fallback_none_without_known_tier() {
+    // Unknown vocabularies are the backend's to decide, never the proxy's to
+    // guess — and an empty list names nothing at all.
+    let caps = reasoning_caps(&["bogus"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+
+    let caps = reasoning_caps(&[]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+
+    let caps = reasoning_caps(&["on"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+
+    let caps = reasoning_caps(&["enabled"]);
+    assert_eq!(caps.reasoning_disable_fallback(), None);
+}
+
+#[test]
+fn reasoning_disable_fallback_none_without_reasoning_metadata() {
+    // A model whose backend reported no reasoning entry keeps the client's
+    // value; with tiers advertised the same chain resolves to the lowest.
+    // This is the exact chain resolve_model_with_context runs on the fetched
+    // ModelInfo.
+    let info = ModelInfo::from_native_data(&native("publisher/model"));
+    assert_eq!(
+        info.reasoning_capability
+            .as_ref()
+            .and_then(NativeReasoningCapability::reasoning_disable_fallback),
+        None
+    );
+
+    let mut native_caps = make_native_with_caps("publisher/model", "llm", false, false);
+    native_caps.capabilities.as_mut().unwrap().reasoning =
+        Some(reasoning_caps(&["low", "medium", "high"]));
+    let info_caps = ModelInfo::from_native_data(&native_caps);
+    assert_eq!(
+        info_caps
+            .reasoning_capability
+            .as_ref()
+            .and_then(NativeReasoningCapability::reasoning_disable_fallback),
+        Some("low")
+    );
+}
+
 #[test]
 fn show_capabilities_adds_stored_alias_capabilities() {
     // Upstream /api/create `capabilities` adds to the inherited/inferred set

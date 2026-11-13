@@ -75,6 +75,7 @@ fn top_level_params_think_true_emits_reasoning_on() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -98,6 +99,7 @@ fn top_level_params_think_false_emits_reasoning_off() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -121,6 +123,7 @@ fn top_level_params_think_string_passes_through() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -146,6 +149,7 @@ fn top_level_params_think_max_clamps_to_high() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -169,6 +173,7 @@ fn top_level_params_absent_think_emits_no_reasoning() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -193,6 +198,7 @@ fn top_level_params_absent_think_thinking_model_defaults_reasoning_on() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: true,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -218,6 +224,7 @@ fn top_level_params_explicit_think_false_wins_over_thinking_model_default() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: true,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -234,6 +241,94 @@ fn top_level_params_explicit_think_false_wins_over_thinking_model_default() {
 }
 
 #[test]
+fn think_false_uses_lowest_tier_when_model_cannot_disable() {
+    // A backend vocabulary with no off option cannot disable thinking
+    // (api-docs/ollama/capabilities/thinking.md): think:false must reach it as
+    // the lowest supported tier, not an "off" it has no meaning for.
+    let think_val = json!(false);
+    let top = TopLevelParams {
+        think: Some(&think_val),
+        logprobs: None,
+        top_logprobs: None,
+        model_is_thinking: true,
+        reasoning_disable_fallback: Some("low"),
+    };
+    let request = build_lm_studio_request(
+        "mymodel",
+        LMStudioRequestType::Completion {
+            prompt: std::borrow::Cow::Borrowed("hello"),
+            stream: false,
+        },
+        None,
+        None,
+        None,
+        Some(&top),
+    );
+    assert_eq!(request.get("reasoning"), Some(&json!("low")));
+}
+
+#[test]
+fn think_none_string_uses_lowest_tier_when_model_cannot_disable() {
+    // `"none"` normalizes to "off", so it substitutes like think:false.
+    let think_val = json!("none");
+    let top = TopLevelParams {
+        think: Some(&think_val),
+        logprobs: None,
+        top_logprobs: None,
+        model_is_thinking: true,
+        reasoning_disable_fallback: Some("low"),
+    };
+    let request = build_lm_studio_request(
+        "mymodel",
+        LMStudioRequestType::Completion {
+            prompt: std::borrow::Cow::Borrowed("hello"),
+            stream: false,
+        },
+        None,
+        None,
+        None,
+        Some(&top),
+    );
+    assert_eq!(request.get("reasoning"), Some(&json!("low")));
+}
+
+#[test]
+fn reasoning_disable_fallback_never_touches_non_off_values() {
+    // Only a normalized "off" substitutes: true, "max" and arbitrary
+    // model-defined strings pass through untouched.
+    for (think_val, expected) in [
+        (json!(true), json!("on")),
+        (json!("max"), json!("high")),
+        (json!("medium"), json!("medium")),
+        (json!("super-thinky"), json!("super-thinky")),
+    ] {
+        let top = TopLevelParams {
+            think: Some(&think_val),
+            logprobs: None,
+            top_logprobs: None,
+            model_is_thinking: true,
+            reasoning_disable_fallback: Some("low"),
+        };
+        let request = build_lm_studio_request(
+            "mymodel",
+            LMStudioRequestType::Completion {
+                prompt: std::borrow::Cow::Borrowed("hello"),
+                stream: false,
+            },
+            None,
+            None,
+            None,
+            Some(&top),
+        );
+        assert_eq!(
+            request.get("reasoning"),
+            Some(&expected),
+            "{think_val} must pass through untouched"
+        );
+    }
+}
+
+#[test]
 fn top_level_params_logprobs_forwarded() {
     let lp = json!(true);
     let top = TopLevelParams {
@@ -241,6 +336,7 @@ fn top_level_params_logprobs_forwarded() {
         logprobs: Some(&lp),
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let request = build_lm_studio_request(
         "mymodel",
@@ -264,6 +360,7 @@ fn top_level_params_work_on_chat_type_too() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let messages = json!([{"role": "user", "content": "hi"}]);
     let request = build_lm_studio_request(
@@ -890,6 +987,7 @@ fn think_none_string_normalised_to_off() {
             logprobs: None,
             top_logprobs: None,
             model_is_thinking: false,
+            reasoning_disable_fallback: None,
         };
         let request = build_lm_studio_request(
             "mymodel",
@@ -920,6 +1018,7 @@ fn think_known_levels_pass_through_unchanged() {
             logprobs: None,
             top_logprobs: None,
             model_is_thinking: false,
+            reasoning_disable_fallback: None,
         };
         let request = build_lm_studio_request(
             "mymodel",
@@ -948,6 +1047,7 @@ fn top_level_all_none_fields_inserts_nothing() {
         logprobs: None,
         top_logprobs: None,
         model_is_thinking: false,
+        reasoning_disable_fallback: None,
     };
     let messages = json!([{ "role": "user", "content": "hi" }]);
     let request = build_lm_studio_request(
