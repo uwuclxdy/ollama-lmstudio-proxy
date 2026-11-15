@@ -300,10 +300,10 @@ class EntryPointTest(unittest.TestCase):
     def git(self, root, *args):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
-    def run_tool(self):
+    def run_tool(self, *args):
         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         return subprocess.run(
-            [sys.executable, str(TOOL), "--old-ref", "HEAD"],
+            [sys.executable, str(TOOL), *args],
             cwd=self.repo.name,
             capture_output=True,
             text=True,
@@ -352,6 +352,90 @@ class EntryPointTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0)
         self.assertIn("verdict: future-only", done.stdout)
         self.assertIn("| `api-docs/future/y.md` | future |", done.stdout)
+
+    def test_index_mode_sees_staged_new_pages_only(self):
+        new = pathlib.Path(self.repo.name) / "api-docs/future/new.md"
+        new.parent.mkdir()
+        new.write_text("stream true\n")
+        done = self.run_tool("--staged")
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "")
+
+        self.git(self.repo.name, "add", "api-docs/future/new.md")
+        # Drop the worktree copy: a worktree-vs-HEAD diff sees nothing for a
+        # path absent from both, so only the staged index can report it.
+        new.unlink()
+        done = self.run_tool("--staged")
+        self.assertEqual(done.returncode, 0)
+        row = (
+            "| `api-docs/future/new.md` | future | new file — review as substantive |"
+        )
+        self.assertIn(row, done.stdout)
+        self.assertIn("verdict: future-only", done.stdout)
+
+    def test_index_mode_reads_staged_bytes_over_worktree_edits(self):
+        # The index holds a chrome-only rewrite the worktree then edits into a
+        # prose change; only the staged bytes may reach the verdict.
+        self.doc.write_text("**status 200**\n")
+        self.git(self.repo.name, "add", "api-docs/x.md")
+        self.doc.write_text("status 201\n")
+        done = self.run_tool("--staged")
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("verdict: chrome-only", done.stdout)
+
+    def test_index_mode_reports_a_staged_rename_as_removal_plus_addition(self):
+        (pathlib.Path(self.repo.name) / "api-docs/future").mkdir()
+        self.git(self.repo.name, "mv", "api-docs/x.md", "api-docs/future/x.md")
+        done = self.run_tool("--staged")
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("| `api-docs/x.md` | active | file removed |", done.stdout)
+        new_row = (
+            "| `api-docs/future/x.md` | future | new file — review as substantive |"
+        )
+        self.assertIn(new_row, done.stdout)
+        self.assertIn("verdict: SUBSTANTIVE", done.stdout)
+
+    def test_old_ref_compares_the_worktree_against_the_named_ref(self):
+        self.doc.write_text("status 201\n")
+        self.git(self.repo.name, "add", "api-docs/x.md")
+        self.git(
+            self.repo.name,
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "test: second rev",
+        )
+        self.doc.write_text("status 200\n")
+        done = self.run_tool("--old-ref", "HEAD~1")
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "")
+        done = self.run_tool("--old-ref", "HEAD")
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("verdict: review", done.stdout)
+
+    def test_staged_mode_takes_its_status_from_the_old_ref(self):
+        self.doc.write_text("status 201\n")
+        self.git(self.repo.name, "add", "api-docs/x.md")
+        self.git(
+            self.repo.name,
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "test: second rev",
+        )
+        done = self.run_tool("--staged", "--old-ref", "HEAD~1")
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("verdict: review", done.stdout)
 
 
 if __name__ == "__main__":

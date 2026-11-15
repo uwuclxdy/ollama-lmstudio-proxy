@@ -18,7 +18,13 @@ Prints a markdown section for the refresh PR body; prints nothing when no
 api-docs/ file changed, so the body stays untouched on no-op refreshes.
 
 Modes:
-  default      worktree against HEAD (what the refresh step sees)
+  default      tracked worktree edits against HEAD only; untracked pages are
+               invisible — replay a refresh faithfully by staging the mirrored
+               trees (git add -A -- api-docs/ollama api-docs/lmstudio
+               api-docs/future) and running --staged
+  --staged     index against old_ref (default HEAD), renames split into a
+               removal and an addition; a modified file's new bytes come from
+               the staged index
   --old-ref R  worktree against blob R:path (replaying a past refresh)
 """
 
@@ -72,6 +78,11 @@ def git(*args: str) -> subprocess.CompletedProcess[bytes]:
 
 def blob(ref: str, path: str) -> str | None:
     r = git("show", f"{ref}:{path}")
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+
+
+def index_blob(path: str) -> str | None:
+    r = git("show", f":{path}")
     return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
 
 
@@ -195,8 +206,14 @@ def _render(kind: str, path: str, old: str, new: str) -> str:
 def main() -> int:
     argv = sys.argv[1:]
     old_ref = argv[argv.index("--old-ref") + 1] if "--old-ref" in argv else "HEAD"
+    staged = "--staged" in argv
 
-    status = git("diff", "--name-status", old_ref, "--", "api-docs/")
+    if staged:
+        status = git(
+            "diff", "--cached", "--no-renames", "--name-status", old_ref, "--", "api-docs/"
+        )
+    else:
+        status = git("diff", "--name-status", old_ref, "--", "api-docs/")
     if status.returncode != 0:
         print(f"git diff failed: {status.stderr.decode(errors='replace')[:200]}", file=sys.stderr)
         return 1
@@ -214,7 +231,8 @@ def main() -> int:
         elif state == "D":
             verdict, file_details = "file removed", []
         else:
-            verdict, file_details = compare_file(path, blob(old_ref, path) or "", worktree(path) or "")
+            new_text = index_blob(path) if staged else worktree(path)
+            verdict, file_details = compare_file(path, blob(old_ref, path) or "", new_text or "")
         scope = "future" if path.startswith(FUTURE_PREFIX) else "active"
         is_substantive = (
             "substantive" in verdict

@@ -20,13 +20,23 @@ jobs:
       - name: Run refresh script
         run: ./scripts/refresh-api-docs.sh
 
+      - name: Stage refreshed docs
+        run: git add -A -- api-docs/ollama api-docs/lmstudio api-docs/future
+
       - name: Semantic delta verdict
-        run: python3 scripts/api-delta-verdict.py > semantic-delta.md
+        run: python3 scripts/api-delta-verdict.py --staged > semantic-delta.md
 
       - name: Detect changes
         id: diff
         run: |
-          mapfile -t rows < <(git diff --numstat -- api-docs/)
+          diff_output="$(git diff --cached --no-renames --numstat -- api-docs/)" || {
+            echo "git diff --cached --numstat failed; cannot classify the refresh" >&2
+            exit 1
+          }
+          rows=()
+          if [[ -n $diff_output ]]; then
+            mapfile -t rows <<<"$diff_output"
+          fi
           if [[ ${#rows[@]} -eq 0 ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "no upstream changes"
