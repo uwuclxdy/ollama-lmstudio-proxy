@@ -9,10 +9,10 @@
 //! letting LM Studio's default ("loaded indefinitely") apply.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use humantime::parse_duration;
 use serde_json::{Value, json};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::constants::{LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD};
@@ -141,23 +141,28 @@ pub fn keep_alive_requests_unload(ttl: Option<i64>) -> bool {
 /// Spawns a background task to explicitly unload the model via LMStudio's native
 /// unload endpoint when `keep_alive: 0` is requested.
 ///
-/// The `delay_seconds` parameter allows callers to defer the unload (e.g. to let
-/// a streaming response finish before tearing down the model instance).
+/// `stream_end` defers the unload until a streaming response body reaches its
+/// own end (all chunks delivered) or is dropped (client disconnect): the
+/// receiver resolves when the body ends, whichever way. `None` unloads
+/// immediately, for a non-streaming response that is complete when the handler
+/// returns.
 pub fn spawn_model_unload_if_needed(
     client: reqwest::Client,
     base_url: String,
     model_resolver: Arc<ModelResolver>,
     ollama_model_name: String,
     keep_alive_seconds: Option<i64>,
-    delay_seconds: u64,
+    stream_end: Option<oneshot::Receiver<()>>,
 ) {
     if !matches!(keep_alive_seconds, Some(0)) {
         return;
     }
 
     tokio::spawn(async move {
-        if delay_seconds > 0 {
-            tokio::time::sleep(Duration::from_secs(delay_seconds)).await;
+        if let Some(stream_end) = stream_end {
+            // The sender is dropped with the body, so a client disconnect
+            // resolves this too; the payload is empty.
+            let _ = stream_end.await;
         }
         if let Err(e) =
             unload_model_instances(&client, &base_url, &model_resolver, &ollama_model_name).await

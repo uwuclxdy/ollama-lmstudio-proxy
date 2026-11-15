@@ -274,7 +274,6 @@ async fn embedding_handler_inner(
         ollama::embeddings::EmbeddingsOptions {
             response_mode: mode,
             load_timeout_seconds: s.config.load_timeout_seconds,
-            stream_timeout_seconds: s.config.stream_timeout_seconds,
             auto_evict: s.config.auto_evict,
         },
     )

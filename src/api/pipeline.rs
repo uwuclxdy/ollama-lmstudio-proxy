@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::response::Response;
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::constants::{LM_STUDIO_NATIVE_MODELS, LM_STUDIO_NATIVE_UNLOAD, LOG_PREFIX_SUCCESS};
@@ -21,18 +20,20 @@ use crate::lmstudio::keep_alive::{proactive_evict_if_unloaded, spawn_model_unloa
 use crate::logging::log_timed;
 use crate::model::ModelResolver;
 use crate::model::types::NativeModelsResponse;
-use crate::streaming::is_streaming_request;
+use crate::streaming::attach_stream_end_notifier;
 
 use super::context::RequestContext;
 use super::retry::with_retry_and_cancellation;
 
+#[expect(
+    missing_debug_implementations,
+    reason = "request-scoped scaffold over stores that are not Debug; never printed"
+)]
 pub struct ChatLikeCall<'a> {
     pub context: RequestContext<'a>,
     pub resolver: Arc<ModelResolver>,
-    pub body: Value,
     pub cancellation: CancellationToken,
     pub load_timeout_seconds: u64,
-    pub stream_timeout_seconds: u64,
     pub ollama_model_name: String,
     pub keep_alive_seconds: Option<i64>,
     pub start_time: Instant,
@@ -53,10 +54,8 @@ impl ChatLikeCall<'_> {
         let ChatLikeCall {
             context,
             resolver,
-            body,
             cancellation,
             load_timeout_seconds,
-            stream_timeout_seconds,
             ollama_model_name,
             keep_alive_seconds,
             start_time,
@@ -109,7 +108,7 @@ impl ChatLikeCall<'_> {
             }
         }
 
-        let result = with_retry_and_cancellation(
+        let mut result = with_retry_and_cancellation(
             &context,
             &ollama_model_name,
             load_timeout_seconds,
@@ -143,19 +142,19 @@ impl ChatLikeCall<'_> {
             }
         }
 
-        if spawn_unload {
-            let unload_delay = if is_streaming_request(&body) {
-                stream_timeout_seconds
-            } else {
-                0
-            };
+        if spawn_unload && keep_alive_seconds == Some(0) {
+            // keep_alive:0 teardown waits on the response body's own end (all
+            // chunks delivered) or drop (client disconnect) for a streamed
+            // body, and runs immediately for a non-streaming one.
+            let (streamed_response, stream_end) = attach_stream_end_notifier(result);
+            result = streamed_response;
             spawn_model_unload_if_needed(
                 context.client.clone(),
                 context.lmstudio_url.to_string(),
                 resolver,
                 ollama_model_name,
                 keep_alive_seconds,
-                unload_delay,
+                stream_end,
             );
         }
 

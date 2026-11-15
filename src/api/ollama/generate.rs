@@ -283,10 +283,8 @@ pub async fn handle_ollama_generate(
     ChatLikeCall {
         context,
         resolver: model_resolver,
-        body,
         cancellation: cancellation_token,
         load_timeout_seconds,
-        stream_timeout_seconds,
         ollama_model_name,
         keep_alive_seconds,
         start_time,

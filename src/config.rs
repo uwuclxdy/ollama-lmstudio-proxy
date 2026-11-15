@@ -194,6 +194,12 @@ pub fn validate_config(config: &Config) -> Result<(), String> {
     if let Err(e) = url::Url::parse(&config.lmstudio_url) {
         return Err(format!("invalid LM Studio URL format: {}", e));
     }
+    if config.load_timeout_seconds == 0 {
+        return Err("load-timeout-seconds must be greater than 0".to_string());
+    }
+    if config.stream_timeout_seconds == 0 {
+        return Err("stream-timeout-seconds must be greater than 0".to_string());
+    }
     Ok(())
 }
 
@@ -213,5 +219,17 @@ mod tests {
 
         let config = Config::try_parse_from(["proxy", "--stream-timeout-seconds", "12"]).unwrap();
         assert_eq!(config.stream_timeout_seconds, 12);
+    }
+
+    #[test]
+    fn zero_timeouts_are_rejected() {
+        let config = Config::try_parse_from(["proxy", "--load-timeout-seconds", "0"]).unwrap();
+        let err = super::validate_config(&config).expect_err("zero load timeout must be rejected");
+        assert_eq!(err, "load-timeout-seconds must be greater than 0");
+
+        let config = Config::try_parse_from(["proxy", "--stream-timeout-seconds", "0"]).unwrap();
+        let err =
+            super::validate_config(&config).expect_err("zero stream timeout must be rejected");
+        assert_eq!(err, "stream-timeout-seconds must be greater than 0");
     }
 }

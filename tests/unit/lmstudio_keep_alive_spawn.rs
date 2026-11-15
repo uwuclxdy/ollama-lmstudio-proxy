@@ -34,7 +34,7 @@ fn spawn_model_unload_noop_when_keep_alive_none() {
             make_resolver(),
             "llama3".to_string(),
             None,
-            0,
+            None,
         );
     });
 }
@@ -53,7 +53,7 @@ fn spawn_model_unload_noop_when_keep_alive_positive() {
             make_resolver(),
             "llama3".to_string(),
             Some(300),
-            0,
+            None,
         );
     });
 }
@@ -72,7 +72,7 @@ fn spawn_model_unload_noop_when_keep_alive_negative() {
             make_resolver(),
             "llama3".to_string(),
             Some(-1),
-            0,
+            None,
         );
     });
 }

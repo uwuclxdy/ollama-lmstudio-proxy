@@ -179,6 +179,10 @@ pub async fn spawn_proxy_with_lmstudio_prefix(prefix: &str) -> TestProxy {
 pub const TEST_SEARCH_API_KEY: &str = "test-search-key";
 
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "the spawn matrix reads as one flat argument list at every helper"
+)]
 async fn spawn_proxy_inner(
     enable_chunk_recovery: bool,
     use_native_chat: bool,
@@ -230,18 +234,7 @@ async fn spawn_proxy_inner(
         .expect("ProxyServer::new_with_state_dir");
     let server = Arc::new(server);
 
-    // Replicate the production layer stack from `ProxyServer::run` so the test
-    // harness exercises the same middleware: api_key_gate → cors. Like `run`,
-    // wrap the finished router in `normalize_path` so trailing-slash handling
-    // matches production. The api_key gate is a no-op when `api_key` is None,
-    // so existing tests are unaffected.
-    let api_key = Arc::new(server.config.api_key.clone());
-    let app = create_router(server)
-        .layer(axum::middleware::from_fn_with_state(
-            api_key,
-            ollama_lmstudio_proxy::proxy::auth::api_key_gate,
-        ))
-        .layer(cors_layer());
+    let app = router_for(server);
     let app = if rebuild_outer_layer {
         use axum::response::IntoResponse;
 
@@ -261,13 +254,39 @@ async fn spawn_proxy_inner(
         app
     };
 
-    let app = normalize_path(app);
+    let (base_url, client, handle) = serve_router(app).await;
 
+    TestProxy {
+        base_url,
+        mock,
+        client,
+        _state_dir: state_dir,
+        _server_task: handle,
+    }
+}
+
+/// Boots the production router with the same middleware stack
+/// `ProxyServer::run` layers: api_key_gate → cors. The api_key gate is a
+/// no-op when `api_key` is None, so tests without a key are unaffected.
+fn router_for(server: Arc<ProxyServer>) -> axum::Router {
+    let api_key = Arc::new(server.config.api_key.clone());
+    create_router(server)
+        .layer(axum::middleware::from_fn_with_state(
+            api_key,
+            ollama_lmstudio_proxy::proxy::auth::api_key_gate,
+        ))
+        .layer(cors_layer())
+}
+
+/// Wraps the finished router in `normalize_path` (trailing-slash handling
+/// matching production), binds an ephemeral port, serves it, and returns the
+/// client-facing pieces.
+async fn serve_router(app: axum::Router) -> (String, reqwest::Client, JoinHandle<()>) {
+    let app = normalize_path(app);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local_addr");
-
     let handle = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -276,14 +295,55 @@ async fn spawn_proxy_inner(
         .await
         .expect("axum::serve");
     });
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client");
+    (format!("http://{addr}"), client, handle)
+}
 
+/// Boots a proxy whose LM Studio base URL points at an external backend (a raw
+/// TCP server the test paces itself) instead of the wiremock MockServer, with
+/// explicit load and stream timeout seconds. The MockServer is still started
+/// to fill `TestProxy.mock`; these tests mount nothing on it.
+pub(crate) async fn spawn_proxy_against_backend(
+    lmstudio_url: &str,
+    load_timeout_seconds: u64,
+    stream_timeout_seconds: u64,
+) -> TestProxy {
+    ensure_runtime_initialized(true);
+    let mock = MockServer::start().await;
+    let state_dir = tempfile::tempdir().expect("create temp state dir");
+    let config = Config {
+        listen: "127.0.0.1:0".to_string(),
+        lmstudio_url: lmstudio_url.to_string(),
+        log_level: "off".to_string(),
+        load_timeout_seconds,
+        stream_timeout_seconds,
+        max_buffer_size: 262_144,
+        enable_chunk_recovery: true,
+        model_resolution_cache_ttl_seconds: 1,
+        lmstudio_token: None,
+        api_key: None,
+        use_native_chat: false,
+        native_chat_streaming: false,
+        flash_attention: false,
+        offload_kv_cache: false,
+        eval_batch_size: None,
+        auto_evict: false,
+        allow_private_fetch: true,
+        search_url: None,
+        search_api_key: None,
+        ollama_version: "0.30.0".to_string(),
+        default_context_length: None,
+    };
+    let server = Arc::new(
+        ProxyServer::new_with_state_dir(config, state_dir.path().to_path_buf())
+            .expect("ProxyServer::new_with_state_dir"),
+    );
+    let (base_url, client, handle) = serve_router(router_for(server)).await;
     TestProxy {
-        base_url: format!("http://{}", addr),
+        base_url,
         mock,
         client,
         _state_dir: state_dir,

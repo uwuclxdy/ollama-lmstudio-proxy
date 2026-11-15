@@ -70,3 +70,9 @@ mod decode_error_never_load_retry;
 
 #[path = "integration/envelope_rebuild.rs"]
 mod envelope_rebuild;
+
+#[path = "integration/keep_alive_streaming.rs"]
+mod keep_alive_streaming;
+
+#[path = "integration/passthrough_stream_timeout.rs"]
+mod passthrough_stream_timeout;

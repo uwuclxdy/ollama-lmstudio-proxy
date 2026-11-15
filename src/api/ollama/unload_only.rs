@@ -22,9 +22,10 @@
 //! applies to both endpoints (`is_generate_unload_only`/`is_chat_unload_only`).
 //! "Warm-only" is the same empty-payload condition with `keep_alive != 0`
 //! (`is_generate_warm_only`/`is_chat_warm_only`). With a non-empty payload the
-//! request still flows through the regular inference path and the unload races
-//! the inference response — see the existing `keep_alive_zero_accepted`
-//! integration tests.
+//! request still flows through the regular inference path, where the unload
+//! follows the response stream's own end (or the client's drop) for a
+//! streaming response and runs immediately for a non-streaming one — see the
+//! existing `keep_alive_zero_accepted` integration tests.
 //!
 //! Unload's `done_reason:"unload"` comes from upstream ollama's `docs/api.md`,
 //! mirrored at `api-docs/ollama/repo/api.md` (the docs-site `llms.txt` that
@@ -88,7 +89,7 @@ pub async fn respond_unload_only(
         ollama_model_name.to_string(),
         keep_alive_seconds,
         // No streaming response to wait for — unload immediately.
-        0,
+        None,
     );
 
     let payload = build_done_chunk(ollama_model_name, is_chat);
