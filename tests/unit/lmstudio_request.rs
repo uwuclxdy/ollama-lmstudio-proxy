@@ -1379,3 +1379,50 @@ fn structured_object_not_field_omits_strict() {
         "a schema carrying `not` must drop strict; got {out}"
     );
 }
+
+#[test]
+fn detect_media_type_maps_known_magic_and_falls_back_to_octet_stream() {
+    let cases: [(&[u8], &str); 10] = [
+        (b"\x89PNG\r\n\x1a\n0000", "image/png"),
+        (b"\xFF\xD8\xFF\xE0", "image/jpeg"),
+        (b"GIF89a0000", "image/gif"),
+        (b"GIF87a0000", "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+        (b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wave"),
+        (b"BM000000", "image/bmp"),
+        (b"II*\x00", "application/octet-stream"),
+        (b"MM\x00*", "application/octet-stream"),
+        (b"plain bytes", "application/octet-stream"),
+    ];
+    for (bytes, expected) in cases {
+        assert_eq!(
+            detect_media_type(bytes),
+            expected,
+            "magic bytes {bytes:?} must map to {expected}"
+        );
+    }
+}
+
+#[test]
+fn prepare_systemone_request_strips_crlf_before_decoding() {
+    let mut body = json!({ "images": ["AA\r\nAA"] });
+    prepare_systemone_request(&mut body).expect("CRLF-wrapped base64 decodes");
+    assert_eq!(
+        body["images"][0],
+        "data:application/octet-stream;base64,AAAA"
+    );
+}
+
+#[test]
+fn prepare_systemone_request_rejects_non_string_entries() {
+    let mut body = json!({ "images": [42] });
+    let error = prepare_systemone_request(&mut body).expect_err("non-string image refused");
+    assert_eq!(error, "images[0] must be a base64 string");
+}
+
+#[test]
+fn prepare_systemone_request_ignores_a_body_without_an_images_array() {
+    let mut body = json!({ "images": "not-an-array", "state": "text" });
+    prepare_systemone_request(&mut body).expect("a non-array images field is left alone");
+    assert_eq!(body, json!({ "images": "not-an-array", "state": "text" }));
+}

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use base64::Engine as _;
 use serde_json::{Value, json};
 
 use crate::http::json_as_i64;
@@ -308,6 +309,60 @@ pub(crate) fn rewrite_json_object_format(body: &mut Value) {
             "response_format".to_string(),
             permissive_json_object_response_format(),
         );
+    }
+}
+
+/// Prepare an Ollama System One body for LM Studio: drop a top-level `stream`
+/// key (the endpoint is non-streaming, and the generic funnel would otherwise
+/// wrap the JSON answer as SSE) and rewrite bare-base64 `images` entries into
+/// the data URLs LM Studio's decision parser accepts. The MIME type comes from
+/// the decoded magic bytes, the same wrapping Ollama applies to its decoded
+/// image bytes; Ollama additionally re-encodes WebP as PNG before wrapping,
+/// while the proxy forwards WebP bytes unchanged.
+pub(crate) fn prepare_systemone_request(body: &mut Value) -> Result<(), String> {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("stream");
+    }
+    let Some(images) = body.get_mut("images").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    for (index, image) in images.iter_mut().enumerate() {
+        let Some(raw) = image.as_str() else {
+            return Err(format!("images[{index}] must be a base64 string"));
+        };
+        let cleaned: String = raw.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&cleaned)
+            .map_err(|_| format!("images[{index}] is not valid base64"))?;
+        *image = Value::String(format!(
+            "data:{};base64,{cleaned}",
+            detect_media_type(&decoded)
+        ));
+    }
+    Ok(())
+}
+
+/// Media type from an image's magic bytes for the types Ollama documents (PNG,
+/// JPEG, WebP) plus the GIF/BMP/WAV cases Go's `http.DetectContentType`
+/// assigns; every other payload (ICO, TIFF, text, …) gets
+/// `application/octet-stream`.
+fn detect_media_type(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.starts_with(b"RIFF") {
+        match bytes.get(8..12) {
+            Some(b"WEBP") => "image/webp",
+            Some(b"WAVE") => "audio/wave",
+            _ => "application/octet-stream",
+        }
+    } else if bytes.starts_with(b"BM") {
+        "image/bmp"
+    } else {
+        "application/octet-stream"
     }
 }
 

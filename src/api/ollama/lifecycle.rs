@@ -153,7 +153,7 @@ pub async fn handle_ollama_create(
     // inference: LM Studio has no Modelfile engine to seed turns, no
     // template-override, no LoRA-adapter load surface, no custom prompt-renderer
     // or response-parser hooks, no minimum-version gate to enforce, and no
-    // System One decision-model support. Warn server-side and flag the client
+    // capability-override surface. Warn server-side and flag the client
     // rather than staying silent about the no-op.
     let mut warnings: Vec<&str> = Vec::new();
     if body

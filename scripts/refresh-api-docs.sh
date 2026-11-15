@@ -133,6 +133,7 @@ LMS_ACTIVE=(
     1_developer/3_openai-compat/structured-output.md
     1_developer/3_openai-compat/tools.mdx
     1_developer/4_anthropic-compat/messages.md
+    1_developer/5_jev-compat/systemone.md
 )
 
 # LM Studio: pure noise. Never copied.
@@ -147,6 +148,7 @@ LMS_DENY=(
     1_developer/2_rest/quickstart.md
     1_developer/3_openai-compat/index.mdx
     1_developer/4_anthropic-compat/index.mdx
+    1_developer/5_jev-compat/index.mdx
     1_developer/_embeddings.md
     1_developer/api-changelog.md
     1_developer/index.mdx

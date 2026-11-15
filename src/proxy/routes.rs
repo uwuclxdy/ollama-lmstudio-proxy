@@ -12,9 +12,10 @@ use serde_json::Value;
 
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
 use crate::api::{RequestContext, lmstudio, ollama, web};
-use crate::constants::MAX_JSON_BODY_SIZE_BYTES;
+use crate::constants::{MAX_JSON_BODY_SIZE_BYTES, SYSTEMONE_MAX_BODY_SIZE_BYTES};
 use crate::error::ProxyError;
 use crate::http::json_response;
+use crate::lmstudio::request::prepare_systemone_request;
 use crate::proxy::ProxyServer;
 
 pub type AppState = Arc<ProxyServer>;
@@ -148,7 +149,12 @@ pub fn create_router(server: AppState) -> Router {
         .route("/api/copy", post(copy_handler))
         .route("/api/delete", delete(delete_handler))
         .route("/api/push", post(push_handler))
-        .route("/v1/systemone", post(systemone_handler))
+        .route(
+            "/v1/systemone",
+            post(systemone_handler).layer(DefaultBodyLimit::max(
+                SYSTEMONE_MAX_BODY_SIZE_BYTES as usize,
+            )),
+        )
         .route("/v1/audio/speech", post(speech_handler))
         .route("/v1/audio/transcriptions", post(transcriptions_handler))
         .route("/v1/audio/translations", post(translations_handler))
@@ -336,16 +342,39 @@ async fn push_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyErr
     ))
 }
 
-// Upstream v0.35 endpoint (System One decision models). LM Studio's model
-// list now includes decision models (api-docs/lmstudio/1_developer/2_rest/
-// list.md), but the proxy does not yet map them onto the mirror spec
-// (api-docs/ollama/openapi.yaml §/v1/systemone): forwarding is deferred so
-// the passthrough's misleading `200 {"error":"Unexpected endpoint..."}`
-// envelope never masquerades as an answer — an explicit 501 beats it.
-async fn systemone_handler(JsonBody(_): JsonBody<Value>) -> Result<Response, ProxyError> {
-    Err(ProxyError::not_implemented(
-        "systemone is not supported: the proxy does not forward System One decision requests to LM Studio",
-    ))
+// The explicit POST route keeps every other method from reaching LM Studio's
+// catch-all, which answers unknown /v1 paths with a misleading
+// `200 {"error":"Unexpected endpoint..."}` instead of 405.
+async fn systemone_handler(
+    State(s): State<AppState>,
+    QueryParams(query): QueryParams<Vec<(String, String)>>,
+    headers: HeaderMap,
+    BodyBytes(body): BodyBytes,
+) -> Result<Response, ProxyError> {
+    // A body the funnel cannot parse as JSON is forwarded untouched so its own
+    // 400 answers; a parsed one is prepared (stream/image rewrites) before it
+    // reaches the funnel.
+    let body = match serde_json::from_slice::<Value>(&body) {
+        Ok(mut body) => {
+            prepare_systemone_request(&mut body)
+                .map_err(|message| ProxyError::bad_request(&message))?;
+            serde_json::to_vec(&body)
+                .map(Bytes::from)
+                .map_err(|error| {
+                    ProxyError::bad_request(&format!("failed to serialize request body: {error}"))
+                })?
+        }
+        Err(_) => body,
+    };
+    forward_passthrough(
+        s,
+        http::Method::POST,
+        "/v1/systemone".to_string(),
+        body,
+        headers,
+        encode_query(&query),
+    )
+    .await
 }
 
 // Upstream v0.40.8 endpoint (OpenAI audio speech, api-docs/ollama/api/

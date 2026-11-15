@@ -22,7 +22,7 @@ pub struct NativeModelData {
     pub quantization: Option<NativeQuantization>,
     pub max_context_length: Option<u64>,
     pub loaded_instances: Vec<NativeLoadedInstance>,
-    /// Decision model type (e.g. `systemone`). Only present for decision models
+    /// Decision model type (e.g. `clef`). Only present for decision models
     /// when LM Studio reports one.
     #[serde(default)]
     pub decision_type: Option<String>,

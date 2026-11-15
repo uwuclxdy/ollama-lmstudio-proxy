@@ -83,3 +83,7 @@ pub const LOG_PREFIX_CONN: &str = "↔️";
 
 /// Maximum accepted JSON body size (bytes)
 pub const MAX_JSON_BODY_SIZE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// System One whole-request cap (bytes): upstream's `/v1/systemone` limit
+/// (api-docs/ollama/openapi.yaml), above the router-wide default.
+pub const SYSTEMONE_MAX_BODY_SIZE_BYTES: u64 = 32 * 1024 * 1024;

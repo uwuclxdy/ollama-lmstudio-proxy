@@ -2,7 +2,7 @@
 // server-routes integration-test agent.
 
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::common::{TestProxy, spawn_proxy, spawn_proxy_with_api_key};
@@ -333,40 +333,330 @@ async fn route_web_search_is_present_and_returns_501() {
     );
 }
 
+/// Mount a decision-model listing (nullable `max_context_length`, clef
+/// decision type) so `/v1/systemone` requests can resolve against it.
+async fn mount_decision_model_stub(p: &crate::common::TestProxy) {
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "clef-flash", "type": "decision", "publisher": "ggml-org",
+                        "architecture": "clef", "format": "gguf",
+                        "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                        "max_context_length": null, "loaded_instances": [],
+                        "decision_type": "clef", "has_vision_adapter": false}]
+        })))
+        .mount(&p.mock)
+        .await;
+}
+
 #[tokio::test]
-async fn route_systemone_is_present_and_returns_501() {
+async fn route_systemone_forwards_decision_request() {
     let p = spawn_proxy().await;
-    let resp = p
-        .client
-        .post(p.url("/v1/systemone"))
-        .json(&json!({
-            "model": "nimble",
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({
+            "model": "clef-flash",
             "state": "Our checkout has returned 500 errors since 9am.",
             "questions": {
                 "label": {
                     "type": "choice",
                     "instructions": "Which label fits this ticket?",
-                    "criteria": {"bug": "Software errors"}
+                    "criteria": {"billing": "Payments and refunds", "bug": "Software errors"}
+                }
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {
+                "label": {
+                    "type": "choice",
+                    "choice": "bug",
+                    "probabilities": {"billing": 0.0125, "bug": 0.9781},
+                    "confidence": 0.8906
+                }
+            },
+            "usage": {"input_tokens": 174, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash:latest",
+            "state": "Our checkout has returned 500 errors since 9am.",
+            "questions": {
+                "label": {
+                    "type": "choice",
+                    "instructions": "Which label fits this ticket?",
+                    "criteria": {"billing": "Payments and refunds", "bug": "Software errors"}
                 }
             }
         }))
         .send()
         .await
         .expect("POST /v1/systemone");
-    assert_ne!(
-        resp.status(),
-        404,
-        "/v1/systemone must be a recognised route"
-    );
+
     assert_eq!(
-        resp.status().as_u16(),
-        501,
-        "/v1/systemone must return 501: the proxy does not forward System One decision requests to LM Studio"
+        resp.status(),
+        200,
+        "/v1/systemone must forward to LM Studio"
     );
     let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["answers"]["label"]["choice"], "bug");
+    assert_eq!(body["answers"]["label"]["confidence"], 0.8906);
+    assert_eq!(body["usage"]["output_tokens"], 0);
+}
+
+/// A 1x1 transparent PNG, as an Ollama client sends `images` entries: bare
+/// base64 with no `data:` prefix (api-docs/ollama/openapi.yaml
+/// §SystemOneRequest.images). LM Studio's decision parser accepts only data
+/// URLs, so the proxy must wrap them.
+const PNG_1X1_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+#[tokio::test]
+async fn route_systemone_wraps_bare_base64_images_as_data_urls() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({
+            "model": "clef-flash",
+            "images": [format!("data:image/png;base64,{PNG_1X1_BASE64}")]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.6328}},
+            "usage": {"input_tokens": 300, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "images": [PNG_1X1_BASE64],
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with image");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "the bare-base64 image must reach LM Studio as a data URL"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["answers"]["angry"]["noul"], 0.6328);
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_invalid_base64_images() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "images": ["not-base64!!"],
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with invalid image");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "an images entry that is not base64 must be refused before forwarding"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"], "images[0] is not valid base64");
+}
+
+#[tokio::test]
+async fn route_systemone_backend_error_propagated() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {
+                "message": "Invalid model identifier \"clef-flash\". There are no downloaded decision models. Please download a model to get started.",
+                "type": "invalid_request_error",
+                "param": "model",
+                "code": "invalidModelIdentifier"
+            }
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "Our checkout has returned 500 errors since 9am.",
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone backend error");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "the backend's decision-model error status must propagate"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["error"]["code"], "invalidModelIdentifier");
+}
+
+#[tokio::test]
+async fn route_systemone_strips_stream_so_the_answer_is_json() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({ "model": "clef-flash" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}},
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with stream");
+
+    assert_eq!(resp.status(), 200);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
     assert!(
-        body["error"].as_str().unwrap_or("").contains("systemone"),
-        "the 501 body must name the endpoint; got {body}"
+        content_type.starts_with("application/json"),
+        "System One is non-streaming and ignores a stray `stream` field; got content-type {content_type}"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["answers"]["angry"]["noul"], 0.5);
+}
+
+#[tokio::test]
+async fn route_systemone_forwards_the_query_string() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(query_param("trace", "on"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone?trace=on"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with query");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "the query string must reach the backend, as on every other /v1 passthrough"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_accepts_bodies_over_the_default_router_limit() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(17 * 1024 * 1024),
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone over the default limit");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "the System One route must admit upstream's 32 MiB whole-request cap, above the router-wide 16 MiB"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_get_is_405_not_forwarded() {
+    let p = spawn_proxy().await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/systemone"))
+        .send()
+        .await
+        .expect("GET /v1/systemone");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        405,
+        "GET /v1/systemone must 405 at the proxy, never reach LM Studio's 200 catch-all"
     );
 }
 

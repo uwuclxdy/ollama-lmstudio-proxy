@@ -26,7 +26,7 @@
 
 ## Error codes
 
-Upstream LM Studio `429` (rate limited) and `502` (bad gateway) pass through unchanged; other upstream-unreachable failures map to `503`. Proxy-side validation errors return `400`, a model missing from LM Studio returns `404`, and a request body over 16 MiB returns `413`.
+Upstream LM Studio `429` (rate limited) and `502` (bad gateway) pass through unchanged; other upstream-unreachable failures map to `503`. Proxy-side validation errors return `400`, a model missing from LM Studio returns `404`, and a request body over the router-wide 16 MiB default returns `413` (the `/v1/systemone` route accepts upstream's 32 MiB whole-request cap).
 
 Every error the proxy raises is JSON in the endpoint's own envelope, `{"error":msg}` on the Ollama surface. That covers requests refused before any handler reads them, such as an oversized body or an undecodable path or query string.
 
@@ -47,7 +47,7 @@ before forwarding. A few compatibility shims apply on top:
 - Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
   protocol: `event: error` for Anthropic, `event: response.failed` for
   `/v1/responses`, a typed `error` object for OpenAI-style streams.
-- `POST /v1/systemone` (upstream v0.35 System One decision endpoint) answers `501`: LM Studio's Jev-compatible `/v1/systemone` is documented only in the future mirror, so the proxy keeps an explicit 501 instead of forwarding to LM Studio's misleading `200 {"error":"Unexpected endpoint..."}` envelope.
+- `POST /v1/systemone` (upstream v0.35 System One decision endpoint) forwards to LM Studio's Jev-compatible surface (LM Studio 0.4.26+). The body's `model` is resolved like every `/v1` passthrough; a bare-base64 `images` entry is wrapped as a `data:<mime>;base64,` URL because LM Studio's decision parser accepts only data URLs, and a non-base64 entry answers the proxy's own `400`; a stray top-level `stream` field is dropped, since System One answers one JSON response; the route accepts upstream's 32 MiB whole-request limit. Any other method on the path answers `405` at the proxy.
 - `POST /v1/audio/speech` (upstream v0.40.8 OpenAI audio-speech endpoint) answers `501`: LM Studio has no TTS surface, and its catch-all answers unknown `/v1` paths with the misleading `200 {"error":"Unexpected endpoint..."}` envelope.
 - `POST /v1/audio/transcriptions` and `POST /v1/audio/translations` (upstream OpenAI audio transcription/translation endpoints; translations is noted as added in Ollama v0.40.12) answer `501` for the same reason: LM Studio exposes no audio-input surface, so forwarding would hit the same misleading envelope. Requests carry a `file` upload (multipart/form-data in the OpenAI spec these endpoints mirror); the proxy consumes the upload up to the body limit so the client reliably receives the 501 instead of a mid-upload connection close.
 - Trailing slashes are trimmed before routing, so `/v1/audio/transcriptions/` reaches the same handler as `/v1/audio/transcriptions`, `/api/version/` keeps its auth exemption, and a passthrough path like `/v1/models/` forwards as `/v1/models`. Upstream Ollama redirects the slash form instead (`301` for `GET`, `307` for other methods the bare path answers; a method the bare path rejects 404s on the slash form too; measured on Ollama 0.40.13).
