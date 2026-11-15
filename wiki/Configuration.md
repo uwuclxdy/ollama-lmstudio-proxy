@@ -11,8 +11,8 @@ Every setting is a CLI flag. Where a flag reads an environment variable too, the
 | `--listen` | `0.0.0.0:11434` | Server bind address |
 | `--lmstudio-url` | `http://localhost:1234` | LM Studio URL |
 | `--log-level` | `info` | `off`, `error`, `warn`, `info`, `debug`, `trace` (`RUST_LOG` env) |
-| `--load-timeout-seconds` | `15` | Model loading wait timeout in seconds (after trigger) |
-| `--stream-timeout-seconds` | `60` | Maximum time in seconds between streaming response chunks; also the `keep_alive:0` unload wait for requests with `stream:true`, counted from the response's start |
+| `--load-timeout-seconds` | `15` | Model loading wait timeout in seconds (after trigger); must be greater than 0 |
+| `--stream-timeout-seconds` | `60` | Maximum time in seconds between streaming response chunks (must be greater than 0); a `keep_alive:0` request also holds the model until its response body ends (all chunks delivered) or the client disconnects, then unloads |
 | `--model-resolution-cache-ttl-seconds` | `300` | Cache TTL for model resolution |
 | `--max-buffer-size` | `262144` | Initial buffer size for SSE message assembly (bytes) |
 | `--enable-chunk-recovery` | `false` | Enable partial chunk recovery for streams |
