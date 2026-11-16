@@ -10,12 +10,16 @@ use http::HeaderMap;
 use http::request::Parts;
 use serde_json::Value;
 
+use crate::api::ollama::resolution::{fetch_model_info_for_id, resolve_model_target};
 use crate::api::ollama::{EmbeddingResponseMode, handle_ollama_embeddings};
 use crate::api::{RequestContext, lmstudio, ollama, web};
 use crate::constants::{MAX_JSON_BODY_SIZE_BYTES, SYSTEMONE_MAX_BODY_SIZE_BYTES};
 use crate::error::ProxyError;
 use crate::http::json_response;
-use crate::lmstudio::request::prepare_systemone_request;
+use crate::lmstudio::request::{
+    SYSTEMONE_TEXT_LIMIT_BYTES, SystemOneMirror, prepare_systemone_request,
+    systemone_model_ref_error, systemone_runner_error, systemone_text_limit,
+};
 use crate::proxy::ProxyServer;
 
 pub type AppState = Arc<ProxyServer>;
@@ -349,22 +353,37 @@ async fn systemone_handler(
     State(s): State<AppState>,
     QueryParams(query): QueryParams<Vec<(String, String)>>,
     headers: HeaderMap,
-    BodyBytes(body): BodyBytes,
+    BodyBytes(raw): BodyBytes,
 ) -> Result<Response, ProxyError> {
-    // A body the funnel cannot parse as JSON is forwarded untouched so its own
-    // 400 answers; a parsed one is prepared (stream/image rewrites) before it
-    // reaches the funnel.
-    let body = match serde_json::from_slice::<Value>(&body) {
-        Ok(mut body) => {
-            prepare_systemone_request(&mut body)
+    // A body serde's `Value` parser rejects is forwarded untouched: either it
+    // is not JSON, so the backend's own 400 answers, or Go's decoder would
+    // accept it (a float outside f64 range in a raw field, say) and it skips
+    // the cap check — the residual of gating the mirror on `Value`. A parsed
+    // body is prepared (stream/image rewrites) and checked against upstream's
+    // decode, model, model-ref, runner and text-cap rules before it reaches the
+    // funnel.
+    let body = match serde_json::from_slice::<Value>(&raw) {
+        Ok(mut parsed) => {
+            prepare_systemone_request(&mut parsed)
                 .map_err(|message| ProxyError::bad_request(&message))?;
-            serde_json::to_vec(&body)
-                .map(Bytes::from)
-                .map_err(|error| {
-                    ProxyError::bad_request(&format!("failed to serialize request body: {error}"))
-                })?
+            let request = SystemOneMirror::parse(&raw).map_err(|error| {
+                ProxyError::bad_request(&format!("invalid request body: {error}"))
+            })?;
+            if request.model().trim().is_empty() {
+                return Err(ProxyError::bad_request("model is required"));
+            }
+            if let Some(message) = systemone_model_ref_error(request.model()) {
+                return Err(ProxyError::bad_request(message));
+            }
+            if let Some(message) = systemone_runner_error(request.runner()) {
+                return Err(ProxyError::bad_request(&message));
+            }
+            enforce_systemone_text_cap(&s, &request).await?;
+            Bytes::from(serde_json::to_vec(&parsed).map_err(|error| {
+                ProxyError::bad_request(&format!("failed to serialize request body: {error}"))
+            })?)
         }
-        Err(_) => body,
+        Err(_) => raw,
     };
     forward_passthrough(
         s,
@@ -375,6 +394,45 @@ async fn systemone_handler(
         encode_query(&query),
     )
     .await
+}
+
+/// Upstream's text-and-schema pre-check for System One (`server/routes.go`
+/// SystemOneHandler): a local request whose decoded text and schema exceed the
+/// cap answers 413 before any prompt is built. The cap follows the model's
+/// `decision_type` (`kev`/`d1` widen it to 1 MiB), so the model is resolved and
+/// fetched only once the 64 KiB floor is crossed — a request under it costs no
+/// backend call beyond the passthrough's own resolve.
+async fn enforce_systemone_text_cap(
+    s: &AppState,
+    request: &SystemOneMirror,
+) -> Result<(), ProxyError> {
+    let size = request.text_size();
+    if size <= SYSTEMONE_TEXT_LIMIT_BYTES {
+        return Ok(());
+    }
+    let context = create_context(s);
+    let cancellation_token = s.shutdown.child_token();
+    let (model_id, _) = resolve_model_target(
+        &context,
+        &s.model_resolver,
+        request.model(),
+        cancellation_token.clone(),
+    )
+    .await?;
+    let model_info =
+        fetch_model_info_for_id(&context, &s.model_resolver, &model_id, cancellation_token).await?;
+    let limit = systemone_text_limit(
+        model_info
+            .as_ref()
+            .and_then(|info| info.decision_type.as_deref()),
+    );
+    if size <= limit {
+        return Ok(());
+    }
+    Err(ProxyError::new(
+        format!("text and schema must not exceed {} KiB", limit >> 10),
+        413,
+    ))
 }
 
 // Upstream v0.40.8 endpoint (OpenAI audio speech, api-docs/ollama/api/

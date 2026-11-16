@@ -1426,3 +1426,433 @@ fn prepare_systemone_request_ignores_a_body_without_an_images_array() {
     prepare_systemone_request(&mut body).expect("a non-array images field is left alone");
     assert_eq!(body, json!({ "images": "not-an-array", "state": "text" }));
 }
+
+/// Upstream's System One handler measures `len(bytes.TrimSpace(encoded))`,
+/// where `encoded` is Go's re-marshal of its decoded `api.SystemOneRequest`
+/// (`server/routes.go` SystemOneHandler). The expected lengths below were
+/// measured with Go's own `encoding/json` over that struct shape
+/// (`SetEscapeHTML(false)`): `RawMessage` fields keep the client's spellings
+/// (escapes, number forms) and lose only insignificant whitespace; unknown keys
+/// drop at both levels; struct keys match case-insensitively with the last
+/// duplicate winning; `state` and `questions` always marshal (`null` when
+/// absent) while `runner`/`videos`/`keep_alive` carry `omitempty`.
+#[test]
+fn systemone_text_size_matches_upstreams_re_encode() {
+    let backslash = char::from(92);
+    let escaped_acute = format!("{backslash}u00e9");
+    let literal_acute = char::from(233).to_string();
+    let cases: [(String, usize); 21] = [
+        (
+            r#"{"model":"clef-flash","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}"#.to_string(),
+            131,
+        ),
+        (
+            [
+                r#"{"model":"m","state":""#,
+                escaped_acute.as_str(),
+                escaped_acute.as_str(),
+                r#"","questions":{"q":{"type":"noul","instructions":"i"}}}"#,
+            ]
+            .concat(),
+            89,
+        ),
+        (
+            [
+                r#"{"model":"m","state":""#,
+                literal_acute.as_str(),
+                literal_acute.as_str(),
+                r#"","questions":{"q":{"type":"noul","instructions":"i"}}}"#,
+            ]
+            .concat(),
+            81,
+        ),
+        (
+            r#"{"model":"m","state":{"n":1e2,"p":1.50},"questions":{}}"#.to_string(),
+            55,
+        ),
+        (
+            r#"{"model":"m","state": {"a" : [1, 2]} ,"questions":{}}"#.to_string(),
+            48,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":"noul","instructions":"i","extra":"junk"}}}"#.to_string(),
+            78,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":"noul"}}}"#.to_string(),
+            79,
+        ),
+        (r#"{"model":"m","state":"s"}"#.to_string(), 42),
+        (r#"{"model":"m","questions":{}}"#.to_string(), 41),
+        (
+            r#"{"model":"m","state":"s","questions":{},"runner":"","videos":[],"keep_alive":null}"#.to_string(),
+            40,
+        ),
+        (
+            [
+                r#"{"model":"m","state":"s","questions":{},"videos":[""#,
+                escaped_acute.as_str(),
+                r#""]}"#,
+            ]
+            .concat(),
+            60,
+        ),
+        (
+            [
+                r#"{"model":"m","state":"s","questions":{},"videos":[""#,
+                literal_acute.as_str(),
+                r#""]}"#,
+            ]
+            .concat(),
+            56,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":"noul","instructions":"i","criteria":null}}}"#.to_string(),
+            94,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"images":["QUJD"]}"#.to_string(),
+            40,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"stream":true,"zzz":"dropped"}"#.to_string(),
+            40,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":null,"instructions":"i"}}}"#.to_string(),
+            74,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":null}}"#.to_string(),
+            75,
+        ),
+        (
+            r#"{"Model":"m","STATE":"s","Questions":{}}"#.to_string(),
+            40,
+        ),
+        (
+            r#"{"model":"a","model":"m","state":"s","questions":{}}"#.to_string(),
+            40,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"Type":"noul","Instructions":"i"}}}"#.to_string(),
+            78,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"images":[null]}"#.to_string(),
+            40,
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(
+            systemone_text_size(body.as_bytes()),
+            Some(expected),
+            "body: {body}"
+        );
+    }
+}
+
+/// Upstream re-marshals `keep_alive` through `api.Duration`: numbers are
+/// seconds, strings parse with Go's grammar, and any negative duration clamps
+/// to `math.MaxInt64` (`api/types.go` UnmarshalJSON), which marshals as
+/// `"2562047h47m16.854775807s"`.
+#[test]
+fn systemone_text_size_counts_keep_alive_as_go_durations() {
+    let cases = [
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":300}"#,
+            60,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"5m"}"#,
+            60,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"300s"}"#,
+            60,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":-1}"#,
+            80,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"-1s"}"#,
+            80,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":0.5}"#,
+            61,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"1h"}"#,
+            62,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"1.5ms"}"#,
+            61,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"250us"}"#,
+            62,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":"1ns"}"#,
+            59,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"keep_alive":1e19}"#,
+            56,
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(
+            systemone_text_size(body.as_bytes()),
+            Some(expected),
+            "body: {body}"
+        );
+    }
+}
+
+/// Upstream's `Questions` decodes into an ordered map whose `MarshalJSON` is a
+/// plain `json.Marshal` (`internal/orderedmap`), so the whole questions subtree
+/// — names, `type`, `instructions`/`criteria` raw values — re-encodes with
+/// HTML escaping on, independent of the outer `SetEscapeHTML(false)`: there,
+/// less-than, greater-than and ampersand measure as their six-byte unicode
+/// escapes. Go's string encoder escapes U+2028/U+2029 unconditionally, so the
+/// typed `model`/`runner` strings carrying one measure six bytes while the
+/// same character inside `state` (a `RawMessage`, outer escape off) stays
+/// three.
+#[test]
+fn systemone_text_size_matches_upstream_html_and_separator_escapes() {
+    let line_separator = char::from_u32(0x2028)
+        .expect("U+2028 is a valid char")
+        .to_string();
+    let cases: [(String, usize); 10] = [
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":"noul","instructions":"<a&b>"}}}"#.to_string(),
+            97,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"q":{"type":"noul","instructions":"i","criteria":"<>"}}}"#.to_string(),
+            104,
+        ),
+        (
+            r#"{"model":"m","state":"<a&b>","questions":{}}"#.to_string(),
+            44,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{"<q":{"type":"noul","instructions":"i"}}}"#.to_string(),
+            84,
+        ),
+        (
+            [
+                r#"{"model":""#,
+                line_separator.as_str(),
+                r#"","state":"s","questions":{}}"#,
+            ]
+            .concat(),
+            45,
+        ),
+        (
+            [
+                r#"{"model":"m","state":""#,
+                line_separator.as_str(),
+                r#"","questions":{}}"#,
+            ]
+            .concat(),
+            42,
+        ),
+        (
+            [
+                r#"{"model":"m","state":"s","questions":{"q":{"type":"noul","instructions":""#,
+                line_separator.as_str(),
+                r#""}}}"#,
+            ]
+            .concat(),
+            83,
+        ),
+        (
+            [
+                r#"{"model":"m","state":"s","questions":{"q":{"type":""#,
+                line_separator.as_str(),
+                r#"","instructions":"i"}}}"#,
+            ]
+            .concat(),
+            80,
+        ),
+        (
+            r#"{"model":"m","state":"s","questions":{},"runner":"<a&b>"}"#.to_string(),
+            57,
+        ),
+        (
+            [
+                r#"{"model":"m","state":"s","questions":{},"runner":""#,
+                line_separator.as_str(),
+                r#""}"#,
+            ]
+            .concat(),
+            58,
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(
+            systemone_text_size(body.as_bytes()),
+            Some(expected),
+            "body: {body}"
+        );
+    }
+}
+
+/// A body Go's decode rejects answers 400 before upstream's cap is compared,
+/// so the proxy must not measure it at all.
+#[test]
+fn systemone_text_size_returns_none_for_shapes_upstream_rejects() {
+    for body in [
+        r#"{"model":5,"state":"s","questions":{}}"#,
+        r#"{"model":"m","state":"s","questions":[]}"#,
+        r#"{"model":"m","state":"s","questions":{"q":[]}}"#,
+        r#"{"model":"m","state":"s","questions":{},"keep_alive":true}"#,
+        r#"{"model":"m","state":"s","questions":{},"keep_alive":"300"}"#,
+        r#"{"model":"m","state":"s","questions":{},"keep_alive":"1d"}"#,
+        r#"{"model":"m","state":"s","questions":{"q":{"type":5,"instructions":"i"}}}"#,
+        r#"{"model":"m","state":"s","questions":{},"videos":{}}"#,
+        r#"{"model":"m","state":"s","questions":{},"images":"x"}"#,
+        r#"{"model":"m","state":"s","questions":{},"images":5}"#,
+        r#"{"model":"m","state":"s","questions":{},"images":[42]}"#,
+        r#"{"model":"m","state":"s","questions":{},"images":["not-base64!!"]}"#,
+    ] {
+        assert_eq!(systemone_text_size(body.as_bytes()), None, "body: {body}");
+    }
+
+    // Go's scanner caps nesting at depth 10000: a top-level object plus 9999
+    // arrays measures, one more array is rejected.
+    let at_cap = [
+        r#"{"model":"m","state":"#,
+        "[".repeat(9999).as_str(),
+        "0",
+        "]".repeat(9999).as_str(),
+        r#","questions":{}}"#,
+    ]
+    .concat();
+    assert_eq!(
+        systemone_text_size(at_cap.as_bytes()),
+        Some(at_cap.len()),
+        "depth 10000 must measure (the request is already compact)"
+    );
+    let over_cap = [
+        r#"{"model":"m","state":"#,
+        "[".repeat(10_000).as_str(),
+        "0",
+        "]".repeat(10_000).as_str(),
+        r#","questions":{}}"#,
+    ]
+    .concat();
+    assert_eq!(
+        systemone_text_size(over_cap.as_bytes()),
+        None,
+        "depth 10001 must be rejected like Go's scanner"
+    );
+}
+
+#[test]
+fn systemone_text_size_ignores_images() {
+    let text_only = r#"{"model":"clef-flash","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}"#;
+    let with_image = [
+        r#"{"model":"clef-flash","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}},"images":[""#,
+        "A".repeat(64 * 1024).as_str(),
+        r#""]}"#,
+    ]
+    .concat();
+    assert_eq!(
+        systemone_text_size(with_image.as_bytes()),
+        systemone_text_size(text_only.as_bytes()),
+        "images must never count against the text and schema cap"
+    );
+}
+
+#[test]
+fn systemone_text_size_keeps_only_the_last_questions_map() {
+    // Go's orderedmap.Map.UnmarshalJSON allocates a fresh inner map on every
+    // occurrence, so a repeated top-level `questions` field keeps only the last
+    // map. Sizes measured with the Go v1 oracle (GOEXPERIMENT=nojsonv2).
+    let big = "x".repeat(70 * 1024);
+    for body in [
+        [
+            r#"{"model":"m","state":"s","questions":{"a":{"type":"noul","instructions":""#,
+            &big,
+            r#""}},"questions":{"b":{"type":"noul","instructions":"i"}}}"#,
+        ]
+        .concat(),
+        r#"{"model":"m","state":"s","questions":{"a":{"type":"noul","instructions":"i"}},"questions":{"b":{"type":"noul","instructions":"i"}}}"#.to_string(),
+        [
+            r#"{"model":"m","state":"s","Questions":{"a":{"type":"noul","instructions":""#,
+            &big,
+            r#""}},"questions":{"b":{"type":"noul","instructions":"i"}}}"#,
+        ]
+        .concat(),
+    ] {
+        assert_eq!(
+            systemone_text_size(body.as_bytes()),
+            Some(78),
+            "a repeated questions field must count only the last map; body: {}",
+            &body[..60.min(body.len())]
+        );
+    }
+}
+
+#[test]
+fn systemone_text_size_decodes_non_canonical_base64_tails() {
+    // Go's base64.StdEncoding is non-strict about the final quantum's trailing
+    // bits; the mirror must decode as Go does. Size measured with the Go v1
+    // oracle.
+    assert_eq!(
+        systemone_text_size(br#"{"model":"m","state":"s","questions":{},"images":["QR=="]}"#),
+        Some(40)
+    );
+}
+
+/// Upstream's runner allowlist (`server/routes.go` normalizeRunner): trimmed
+/// and case-insensitive, `%q` of the original value on rejection.
+#[test]
+fn systemone_runner_error_matches_upstreams_allowlist() {
+    for accepted in [
+        "",
+        "mlx",
+        "MLX",
+        "mlxrunner",
+        " ggml ",
+        "llamacpp",
+        "LlamaCPP",
+        "llama.cpp",
+        "llama-cpp",
+        "llama_cpp",
+    ] {
+        assert_eq!(
+            systemone_runner_error(accepted),
+            None,
+            "runner {accepted:?} is accepted upstream"
+        );
+    }
+    for rejected in ["bogus", "llama", "vllm"] {
+        assert_eq!(
+            systemone_runner_error(rejected),
+            Some(format!("unknown runner {rejected:?}")),
+            "runner {rejected:?} must be rejected"
+        );
+    }
+    assert_eq!(
+        systemone_runner_error(" bogus "),
+        Some("unknown runner \" bogus \"".to_string()),
+        "the message quotes the original value, untrimmed"
+    );
+}
+
+#[test]
+fn systemone_text_limit_reserves_one_mib_for_kev_and_d1_only() {
+    assert_eq!(systemone_text_limit(Some("kev")), 1024 * 1024);
+    assert_eq!(systemone_text_limit(Some("d1")), 1024 * 1024);
+    assert_eq!(systemone_text_limit(Some("clef")), 64 * 1024);
+    assert_eq!(systemone_text_limit(Some("kevlar")), 64 * 1024);
+    assert_eq!(systemone_text_limit(Some("KEV")), 64 * 1024);
+    assert_eq!(systemone_text_limit(None), 64 * 1024);
+}

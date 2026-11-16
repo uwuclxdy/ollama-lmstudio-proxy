@@ -333,20 +333,32 @@ async fn route_web_search_is_present_and_returns_501() {
     );
 }
 
-/// Mount a decision-model listing (nullable `max_context_length`, clef
-/// decision type) so `/v1/systemone` requests can resolve against it.
-async fn mount_decision_model_stub(p: &crate::common::TestProxy) {
+/// Mount a decision-model listing (nullable `max_context_length`) whose
+/// `decision_type` is the family LM Studio reports for the model; the System
+/// One text cap follows that field, never `architecture`.
+async fn mount_decision_model_stub_with_type(
+    p: &crate::common::TestProxy,
+    key: &str,
+    decision_type: &str,
+    architecture: &str,
+) {
     Mock::given(method("GET"))
         .and(path("/api/v1/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "models": [{"key": "clef-flash", "type": "decision", "publisher": "ggml-org",
-                        "architecture": "clef", "format": "gguf",
+            "models": [{"key": key, "type": "decision", "publisher": "ggml-org",
+                        "architecture": architecture, "format": "gguf",
                         "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
                         "max_context_length": null, "loaded_instances": [],
-                        "decision_type": "clef", "has_vision_adapter": false}]
+                        "decision_type": decision_type, "has_vision_adapter": false}]
         })))
         .mount(&p.mock)
         .await;
+}
+
+/// Mount the clef decision model so `/v1/systemone` requests can resolve
+/// against it.
+async fn mount_decision_model_stub(p: &crate::common::TestProxy) {
+    mount_decision_model_stub_with_type(p, "clef-flash", "clef", "clef").await;
 }
 
 #[tokio::test]
@@ -623,12 +635,15 @@ async fn route_systemone_accepts_bodies_over_the_default_router_limit() {
         .mount(&p.mock)
         .await;
 
+    // 17 MiB rides in `images`; text and schema stay under the 64 KiB cap, so
+    // the request exercises the route's 32 MiB cap above the router-wide 16 MiB.
     let resp = p
         .client
         .post(p.url("/v1/systemone"))
         .json(&json!({
             "model": "clef-flash",
-            "state": "x".repeat(17 * 1024 * 1024),
+            "state": "I was charged twice.",
+            "images": ["A".repeat(17 * 1024 * 1024)],
             "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
         }))
         .send()
@@ -657,6 +672,872 @@ async fn route_systemone_get_is_405_not_forwarded() {
         resp.status().as_u16(),
         405,
         "GET /v1/systemone must 405 at the proxy, never reach LM Studio's 200 catch-all"
+    );
+}
+
+/// Upstream caps a local System One request's text and schema (images
+/// excluded) at 64 KiB, or 1 MiB for the kev/d1 decision families, and answers
+/// 413 before building any prompt (ollama `server/routes.go` SystemOneHandler:
+/// the request struct minus `images`, re-encoded, compared with `>`).
+fn systemone_questions() -> Value {
+    json!({"angry": {"type": "noul", "instructions": "Is the customer angry?"}})
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_text_and_schema_over_64_kib() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone oversized text");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "local text and schema over 64 KiB must answer 413 before any prompt is built"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_validates_images_before_the_text_cap() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(70 * 1024),
+            "images": ["not-base64!!"],
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a bad image and oversized text");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "an undecodable image answers prepare's 400 before the text cap, matching upstream's decode order"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, json!({"error": "images[0] is not valid base64"}));
+}
+
+#[tokio::test]
+async fn route_systemone_kev_model_admits_text_and_schema_at_exactly_1_mib() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub_with_type(&p, "kev-decision", "kev", "qwen3_5").await;
+
+    // Size the state so the counted encoding lands exactly on the kev cap:
+    // the comparison is `> limit`, never `>= limit`.
+    let overhead = json!({
+        "model": "kev-decision",
+        "state": "",
+        "questions": systemone_questions()
+    })
+    .to_string()
+    .len();
+    let at_cap = "x".repeat(1024 * 1024 - overhead);
+    let counted = json!({
+        "model": "kev-decision",
+        "state": at_cap.clone(),
+        "questions": systemone_questions()
+    })
+    .to_string()
+    .len();
+    assert_eq!(
+        counted,
+        1024 * 1024,
+        "the fixture must measure exactly the kev cap"
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(
+            json!({"model": "kev-decision", "state": at_cap.clone()}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "kev-decision",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let at_cap_resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "kev-decision",
+            "state": at_cap,
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone kev at the cap");
+    assert_eq!(
+        at_cap_resp.status(),
+        200,
+        "the kev family admits text and schema at exactly 1 MiB"
+    );
+
+    let over_cap_resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "kev-decision",
+            "state": "x".repeat(1024 * 1024 - overhead + 1),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone kev one byte over the cap");
+    assert_eq!(
+        over_cap_resp.status().as_u16(),
+        413,
+        "one byte over the kev cap must answer 413"
+    );
+    let body: Value = over_cap_resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 1024 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_d1_states_over_1_mib() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub_with_type(&p, "d1-decision", "d1", "qwen3_5").await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "d1-decision",
+            "state": "x".repeat(1024 * 1024 + 1),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone oversized d1 state");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "the kev/d1 1 MiB cap still applies"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 1024 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_reads_the_text_cap_from_decision_type_not_architecture() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub_with_type(&p, "clef-flash", "clef", "kev").await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone clef state");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "the cap follows decision_type; a kev-valued architecture must not widen it"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_admits_text_and_schema_at_exactly_64_kib() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    // Size the state so the counted encoding lands exactly on the cap: the
+    // comparison is `> limit`, never `>= limit`.
+    let questions = systemone_questions();
+    let overhead = json!({
+        "model": "clef-flash",
+        "state": "",
+        "questions": questions
+    })
+    .to_string()
+    .len();
+    let at_cap = "x".repeat(64 * 1024 - overhead);
+    let counted = json!({
+        "model": "clef-flash",
+        "state": at_cap.clone(),
+        "questions": systemone_questions()
+    })
+    .to_string()
+    .len();
+    assert_eq!(
+        counted,
+        64 * 1024,
+        "the fixture must measure exactly the cap"
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(
+            json!({"model": "clef-flash", "state": at_cap.clone()}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let at_cap_resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": at_cap,
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone at the cap");
+    assert_eq!(
+        at_cap_resp.status(),
+        200,
+        "text and schema at exactly 64 KiB must be admitted"
+    );
+
+    let over_cap_resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(64 * 1024 - overhead + 1),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone one byte over the cap");
+    assert_eq!(
+        over_cap_resp.status().as_u16(),
+        413,
+        "one byte over the cap must answer 413"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_excludes_images_from_the_text_cap() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({"model": "clef-flash"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(32 * 1024),
+            "images": ["A".repeat(2 * 1024 * 1024)],
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a large image");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "images never count against the text and schema cap"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_looks_the_model_up_before_the_text_cap() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "ghost-model",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone unknown model");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "an unknown model answers 404 before the text cap"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("ghost-model"),
+        "the 404 must name the model; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_an_escaped_state_over_64_kib() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    // Python's default `json.dumps` spelling: a non-ASCII character costs six
+    // bytes in the counted text where a decoded re-encode sees two.
+    let escaped = format!("{}u00e9", char::from(92)).repeat(12 * 1024);
+    let body = [
+        r#"{"model":"clef-flash","state":""#,
+        escaped.as_str(),
+        r#"","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}"#,
+    ]
+    .concat();
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/systemone escaped state");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "escaped text counts in the client's spelling, as upstream's RawMessage re-encode does"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_counts_a_null_keep_alive_like_an_omitted_one() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let overhead = json!({
+        "model": "clef-flash",
+        "state": "",
+        "questions": systemone_questions()
+    })
+    .to_string()
+    .len();
+    let state = "x".repeat(64 * 1024 - overhead);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(
+            json!({"model": "clef-flash", "state": state.clone()}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": state,
+            "questions": systemone_questions(),
+            "keep_alive": null
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a null keep_alive");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "upstream's omitempty drops a null keep_alive; the cap must count it as absent"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_counts_absent_questions_as_null() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let overhead = json!({
+        "model": "clef-flash",
+        "state": "",
+        "questions": null
+    })
+    .to_string()
+    .len();
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(64 * 1024 - overhead + 1)
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone without questions");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "an absent questions field counts as null, as upstream's struct re-encode does"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_an_unknown_runner_before_the_cap() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "runner": "bogus",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone bogus runner");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "upstream validates the runner before its cap"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body, json!({"error": "unknown runner \"bogus\""}));
+}
+
+#[tokio::test]
+async fn route_systemone_requires_a_model() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    for request in [
+        json!({
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }),
+        json!({
+            "model": "   ",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }),
+    ] {
+        let resp = p
+            .client
+            .post(p.url("/v1/systemone"))
+            .json(&request)
+            .send()
+            .await
+            .expect("POST /v1/systemone without a model");
+        assert_eq!(
+            resp.status().as_u16(),
+            400,
+            "a missing or blank model answers upstream's 400"
+        );
+        let body: Value = resp.json().await.expect("json body");
+        assert_eq!(body, json!({"error": "model is required"}));
+    }
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_a_body_upstreams_decode_refuses() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "questions": []
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with array questions");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "a body Go's decode rejects answers 400, never the cap's 413"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.starts_with("invalid request body"),
+        "the decode refusal must name the body; got {body}"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_adds_no_model_lookup_at_the_cap_boundary() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let overhead = json!({
+        "model": "clef-flash",
+        "state": "",
+        "questions": systemone_questions()
+    })
+    .to_string()
+    .len();
+    let state = "x".repeat(64 * 1024 - overhead);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": state,
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone at the cap");
+    assert_eq!(
+        resp.status(),
+        200,
+        "text and schema at exactly the cap must be admitted"
+    );
+
+    let received = p.mock.received_requests().await.expect("recorded requests");
+    let listings = received
+        .iter()
+        .filter(|request| request.url.path() == "/api/v1/models")
+        .count();
+    assert_eq!(
+        listings, 1,
+        "the cap check must add no model lookup at or under 64 KiB; the passthrough's resolve is the only listing"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_reads_the_text_cap_without_a_decision_type() {
+    let p = spawn_proxy().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{"key": "clef-flash", "type": "decision", "publisher": "ggml-org",
+                        "architecture": "clef", "format": "gguf",
+                        "max_context_length": null, "loaded_instances": [],
+                        "has_vision_adapter": false}]
+        })))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "x".repeat(70 * 1024),
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone without a decision_type");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "a listing without decision_type keeps the 64 KiB cap"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_folds_request_keys_like_go() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let body = [
+        r#"{"Model":"clef-flash","State":""#,
+        "x".repeat(70 * 1024).as_str(),
+        r#"","Questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}"#,
+    ]
+    .concat();
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/systemone with case-folded keys");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "Go's decoder matches struct keys case-insensitively; the folded state must count"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "text and schema must not exceed 64 KiB"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_keeps_the_last_duplicate_key() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({"model": "clef-flash"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Go's struct decoder lets a repeated key overwrite the earlier one, so the
+    // body is valid for Ollama and must reach the backend.
+    let body = r#"{"model":"ghost-model","model":"clef-flash","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}"#;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/systemone with a duplicate model key");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "the last duplicate key wins, as in Go's decoder"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_keeps_only_the_last_questions_map() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"r": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Go's orderedmap.UnmarshalJSON allocates a fresh map, so the repeated
+    // `questions` field keeps only the last map: Go measures this body at 78
+    // bytes and serves it, while merging would count the 70 KiB instruction and
+    // answer 413.
+    let big = "x".repeat(70 * 1024);
+    let body = [
+        r#"{"model":"clef-flash","state":"s","questions":{"q":{"type":"noul","instructions":""#,
+        &big,
+        r#""}},"questions":{"r":{"type":"noul","instructions":"i"}}}"#,
+    ]
+    .concat();
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /v1/systemone with a repeated questions field");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "the last questions map wins, as in Go's decoder; a merge measures 70 KiB and answers 413"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_accepts_a_non_canonical_base64_tail() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_partial_json(json!({
+            "model": "clef-flash",
+            "images": ["data:application/octet-stream;base64,QR=="]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "clef-flash",
+            "answers": {"angry": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        })))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    // Go's base64.StdEncoding ignores non-zero trailing bits in the final
+    // quantum; the proxy must decode as Go does and wrap the one byte it
+    // decodes to as a data URL.
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "state": "I was charged twice.",
+            "images": ["QR=="],
+            "questions": {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a non-canonical base64 tail");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "Go's non-strict decoder admits a non-zero trailing bit; the proxy must too"
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_a_cloud_model_ref() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash:cloud",
+            "state": "I was charged twice.",
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a cloud model ref");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "System One requires a local decision model"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body,
+        json!({"error": "System One requires a local decision model"})
+    );
+}
+
+#[tokio::test]
+async fn route_systemone_rejects_a_non_array_images() {
+    let p = spawn_proxy().await;
+    mount_decision_model_stub(&p).await;
+
+    let resp = p
+        .client
+        .post(p.url("/v1/systemone"))
+        .json(&json!({
+            "model": "clef-flash",
+            "images": "x",
+            "state": "I was charged twice.",
+            "questions": systemone_questions()
+        }))
+        .send()
+        .await
+        .expect("POST /v1/systemone with a non-array images field");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "Go's decode rejects a non-array images field before the cap"
+    );
+    let body: Value = resp.json().await.expect("json body");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.starts_with("invalid request body"),
+        "the decode refusal must name the body; got {body}"
     );
 }
 
