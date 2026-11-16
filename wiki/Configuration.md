@@ -36,6 +36,8 @@ Every setting is a CLI flag. Where a flag reads an environment variable too, the
 
 The native path adds per-event reasoning deltas, real streaming token stats, [MCP integrations](MCP-Integrations). Its schema has no slot for `tools`, `tool_choice`, `format`: a request carrying any of them gets a `warning` field naming what the proxy dropped.
 
+`keep_alive` sets no backend TTL on this path: LM Studio 0.4.28's `/api/v1` surface rejects a `ttl` field (measured 2026-11-16), so a finite value only drives `/api/ps`'s deadline. `keep_alive: 0` still unloads the model once the response body ends.
+
 ## Update check
 
 One background call to the GitHub releases API on startup, throttled to once per 24h by a cache file. A newer tag logs at `warn`, a failure at `debug`. No flag disables it.

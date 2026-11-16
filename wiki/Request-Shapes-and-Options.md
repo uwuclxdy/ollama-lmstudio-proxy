@@ -48,6 +48,6 @@ model is loaded.
 | `logprobs`, `top_logprobs` | Same name | Direct passthrough |
 | `suffix` | `suffix` | Forwarded on non-vision generate requests only |
 | `raw` | _none_ | Disables system-prompt injection in generate requests |
-| `keep_alive` | `ttl` | Seconds (int) or duration string (`"5m"`); `0` unloads after the request — for `stream:true`, when the response stream ends (or the client drops), never mid-stream |
+| `keep_alive` | `ttl` (OpenAI-compat path only) | Seconds (int) or duration string (`"5m"`). The native `/api/v1/chat` path forwards no `ttl` — LM Studio 0.4.28 rejects the key there (measured 2026-11-16) — so a finite `keep_alive` only drives `/api/ps`'s deadline; `0` unloads after the request on both paths — for `stream:true`, when the response stream ends (or the client drops), never mid-stream |
 | `tool_choice` | `tool_choice` | Forwarded on `/api/chat` (OpenAI-compat path) when `tools` is also present. Not forwarded without tools, and not on the `--use-native-chat` path (the native schema has no slot; the response carries a `warning` field naming the dropped fields) |
 | `integrations` | `integrations` | **Native path only** (`--use-native-chat`, or `--native-chat-streaming` on a streaming request). Array of MCP tool specs forwarded verbatim. See [MCP Integrations](MCP-Integrations). |
