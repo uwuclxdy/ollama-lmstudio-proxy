@@ -1132,6 +1132,44 @@ async fn keep_alive_duration_string_accepted() {
     assert_eq!(resp.status(), 200);
 }
 
+#[tokio::test]
+async fn keep_alive_duration_string_becomes_ttl_on_the_compat_path() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_chat_response("OK", "stop")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1:8b",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "keep_alive": "10m"
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat keep_alive string");
+    assert_eq!(resp.status(), 200);
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let upstream = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v0/chat/completions")
+        .expect("compat request captured");
+    let body: Value = serde_json::from_slice(&upstream.body).expect("upstream body is JSON");
+    assert_eq!(
+        body.get("ttl"),
+        Some(&json!(600)),
+        "/api/v0 accepts `ttl`; the keep_alive must still be forwarded there"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 15. keep_alive 0 (unload immediately) triggers LM Studio unload
 // ═══════════════════════════════════════════════════════════════════════════

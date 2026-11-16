@@ -119,6 +119,67 @@ async fn non_streaming_routes_to_native_and_converts_response() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// keep_alive must not reach the native body
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn native_chat_keeps_keep_alive_out_of_the_native_body() {
+    let p = spawn_proxy_with_native().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model_instance_id": "llama3.1-8b-instruct",
+            "output": [{ "type": "message", "content": "Hello!" }],
+            "stats": { "input_tokens": 3, "total_output_tokens": 1 }
+        })))
+        .mount(&p.mock)
+        .await;
+
+    // Both a finite TTL and the unload sentinel: the removed call inserted
+    // `ttl: 0` for the latter too, so each shape must reach the wire ttl-free.
+    let keep_alives = [json!("5m"), json!(0)];
+    for keep_alive in &keep_alives {
+        let resp = p
+            .client
+            .post(p.url("/api/chat"))
+            .json(&json!({
+                "model": "llama3.1:8b",
+                "messages": [{ "role": "user", "content": "Hi" }],
+                "stream": false,
+                "keep_alive": keep_alive
+            }))
+            .send()
+            .await
+            .expect("POST /api/chat (native)");
+        assert_eq!(resp.status(), 200);
+    }
+
+    let received = p.mock.received_requests().await.unwrap_or_default();
+    let bodies: Vec<Value> = received
+        .iter()
+        .filter(|r| r.url.path() == "/api/v1/chat")
+        .map(|r| serde_json::from_slice(&r.body).expect("upstream body is JSON"))
+        .collect();
+    assert_eq!(
+        bodies.len(),
+        keep_alives.len(),
+        "every keep_alive shape must reach the native endpoint"
+    );
+    let leaked: Vec<(&Value, &Value)> = bodies
+        .iter()
+        .zip(&keep_alives)
+        .filter(|(body, _)| body.get("ttl").is_some())
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "LM Studio's /api/v1 surface rejects `ttl` (unrecognized_keys), so a \
+         keep_alive must never be forwarded into the native body: {leaked:?}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Explicit think:false on the native path
 // ═══════════════════════════════════════════════════════════════════════════
 

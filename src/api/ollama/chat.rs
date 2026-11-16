@@ -189,7 +189,7 @@ pub async fn handle_ollama_chat(
                             .model_supports_thinking
                             .then_some(&default_think)
                     });
-                    let mut native_request = build_native_chat_request(NativeChatRequestParams {
+                    let native_request = build_native_chat_request(NativeChatRequestParams {
                         model_lm_studio_id: &resolution_ctx.lm_studio_model_id,
                         messages: body.get("messages").unwrap_or(&Value::Null),
                         system_prompt: resolution_ctx.system_prompt.as_deref(),
@@ -202,8 +202,11 @@ pub async fn handle_ollama_chat(
                         stream,
                         integrations,
                     });
-                    apply_keep_alive_ttl(&mut native_request, keep_alive_seconds);
-
+                    // No keep_alive TTL here: LM Studio's /api/v1 surface
+                    // rejects `ttl` as an unrecognized key (measured
+                    // 2026-11-16), so a finite keep_alive cannot set the
+                    // backend idle TTL; keep_alive:0 still unloads explicitly
+                    // after the response body ends.
                     let response =
                         CancellableRequest::new(context.client, cancellation_token.clone())
                             .make_request(
