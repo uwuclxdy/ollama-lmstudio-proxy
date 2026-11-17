@@ -10,7 +10,13 @@ all-features = true
 # deep transitives we can't control.
 yanked       = "deny"
 unmaintained = "workspace"
-ignore       = []
+ignore       = [
+  # 2026-11-17: both crates are unmaintained across every version and offer no
+  # upgrade (humantime wraps chrono); the swap is tracked in the local
+  # punch-list, and the gate keeps guarding every other advisory.
+  "RUSTSEC-2026-0543",
+  "RUSTSEC-2026-0542",
+]
 
 [licenses]
 allow = [
