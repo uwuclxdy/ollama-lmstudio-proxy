@@ -107,7 +107,7 @@ pub async fn respond_unload_only(
 fn build_done_chunk(ollama_model_name: &str, is_chat: bool) -> Value {
     let mut payload = json!({
         "model": ollama_model_name,
-        "created_at": chrono::Utc::now().to_rfc3339(),
+        "created_at": jiff::Timestamp::now().to_string(),
         "done": true,
         "done_reason": "unload",
     });
@@ -242,7 +242,7 @@ pub async fn respond_warm_only(
 fn build_warm_chunk(ollama_model_name: &str, is_chat: bool) -> Value {
     let mut payload = json!({
         "model": ollama_model_name,
-        "created_at": chrono::Utc::now().to_rfc3339(),
+        "created_at": jiff::Timestamp::now().to_string(),
         "done": true,
         "done_reason": "load",
     });

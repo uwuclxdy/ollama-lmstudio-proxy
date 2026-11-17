@@ -546,8 +546,12 @@ fn chat_response_contains_full_ollama_shape() {
         .and_then(|v| v.as_str())
         .expect("created_at must be a string");
     assert!(
-        chrono::DateTime::parse_from_rfc3339(created).is_ok(),
+        created.parse::<jiff::Timestamp>().is_ok(),
         "created_at must parse as RFC3339, got {created:?}"
+    );
+    assert!(
+        created.ends_with('Z'),
+        "created_at must render the UTC offset as Z, got {created:?}"
     );
 
     let msg = result.get("message").expect("message field required");
@@ -871,7 +875,14 @@ fn generate_response_contains_full_ollama_shape() {
         Some("model-x")
     );
     let created = result.get("created_at").and_then(|v| v.as_str()).unwrap();
-    assert!(chrono::DateTime::parse_from_rfc3339(created).is_ok());
+    assert!(
+        created.parse::<jiff::Timestamp>().is_ok(),
+        "created_at must parse as RFC3339, got {created:?}"
+    );
+    assert!(
+        created.ends_with('Z'),
+        "created_at must render the UTC offset as Z, got {created:?}"
+    );
     assert_eq!(result.get("response").and_then(|v| v.as_str()), Some("hi"));
     assert_eq!(result.get("done").and_then(|v| v.as_bool()), Some(true));
     assert_eq!(

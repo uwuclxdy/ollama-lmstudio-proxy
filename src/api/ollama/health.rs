@@ -84,7 +84,7 @@ pub async fn handle_health_check(
                 "http_status": status.as_u16(),
                 "models_known_to_lmstudio": model_count,
                 "response_time_ms": start_time.elapsed().as_millis(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": jiff::Timestamp::now().to_string(),
                 "proxy_version": crate::VERSION
             });
             if LogConfig::get().debug_enabled {
@@ -108,7 +108,7 @@ pub async fn handle_health_check(
                 "error_message": e.message,
                 "error_details": ERROR_LM_STUDIO_UNAVAILABLE,
                 "response_time_ms": start_time.elapsed().as_millis(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": jiff::Timestamp::now().to_string(),
                 "proxy_version": crate::VERSION
             });
             if LogConfig::get().debug_enabled {

@@ -503,19 +503,20 @@ impl ModelInfo {
             // keep-alive), since LM Studio's loaded-instance list exposes no
             // authoritative TTL.
             let expires_at_value = match expires_at {
-                Some(secs) => chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0)
-                    .map(|t| t.to_rfc3339())
-                    .map(Value::from)
-                    .unwrap_or_else(|| {
+                Some(secs) => jiff::Timestamp::from_second(secs).ok().map_or_else(
+                    || {
                         json!(
-                            (chrono::Utc::now()
-                                + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
-                            .to_rfc3339()
+                            (jiff::Timestamp::now()
+                                + jiff::SignedDuration::from_mins(DEFAULT_KEEP_ALIVE_MINUTES))
+                            .to_string()
                         )
-                    }),
+                    },
+                    |t| Value::from(t.to_string()),
+                ),
                 None => json!(
-                    (chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_KEEP_ALIVE_MINUTES))
-                        .to_rfc3339()
+                    (jiff::Timestamp::now()
+                        + jiff::SignedDuration::from_mins(DEFAULT_KEEP_ALIVE_MINUTES))
+                    .to_string()
                 ),
             };
             obj.insert("expires_at".to_string(), expires_at_value);

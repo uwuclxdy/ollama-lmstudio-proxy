@@ -238,7 +238,7 @@ pub fn convert_native_to_ollama_chat(
 
     let mut response = json!({
         "model": model_ollama_name,
-        "created_at": chrono::Utc::now().to_rfc3339(),
+        "created_at": jiff::Timestamp::now().to_string(),
         "message": ollama_message,
         "done": true,
         "done_reason": done_reason,

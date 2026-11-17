@@ -233,7 +233,13 @@ fn chat_streaming_chunk_basic_shape() {
     assert_eq!(c.get("model").and_then(|v| v.as_str()), Some("llama3"));
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(false));
     let created = c.get("created_at").and_then(|v| v.as_str()).unwrap();
-    chrono::DateTime::parse_from_rfc3339(created).expect("created_at must be RFC3339");
+    created
+        .parse::<jiff::Timestamp>()
+        .expect("created_at must be RFC3339");
+    assert!(
+        created.ends_with('Z'),
+        "created_at must render the UTC offset as Z, got {created:?}"
+    );
     let msg = c.get("message").and_then(|v| v.as_object()).unwrap();
     assert_eq!(msg.get("role").and_then(|v| v.as_str()), Some("assistant"));
     assert_eq!(msg.get("content").and_then(|v| v.as_str()), Some("hi"));
@@ -281,7 +287,13 @@ fn generate_streaming_chunk_basic_shape() {
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(false));
     assert!(c.get("message").is_none(), "generate must not emit message");
     let created = c.get("created_at").and_then(|v| v.as_str()).unwrap();
-    chrono::DateTime::parse_from_rfc3339(created).expect("created_at must be RFC3339");
+    created
+        .parse::<jiff::Timestamp>()
+        .expect("created_at must be RFC3339");
+    assert!(
+        created.ends_with('Z'),
+        "created_at must render the UTC offset as Z, got {created:?}"
+    );
 }
 
 #[test]

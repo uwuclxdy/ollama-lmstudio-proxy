@@ -308,7 +308,7 @@ pub fn create_ollama_streaming_chunk(
     thinking: &str,
     logprobs: Option<&Value>,
 ) -> Value {
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = jiff::Timestamp::now().to_string();
 
     if is_chat_endpoint {
         let msg_capacity =

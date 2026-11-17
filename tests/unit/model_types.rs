@@ -1,6 +1,6 @@
 use super::*;
 use crate::storage::VirtualModelEntry;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde_json::json;
 
 // ─── helpers shared across test sections ────────────────────────────────────
@@ -64,7 +64,7 @@ fn loaded_instance_full(
 }
 
 fn virt(name: &str, target_id: &str) -> VirtualModelEntry {
-    let now = Utc::now();
+    let now = Timestamp::now();
     VirtualModelEntry {
         name: name.to_string(),
         source_model: "src".to_string(),
@@ -834,12 +834,14 @@ fn ps_model_includes_tags_fields_plus_expires_and_vram() {
 
 #[test]
 fn ps_model_expires_at_is_rfc3339_in_future() {
-    use chrono::DateTime;
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_ollama_ps_model(None);
     let s = v["expires_at"].as_str().expect("expires_at must be string");
-    let ts = DateTime::parse_from_rfc3339(s).expect("must parse as RFC3339");
-    assert!(ts > Utc::now(), "expires_at must be in the future, got {s}");
+    let ts: Timestamp = s.parse().expect("must parse as RFC3339");
+    assert!(
+        ts > Timestamp::now(),
+        "expires_at must be in the future, got {s}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1330,7 +1332,7 @@ fn show_response_omits_renderer_and_parser_for_native_model() {
 #[test]
 fn show_response_omits_modified_at_when_unknown() {
     // LM Studio's API never exposes a per-model mtime. The proxy must omit
-    // `modified_at` rather than insert Utc::now() (which falsely advertises
+    // `modified_at` rather than insert Timestamp::now() (which falsely advertises
     // freshness) or the epoch (which falsely advertises staleness).
     let info = ModelInfo::from_native_data(&native("publisher/model"));
     let v = info.to_show_response(None, false);

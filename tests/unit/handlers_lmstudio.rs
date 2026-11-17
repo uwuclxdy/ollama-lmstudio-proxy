@@ -50,8 +50,8 @@ fn alias_entry(name: &str, target_model_id: &str) -> VirtualModelEntry {
         name: name.to_string(),
         source_model: target_model_id.to_string(),
         target_model_id: target_model_id.to_string(),
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
+        created_at: jiff::Timestamp::now(),
+        updated_at: jiff::Timestamp::now(),
         metadata: VirtualModelMetadata::default(),
     }
 }

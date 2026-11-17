@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde_json::json;
 
 fn make_virtual_entry(parameters: Option<serde_json::Value>) -> VirtualModelEntry {
@@ -7,8 +7,8 @@ fn make_virtual_entry(parameters: Option<serde_json::Value>) -> VirtualModelEntr
         name: "alias".to_string(),
         source_model: "llama3".to_string(),
         target_model_id: "llama-3-8b".to_string(),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: Timestamp::now(),
+        updated_at: Timestamp::now(),
         metadata: crate::storage::virtual_models::VirtualModelMetadata {
             parameters,
             ..Default::default()

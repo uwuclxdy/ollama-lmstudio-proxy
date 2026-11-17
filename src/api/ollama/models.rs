@@ -79,7 +79,7 @@ pub async fn handle_ollama_show(
         // since the proxy persists it on every alias edit.
         obj.insert(
             "modified_at".to_string(),
-            json!(entry.updated_at.to_rfc3339()),
+            json!(entry.updated_at.to_string()),
         );
 
         if let Some(system) = &entry.metadata.system_prompt {

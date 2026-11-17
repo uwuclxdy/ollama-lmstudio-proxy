@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs;
@@ -30,8 +30,8 @@ pub struct VirtualModelEntry {
     pub name: String,
     pub source_model: String,
     pub target_model_id: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub metadata: VirtualModelMetadata,
 }
 
@@ -208,7 +208,7 @@ impl VirtualModelStore {
             )));
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let entry = VirtualModelEntry {
             name: alias.to_string(),
             source_model,
@@ -233,7 +233,7 @@ impl VirtualModelStore {
     ) -> Result<VirtualModelEntry, ProxyError> {
         let alias_key = Self::canonical(alias).into_owned();
         let mut guard = self.entries.write().await;
-        let now = Utc::now();
+        let now = Timestamp::now();
         let created_at = guard.get(&alias_key).map(|e| e.created_at).unwrap_or(now);
         let entry = VirtualModelEntry {
             name: alias.to_string(),

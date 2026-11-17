@@ -271,7 +271,7 @@ impl ResponseTransformer {
 
         let mut response = json!({
             "model": model_ollama_name,
-            "created_at": chrono::Utc::now().to_rfc3339(),
+            "created_at": jiff::Timestamp::now().to_string(),
             "message": ollama_message,
             "done": true,
             "total_duration": timing.total_duration,
@@ -322,7 +322,7 @@ impl ResponseTransformer {
         // LM Studio does not expose token IDs anyway, so the field is omitted.
         let mut response_obj = json!({
             "model": model_ollama_name,
-            "created_at": chrono::Utc::now().to_rfc3339(),
+            "created_at": jiff::Timestamp::now().to_string(),
             "response": content,
             "done": true,
             "total_duration": timing.total_duration,

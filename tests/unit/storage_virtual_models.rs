@@ -173,7 +173,7 @@ fn build_metadata_messages_non_array_not_set() {
 
 #[test]
 fn entry_fields_are_set_correctly() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let entry = VirtualModelEntry {
         name: "mymodel".to_string(),
         source_model: "llama3".to_string(),

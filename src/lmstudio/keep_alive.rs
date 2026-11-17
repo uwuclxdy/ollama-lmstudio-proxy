@@ -9,8 +9,8 @@
 //! letting LM Studio's default ("loaded indefinitely") apply.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use humantime::parse_duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -82,7 +82,14 @@ fn parse_string(text: &str) -> Result<Option<i64>, ProxyError> {
 
     // Explicit negative durations: "-1", "-1s", "-30m", ...
     if let Some(rest) = trimmed.strip_prefix('-') {
-        if rest.parse::<i64>().is_ok() || parse_duration(rest).is_ok() {
+        // Go's ParseDuration consumes at most one sign, so a rest that still
+        // starts with one ("--1h", "-+1h", "-+1") is invalid, never negative.
+        if rest.starts_with(['-', '+']) {
+            return Err(ProxyError::bad_request(
+                "invalid keep_alive value. Use numeric seconds or durations like '5m'",
+            ));
+        }
+        if rest.parse::<i64>().is_ok() || parse_go_duration(rest).is_some() {
             return Ok(Some(FOREVER_SENTINEL));
         }
         return Err(ProxyError::bad_request(
@@ -90,7 +97,7 @@ fn parse_string(text: &str) -> Result<Option<i64>, ProxyError> {
         ));
     }
 
-    if let Ok(duration) = parse_duration(trimmed) {
+    if let Some(duration) = parse_go_duration(trimmed) {
         let secs = duration.as_secs();
         // Sub-second durations must NOT round down to 0 (would trigger unload).
         let effective = if duration.is_zero() {
@@ -115,6 +122,132 @@ fn parse_string(text: &str) -> Result<Option<i64>, ProxyError> {
                 "invalid keep_alive value. Use numeric seconds or durations like '5m'",
             )
         })
+}
+
+/// Parses the Go duration grammar (Go's `src/time/format.go`, what Ollama uses
+/// for the string form of keep_alive): `[-+]?([0-9]*(\.[0-9]*)?[a-z]+)+`, an
+/// optional sign then one or more elements of `digits [ "." digits? ] unit`
+/// (at least one digit on one side of the point, so `.5s` and `1.s` parse) with
+/// units `ns`, `us`/`µs`/`μs`, `ms`, `s`, `m`, `h`; `"0"` after the sign is
+/// zero. The sign is consumed but dropped — the caller maps `-` to the forever
+/// sentinel before this runs — and a magnitude past Go's `int64` nanosecond
+/// range is rejected, so the result fits `i64` seconds.
+///
+/// The fraction accumulates as an exact integer ratio, not Go's float64
+/// `f/scale`; where float64 rounds a contribution up across a nanosecond
+/// boundary, this truncates one nanosecond lower (`"1.999999999999999999s"` is
+/// 1 s here, 2 s in Go), so second truncation can read one second lower. A
+/// 2026-11-17 differential run over 171,238 inputs found 12 divergences, all
+/// `N.999999999999999999s`-shaped. A fraction small enough to avoid the
+/// numerator freeze through 39+ digits saturates the integer scale,
+/// contributing 0 ns — the value Go's float64 scale yields for it.
+fn parse_go_duration(text: &str) -> Option<Duration> {
+    let bytes = text.as_bytes();
+    // Consume [-+]?
+    let mut rest = match bytes.split_first() {
+        Some((b'-' | b'+', tail)) => tail,
+        _ => bytes,
+    };
+    // Special case: if all that is left is "0", this is zero.
+    if rest == b"0" {
+        return Some(Duration::ZERO);
+    }
+    if rest.is_empty() {
+        return None;
+    }
+
+    let mut total_ns: u128 = 0;
+    while !rest.is_empty() {
+        // The next character must be [0-9.]
+        if !rest[0].is_ascii_digit() && rest[0] != b'.' {
+            return None;
+        }
+
+        // Consume [0-9]*, bounded like Go's leadingInt: overflowing int64 is
+        // an error there, and any element this large would overflow the total
+        // anyway.
+        let mut int_part = 0u128;
+        let mut i = 0;
+        while i < rest.len() && rest[i].is_ascii_digit() {
+            let digit = u128::from(rest[i] - b'0');
+            if int_part > i64::MAX as u128 / 10 {
+                return None;
+            }
+            int_part = int_part * 10 + digit;
+            if int_part > (i64::MAX as u128) + 1 {
+                return None;
+            }
+            i += 1;
+        }
+        let pre = i > 0;
+        rest = &rest[i..];
+
+        // Consume (\.[0-9]*)?; like Go's leadingFraction, numerator and scale
+        // freeze once the fraction would overflow int64.
+        let mut frac = 0u128;
+        let mut scale = 1u128;
+        let mut post = false;
+        let mut overflow = false;
+        if let Some(tail) = rest.strip_prefix(b".") {
+            rest = tail;
+            let mut j = 0;
+            while j < rest.len() && rest[j].is_ascii_digit() {
+                let digit = u128::from(rest[j] - b'0');
+                if !overflow {
+                    if frac > i64::MAX as u128 / 10 {
+                        overflow = true;
+                    } else {
+                        let next = frac * 10 + digit;
+                        if next > (i64::MAX as u128) + 1 {
+                            overflow = true;
+                        } else {
+                            frac = next;
+                            // No numerator freeze is in effect when the scale
+                            // would overflow, so saturate: a saturated scale
+                            // contributes 0 ns, Go's value for a fraction
+                            // that long.
+                            scale = scale.saturating_mul(10);
+                        }
+                    }
+                }
+                j += 1;
+            }
+            post = j > 0;
+            rest = &rest[j..];
+        }
+
+        if !pre && !post {
+            // no digits (e.g. ".s" or "-.s")
+            return None;
+        }
+
+        // Consume the unit: everything up to the next digit or '.'.
+        let unit_end = rest
+            .iter()
+            .position(|&b| b.is_ascii_digit() || b == b'.')
+            .unwrap_or(rest.len());
+        if unit_end == 0 {
+            return None;
+        }
+        let unit = &rest[..unit_end];
+        rest = &rest[unit_end..];
+        let unit_ns: u128 = match unit {
+            b"ns" => 1,
+            b"us" | b"\xC2\xB5s" | b"\xCE\xBCs" => 1_000,
+            b"ms" => 1_000_000,
+            b"s" => 1_000_000_000,
+            b"m" => 60_000_000_000,
+            b"h" => 3_600_000_000_000,
+            _ => return None,
+        };
+
+        total_ns += int_part * unit_ns + frac * unit_ns / scale;
+        if total_ns > i64::MAX as u128 {
+            return None;
+        }
+    }
+
+    Some(Duration::from_nanos(u64::try_from(total_ns).ok()?))
 }
 
 fn normalize(secs: i64) -> i64 {

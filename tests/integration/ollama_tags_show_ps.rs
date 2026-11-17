@@ -225,7 +225,7 @@ async fn tags_response_omits_modified_at_when_no_mtime_available() {
 
     let body: Value = resp.json().await.expect("json body");
     // LM Studio's model list exposes no per-model mtime. The proxy must omit
-    // `modified_at` rather than fabricate Utc::now() or the epoch.
+    // `modified_at` rather than fabricate Timestamp::now() or the epoch.
     for m in body["models"].as_array().expect("models array") {
         assert!(
             m.get("modified_at").is_none(),
@@ -1282,8 +1282,13 @@ async fn show_response_emits_alias_modified_at_when_provided() {
         .unwrap_or_else(|| {
             panic!("virtual alias show response must surface modified_at; got {body}")
         });
-    chrono::DateTime::parse_from_rfc3339(modified_at)
+    modified_at
+        .parse::<jiff::Timestamp>()
         .unwrap_or_else(|_| panic!("modified_at must be RFC3339; got {modified_at}"));
+    assert!(
+        modified_at.ends_with('Z'),
+        "modified_at must render the UTC offset as Z, got {modified_at}"
+    );
 }
 
 // T14 — /api/show must not fabricate modified_at when LM Studio has no mtime.
