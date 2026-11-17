@@ -33,6 +33,10 @@ use super::unload_only::{
     respond_warm_only,
 };
 
+/// `integrations` forwards only on the native path; LM Studio's OpenAI-compat
+/// request schema has no such field.
+const INTEGRATIONS_DROP_WARNING: &str = "integrations not supported on the default chat path (LM Studio's OpenAI-compat endpoint has no such field) and was dropped; use --use-native-chat for it";
+
 /// Server-config knobs the chat handler reads, bundled so the entry point
 /// stays under clippy's argument limit.
 pub struct ChatOptions {
@@ -178,7 +182,8 @@ pub async fn handle_ollama_chat(
                     let requested_max_tokens =
                         requested_output_limit(resolution_ctx.effective_options.as_ref());
                     // Only forward `integrations` on the native path; the default
-                    // OpenAI-compat path never reads this field.
+                    // OpenAI-compat request schema has no slot for it and warns
+                    // instead of dropping it silently.
                     let integrations = body.get("integrations").filter(|v| v.is_array());
                     // Mirror the OpenAI-compat default: absent `think` on a
                     // thinking-capable model enables reasoning. Explicit `think`
@@ -243,6 +248,18 @@ pub async fn handle_ollama_chat(
                         Ok(json_response(&ollama_response))
                     };
                 }
+
+                // The OpenAI-compat request schema has no `integrations` slot —
+                // warn (log + response) instead of dropping a non-empty array
+                // silently, matching the native path's dropped-field notice.
+                let drop_warning = body
+                    .get("integrations")
+                    .and_then(Value::as_array)
+                    .is_some_and(|integrations| !integrations.is_empty())
+                    .then(|| {
+                        log::warn!("v0 chat: {INTEGRATIONS_DROP_WARNING}");
+                        INTEGRATIONS_DROP_WARNING.to_string()
+                    });
 
                 let normalized_messages =
                     normalize_chat_messages(messages, resolution_ctx.system_prompt.as_deref());
@@ -309,6 +326,7 @@ pub async fn handle_ollama_chat(
                     },
                     cancellation_token,
                     stream_timeout_seconds,
+                    warning: drop_warning,
                 })
                 .await
             }

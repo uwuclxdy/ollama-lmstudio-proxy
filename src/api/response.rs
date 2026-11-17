@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use serde_json::json;
+
 use crate::error::ProxyError;
 use crate::http::client::handle_json_response;
 use crate::http::json_response;
@@ -8,8 +10,10 @@ use crate::lmstudio::response::{
 };
 use crate::logging::log_handler_io;
 use crate::streaming::handle_streaming_response;
+use crate::streaming::sse::CompatFinalizeOptions;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
 pub enum ResponseContext {
     Chat {
         message_count: usize,
@@ -22,6 +26,7 @@ pub enum ResponseContext {
     },
 }
 
+#[derive(Debug)]
 pub struct ResponseParams<'a> {
     pub response: reqwest::Response,
     pub stream: bool,
@@ -31,6 +36,9 @@ pub struct ResponseParams<'a> {
     pub context: ResponseContext,
     pub cancellation_token: CancellationToken,
     pub stream_timeout_seconds: u64,
+    /// Client-facing dropped-field notice; the non-streaming body and the
+    /// streaming final chunk carry it, matching the native path.
+    pub warning: Option<String>,
 }
 
 pub async fn handle_response(
@@ -45,6 +53,7 @@ pub async fn handle_response(
         context,
         cancellation_token,
         stream_timeout_seconds,
+        warning,
     } = params;
 
     if stream {
@@ -59,13 +68,16 @@ pub async fn handle_response(
             start_time,
             cancellation_token,
             stream_timeout_seconds,
-            prompt_tokens_estimate,
+            CompatFinalizeOptions {
+                prompt_tokens_estimate,
+                warning,
+            },
         )
         .await
     } else {
         let lm_response_value = handle_json_response(response, cancellation_token).await?;
 
-        let ollama_response = match context {
+        let mut ollama_response = match context {
             ResponseContext::Chat { message_count, .. } => {
                 ResponseTransformer::convert_to_ollama_chat(
                     &lm_response_value,
@@ -83,6 +95,12 @@ pub async fn handle_response(
                 )
             }
         };
+
+        if let Some(warning) = warning.as_deref()
+            && let Some(obj) = ollama_response.as_object_mut()
+        {
+            obj.insert("warning".to_string(), json!(warning));
+        }
 
         log_handler_io(
             if is_chat { "chat" } else { "generate" },

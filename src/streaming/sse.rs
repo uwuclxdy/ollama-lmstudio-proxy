@@ -58,6 +58,14 @@ async fn reject_pre_stream_error(
     Err(ProxyError::new(message, status.as_u16()))
 }
 
+/// Request-derived extras for the default (v0) stream's final chunk: the
+/// input-length token estimate and the dropped-field warning.
+#[derive(Debug)]
+pub struct CompatFinalizeOptions {
+    pub prompt_tokens_estimate: u64,
+    pub warning: Option<String>,
+}
+
 pub async fn handle_streaming_response(
     lm_studio_response: reqwest::Response,
     is_chat_endpoint: bool,
@@ -65,8 +73,12 @@ pub async fn handle_streaming_response(
     start_time: Instant,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
-    prompt_tokens_estimate: u64,
+    finalize: CompatFinalizeOptions,
 ) -> Result<axum::response::Response, ProxyError> {
+    let CompatFinalizeOptions {
+        prompt_tokens_estimate,
+        warning,
+    } = finalize;
     let lm_studio_response = reject_pre_stream_error(lm_studio_response).await?;
 
     let runtime_config = get_runtime_config();
@@ -281,7 +293,7 @@ pub async fn handle_streaming_response(
                 chunk_count += 1;
                 send_chunk(&tx, &tool_chunk).await;
             }
-            let final_chunk = create_final_chunk(FinalChunkParams {
+            let mut final_chunk = create_final_chunk(FinalChunkParams {
                 model_name: &model_clone_for_task,
                 duration: start_time.elapsed(),
                 prompt_tokens_estimate,
@@ -289,6 +301,11 @@ pub async fn handle_streaming_response(
                 is_chat: is_chat_endpoint,
                 done_reason: chunk_state.finish_reason(),
             });
+            if let Some(warning) = warning.as_deref()
+                && let Some(obj) = final_chunk.as_object_mut()
+            {
+                obj.insert("warning".to_string(), json!(warning));
+            }
             send_chunk_and_close_channel(&tx, final_chunk).await;
         }
 

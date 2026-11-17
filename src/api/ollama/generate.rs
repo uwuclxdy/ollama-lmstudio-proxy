@@ -274,6 +274,7 @@ pub async fn handle_ollama_generate(
                     },
                     cancellation_token,
                     stream_timeout_seconds,
+                    warning: None,
                 })
                 .await
             }

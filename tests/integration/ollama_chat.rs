@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
-use crate::common::spawn_proxy;
+use crate::common::{spawn_proxy, spawn_proxy_with_native_streaming};
 
 // ── model-catalog helpers ───────────────────────────────────────────────────
 
@@ -2297,4 +2297,259 @@ async fn chat_think_false_keeps_off_when_model_can_disable() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.expect("JSON body");
     assert_eq!(body["message"]["content"], "Hello there!");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// integrations dropped on the v0 path — warn like the native path does
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `integrations` (server-side MCP tools) only forwards on the native
+// `/api/v1/chat` path. On the default OpenAI-compat path the field never
+// reaches LM Studio, so the response must say so instead of dropping it
+// silently — the same `warning` the native dropped-fields path answers with.
+
+fn integrations_payload() -> Value {
+    json!([{
+        "type": "ephemeral_mcp",
+        "server_label": "huggingface",
+        "server_url": "https://huggingface.co/mcp",
+        "allowed_tools": ["model_search"]
+    }])
+}
+
+#[tokio::test]
+async fn v0_chat_warns_when_integrations_are_dropped() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": integrations_payload()
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with integrations");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    let warning = body["warning"]
+        .as_str()
+        .expect("dropping integrations must answer a warning field on the v0 path");
+    assert!(
+        warning.contains("integrations"),
+        "the warning must name the dropped field: {warning}"
+    );
+    assert_eq!(
+        warning,
+        "integrations not supported on the default chat path (LM Studio's OpenAI-compat endpoint has no such field) and was dropped; use --use-native-chat for it",
+        "every clause of the warning is its contract: the field, the path, the reason, the remedy"
+    );
+}
+
+#[tokio::test]
+async fn v0_chat_omits_warning_without_integrations() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat without integrations");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert!(
+        body.get("warning").is_none(),
+        "a request without integrations must not gain a warning: {body}"
+    );
+}
+
+#[tokio::test]
+async fn v0_chat_stream_warns_in_the_final_chunk() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    let sse = sse_chat_body(&["Hel", "lo"], "stop");
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(sse.into_bytes(), "text/event-stream"),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": true,
+            "integrations": integrations_payload()
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat streaming with integrations");
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.expect("body text");
+    let chunks = parse_ndjson(&text);
+    let last = chunks.last().expect("final chunk");
+    assert_eq!(last["done"], true);
+    let warning = last["warning"]
+        .as_str()
+        .expect("the final chunk must carry the dropped-integrations warning");
+    assert!(
+        warning.contains("integrations"),
+        "the warning must name the dropped field: {warning}"
+    );
+    assert_eq!(
+        warning,
+        "integrations not supported on the default chat path (LM Studio's OpenAI-compat endpoint has no such field) and was dropped; use --use-native-chat for it",
+        "every clause of the warning is its contract: the field, the path, the reason, the remedy"
+    );
+    let earlier_warnings: Vec<&Value> = chunks[..chunks.len() - 1]
+        .iter()
+        .filter(|chunk| chunk.get("warning").is_some())
+        .collect();
+    assert!(
+        earlier_warnings.is_empty(),
+        "the warning rides the final chunk only: {earlier_warnings:?}"
+    );
+}
+
+#[tokio::test]
+async fn v0_chat_stays_silent_for_an_empty_integrations_array() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": []
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with an empty integrations array");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert!(
+        body.get("warning").is_none(),
+        "an empty integrations array carries nothing to drop: {body}"
+    );
+}
+
+#[tokio::test]
+async fn v0_chat_stays_silent_for_a_non_array_integrations_value() {
+    let p = spawn_proxy().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": {"type": "plugin"}
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat with a non-array integrations value");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert!(
+        body.get("warning").is_none(),
+        "only an array is the shape the warning names: {body}"
+    );
+}
+
+#[tokio::test]
+async fn v0_chat_warns_under_native_chat_streaming_when_the_stream_is_off() {
+    // `--native-chat-streaming` keeps `stream:false` requests on the v0 path,
+    // so the dropped-integrations warning must answer there too.
+    let p = spawn_proxy_with_native_streaming().await;
+    mount_model_catalog(&p, "llama3.1-8b-instruct").await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lm_chat_response("Hello there!", "stop")),
+        )
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3.1-8b-instruct",
+            "messages": [{ "role": "user", "content": "Hi" }],
+            "stream": false,
+            "integrations": integrations_payload()
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat under --native-chat-streaming with stream:false");
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("JSON body");
+    assert!(
+        body["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("integrations")),
+        "a non-streaming request on the v0 path still drops the array: {body}"
+    );
 }
