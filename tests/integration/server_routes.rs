@@ -640,6 +640,9 @@ async fn route_systemone_accepts_bodies_over_the_default_router_limit() {
     let resp = p
         .client
         .post(p.url("/v1/systemone"))
+        // The shared client's 10 s hang guard fired on this body after 15.84 s
+        // in a loaded full-suite run.
+        .timeout(std::time::Duration::from_secs(60))
         .json(&json!({
             "model": "clef-flash",
             "state": "I was charged twice.",
