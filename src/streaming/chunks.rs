@@ -76,9 +76,12 @@ impl ChunkProcessingState {
     }
 }
 
+#[derive(Debug)]
 pub struct ChoiceDeltaPayload {
     pub content: String,
     pub thinking: String,
+    /// The choice's `logprobs.content` array, unwrapped for Ollama's chunk shape.
+    pub logprobs: Option<Value>,
 }
 
 fn tool_call_index(tool_call: &Value, position: usize) -> u64 {
@@ -208,11 +211,28 @@ pub fn process_choice_delta(
         }
     }
 
-    if content.is_empty() && thinking.is_empty() {
+    let logprobs = extract_stream_logprobs(choice);
+
+    if content.is_empty() && thinking.is_empty() && logprobs.is_none() {
         None
     } else {
-        Some(ChoiceDeltaPayload { content, thinking })
+        Some(ChoiceDeltaPayload {
+            content,
+            thinking,
+            logprobs,
+        })
     }
+}
+
+/// OpenAI wraps the per-token array in `logprobs.content`; Ollama's chunk
+/// carries the inner `Logprob` array itself.
+fn extract_stream_logprobs(choice: &Value) -> Option<Value> {
+    choice
+        .get("logprobs")
+        .filter(|logprobs| !logprobs.is_null())
+        .and_then(|logprobs| logprobs.get("content"))
+        .filter(|content| !content.is_null())
+        .cloned()
 }
 
 fn append_stream_content(content_value: &Value, buffer: &mut String) {
@@ -286,6 +306,7 @@ pub fn create_ollama_streaming_chunk(
     done: bool,
     tool_calls_delta: Option<&Value>,
     thinking: &str,
+    logprobs: Option<&Value>,
 ) -> Value {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -302,14 +323,17 @@ pub fn create_ollama_streaming_chunk(
             msg_map.insert("tool_calls".into(), tc_delta.clone());
         }
 
-        let mut map = serde_json::Map::with_capacity(4);
+        let mut map = serde_json::Map::with_capacity(4 + usize::from(logprobs.is_some()));
         map.insert("model".into(), Value::String(model_ollama_name.into()));
         map.insert("created_at".into(), Value::String(timestamp));
         map.insert("message".into(), Value::Object(msg_map));
         map.insert("done".into(), Value::Bool(done));
+        if let Some(logprobs) = logprobs {
+            map.insert("logprobs".into(), logprobs.clone());
+        }
         Value::Object(map)
     } else {
-        let capacity = 4 + (!thinking.is_empty() as usize);
+        let capacity = 4 + usize::from(!thinking.is_empty()) + usize::from(logprobs.is_some());
         let mut map = serde_json::Map::with_capacity(capacity);
         map.insert("model".into(), Value::String(model_ollama_name.into()));
         map.insert("created_at".into(), Value::String(timestamp));
@@ -317,6 +341,9 @@ pub fn create_ollama_streaming_chunk(
         map.insert("done".into(), Value::Bool(done));
         if !thinking.is_empty() {
             map.insert("thinking".into(), Value::String(thinking.into()));
+        }
+        if let Some(logprobs) = logprobs {
+            map.insert("logprobs".into(), logprobs.clone());
         }
         Value::Object(map)
     }
@@ -342,8 +369,15 @@ pub fn create_cancellation_chunk(
     let timing =
         TimingInfo::from_stream_chunks(duration, prompt_tokens_estimate, output_tokens_estimate);
 
-    let mut chunk =
-        create_ollama_streaming_chunk(model_ollama_name, "", is_chat_endpoint, true, None, "");
+    let mut chunk = create_ollama_streaming_chunk(
+        model_ollama_name,
+        "",
+        is_chat_endpoint,
+        true,
+        None,
+        "",
+        None,
+    );
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         chunk_obj.insert("total_duration".to_string(), json!(timing.total_duration));
@@ -388,7 +422,7 @@ pub fn create_final_chunk(params: FinalChunkParams<'_>) -> Value {
     // Never carries tool_calls: real Ollama's final done:true chunk is empty and
     // accumulating clients would double-execute anything repeated here.
     let mut chunk =
-        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None, "");
+        create_ollama_streaming_chunk(params.model_name, "", params.is_chat, true, None, "", None);
 
     if let Some(chunk_obj) = chunk.as_object_mut() {
         if let Some(reason) = params.done_reason.and_then(map_done_reason) {

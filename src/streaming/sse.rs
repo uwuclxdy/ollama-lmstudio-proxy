@@ -136,16 +136,15 @@ pub async fn handle_streaming_response(
 
                                         match serde_json::from_str::<Value>(data_content) {
                                             Ok(lm_studio_json_chunk) => {
-                                                let mut content_to_send = String::new();
-                                                let mut thinking_to_send = String::new();
+                                                let (content_to_send, thinking_to_send, logprobs_to_send) =
+                                                    match extract_first_choice(&lm_studio_json_chunk)
+                                                        .and_then(|choice| process_choice_delta(choice, &mut chunk_state))
+                                                    {
+                                                        Some(payload) => (payload.content, payload.thinking, payload.logprobs),
+                                                        None => (String::new(), String::new(), None),
+                                                    };
 
-                                                if let Some(choice) = extract_first_choice(&lm_studio_json_chunk)
-                                                    && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
-                                                        content_to_send = delta_payload.content;
-                                                        thinking_to_send = delta_payload.thinking;
-                                                    }
-
-                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                if !content_to_send.is_empty() || !thinking_to_send.is_empty() || logprobs_to_send.is_some() {
                                                     streamed_chars += content_to_send.len() + thinking_to_send.len();
                                                     let ollama_chunk = create_ollama_streaming_chunk(
                                                         &model_clone_for_task,
@@ -154,6 +153,7 @@ pub async fn handle_streaming_response(
                                                         false,
                                                         None,
                                                         &thinking_to_send,
+                                                        logprobs_to_send.as_ref(),
                                                     );
                                                     chunk_count += 1;
                                                     if !send_chunk(&tx, &ollama_chunk).await {
@@ -166,16 +166,15 @@ pub async fn handle_streaming_response(
                                                     log::warn!("SSE parsing error (attempting recovery): {}", e);
                                                     if let Some(recovered_json) = recover_json_from_chunk(data_content) {
                                                         log::info!("Successfully recovered chunk data");
-                                                        let mut content_to_send = String::new();
-                                                        let mut thinking_to_send = String::new();
+                                                        let (content_to_send, thinking_to_send, logprobs_to_send) =
+                                                            match extract_first_choice(&recovered_json)
+                                                                .and_then(|choice| process_choice_delta(choice, &mut chunk_state))
+                                                            {
+                                                                Some(payload) => (payload.content, payload.thinking, payload.logprobs),
+                                                                None => (String::new(), String::new(), None),
+                                                            };
 
-                                                        if let Some(choice) = extract_first_choice(&recovered_json)
-                                                            && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
-                                                                content_to_send = delta_payload.content;
-                                                                thinking_to_send = delta_payload.thinking;
-                                                            }
-
-                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                                        if !content_to_send.is_empty() || !thinking_to_send.is_empty() || logprobs_to_send.is_some() {
                                                             streamed_chars += content_to_send.len() + thinking_to_send.len();
                                                             let ollama_chunk = create_ollama_streaming_chunk(
                                                                 &model_clone_for_task,
@@ -184,6 +183,7 @@ pub async fn handle_streaming_response(
                                                                 false,
                                                                 None,
                                                                 &thinking_to_send,
+                                                                logprobs_to_send.as_ref(),
                                                             );
                                                             chunk_count += 1;
                                                             if !send_chunk(&tx, &ollama_chunk).await {
@@ -228,16 +228,15 @@ pub async fn handle_streaming_response(
                                 log::info!("Attempting to recover from remaining buffer data");
                                 if let Some(recovered_json) = recover_json_from_chunk(&recovery_buffer) {
                                     log::info!("Successfully recovered data from remaining buffer");
-                                    let mut content_to_send = String::new();
-                                    let mut thinking_to_send = String::new();
+                                    let (content_to_send, thinking_to_send, logprobs_to_send) =
+                                        match extract_first_choice(&recovered_json)
+                                            .and_then(|choice| process_choice_delta(choice, &mut chunk_state))
+                                        {
+                                            Some(payload) => (payload.content, payload.thinking, payload.logprobs),
+                                            None => (String::new(), String::new(), None),
+                                        };
 
-                                    if let Some(choice) = extract_first_choice(&recovered_json)
-                                        && let Some(delta_payload) = process_choice_delta(choice, &mut chunk_state) {
-                                            content_to_send = delta_payload.content;
-                                            thinking_to_send = delta_payload.thinking;
-                                        }
-
-                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() {
+                                    if !content_to_send.is_empty() || !thinking_to_send.is_empty() || logprobs_to_send.is_some() {
                                         streamed_chars += content_to_send.len() + thinking_to_send.len();
                                         let ollama_chunk = create_ollama_streaming_chunk(
                                             &model_clone_for_task,
@@ -246,6 +245,7 @@ pub async fn handle_streaming_response(
                                             false,
                                             None,
                                             &thinking_to_send,
+                                            logprobs_to_send.as_ref(),
                                         );
                                         chunk_count += 1;
                                         if !send_chunk(&tx, &ollama_chunk).await {
@@ -276,6 +276,7 @@ pub async fn handle_streaming_response(
                     false,
                     Some(&tool_calls),
                     "",
+                    None,
                 );
                 chunk_count += 1;
                 send_chunk(&tx, &tool_chunk).await;
@@ -417,6 +418,7 @@ pub async fn handle_native_streaming_response(
                                                 false,
                                                 None,
                                                 &payload.thinking,
+                                                payload.logprobs.as_ref(),
                                             );
                                             chunk_count += 1;
                                             if !send_chunk(&tx, &ollama_chunk).await {
@@ -486,6 +488,7 @@ pub async fn handle_native_streaming_response(
                         false,
                         Some(&tool_calls),
                         "",
+                        None,
                     );
                     chunk_count += 1;
                     send_chunk(&tx, &tool_chunk).await;
@@ -543,7 +546,8 @@ fn build_native_final_chunk(
                 observed_load_seconds,
             );
 
-            let mut chunk = create_ollama_streaming_chunk(model_name, "", true, true, None, "");
+            let mut chunk =
+                create_ollama_streaming_chunk(model_name, "", true, true, None, "", None);
 
             if let Some(obj) = chunk.as_object_mut() {
                 // Proxy heuristic — the native API exposes no finish-reason.

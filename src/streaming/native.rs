@@ -89,6 +89,7 @@ pub fn map_native_event(
             NativeEvent::Delta(ChoiceDeltaPayload {
                 content: String::new(),
                 thinking,
+                logprobs: None,
             })
         }
         "message.delta" => {
@@ -100,6 +101,7 @@ pub fn map_native_event(
             NativeEvent::Delta(ChoiceDeltaPayload {
                 content,
                 thinking: String::new(),
+                logprobs: None,
             })
         }
         "tool_call.start" => {

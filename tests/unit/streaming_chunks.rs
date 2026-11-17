@@ -54,7 +54,7 @@ fn reasoning_only_chunk_is_not_dropped() {
 
 #[test]
 fn chat_chunk_thinking_in_message() {
-    let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "my thought");
+    let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "my thought", None);
     let msg = chunk.get("message").unwrap();
     assert_eq!(
         msg.get("thinking").and_then(|v| v.as_str()),
@@ -65,14 +65,14 @@ fn chat_chunk_thinking_in_message() {
 
 #[test]
 fn chat_chunk_no_thinking_field_when_empty() {
-    let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "");
+    let chunk = create_ollama_streaming_chunk("m", "hi", true, false, None, "", None);
     let msg = chunk.get("message").unwrap();
     assert!(msg.get("thinking").is_none());
 }
 
 #[test]
 fn generate_chunk_thinking_top_level() {
-    let chunk = create_ollama_streaming_chunk("m", "response", false, false, None, "thought");
+    let chunk = create_ollama_streaming_chunk("m", "response", false, false, None, "thought", None);
     assert_eq!(
         chunk.get("thinking").and_then(|v| v.as_str()),
         Some("thought")
@@ -229,7 +229,7 @@ fn extract_first_choice_handles_missing_or_empty() {
 
 #[test]
 fn chat_streaming_chunk_basic_shape() {
-    let c = create_ollama_streaming_chunk("llama3", "hi", true, false, None, "");
+    let c = create_ollama_streaming_chunk("llama3", "hi", true, false, None, "", None);
     assert_eq!(c.get("model").and_then(|v| v.as_str()), Some("llama3"));
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(false));
     let created = c.get("created_at").and_then(|v| v.as_str()).unwrap();
@@ -245,7 +245,7 @@ fn chat_streaming_chunk_tool_calls_in_message() {
     let tc = json!([{
         "function": {"name": "x", "arguments": {"k": "v"}}
     }]);
-    let c = create_ollama_streaming_chunk("m", "", true, false, Some(&tc), "");
+    let c = create_ollama_streaming_chunk("m", "", true, false, Some(&tc), "", None);
     let msg = c.get("message").unwrap();
     let calls = msg.get("tool_calls").unwrap().as_array().unwrap();
     assert_eq!(calls.len(), 1);
@@ -254,7 +254,7 @@ fn chat_streaming_chunk_tool_calls_in_message() {
 
 #[test]
 fn chat_streaming_chunk_thinking_only_when_non_empty() {
-    let with = create_ollama_streaming_chunk("m", "hi", true, false, None, "musing");
+    let with = create_ollama_streaming_chunk("m", "hi", true, false, None, "musing", None);
     assert_eq!(
         with.get("message")
             .unwrap()
@@ -262,7 +262,7 @@ fn chat_streaming_chunk_thinking_only_when_non_empty() {
             .and_then(|v| v.as_str()),
         Some("musing")
     );
-    let without = create_ollama_streaming_chunk("m", "hi", true, false, None, "");
+    let without = create_ollama_streaming_chunk("m", "hi", true, false, None, "", None);
     assert!(
         without.get("message").unwrap().get("thinking").is_none(),
         "empty thinking must not be serialized"
@@ -275,7 +275,7 @@ fn chat_streaming_chunk_thinking_only_when_non_empty() {
 
 #[test]
 fn generate_streaming_chunk_basic_shape() {
-    let c = create_ollama_streaming_chunk("llama3", "tok", false, false, None, "");
+    let c = create_ollama_streaming_chunk("llama3", "tok", false, false, None, "", None);
     assert_eq!(c.get("model").and_then(|v| v.as_str()), Some("llama3"));
     assert_eq!(c.get("response").and_then(|v| v.as_str()), Some("tok"));
     assert_eq!(c.get("done").and_then(|v| v.as_bool()), Some(false));
@@ -286,14 +286,14 @@ fn generate_streaming_chunk_basic_shape() {
 
 #[test]
 fn generate_streaming_chunk_thinking_top_level_only_when_non_empty() {
-    let with = create_ollama_streaming_chunk("m", "resp", false, false, None, "musing");
+    let with = create_ollama_streaming_chunk("m", "resp", false, false, None, "musing", None);
     assert_eq!(
         with.get("thinking").and_then(|v| v.as_str()),
         Some("musing")
     );
     assert!(with.get("message").is_none());
 
-    let without = create_ollama_streaming_chunk("m", "resp", false, false, None, "");
+    let without = create_ollama_streaming_chunk("m", "resp", false, false, None, "", None);
     assert!(without.get("thinking").is_none());
 }
 
@@ -710,6 +710,36 @@ fn process_choice_delta_returns_none_for_empty_delta() {
     let choice = json!({ "delta": {} });
     let mut state = ChunkProcessingState::default();
     assert!(process_choice_delta(&choice, &mut state).is_none());
+}
+
+#[test]
+fn process_choice_delta_drops_null_logprobs() {
+    for logprobs in [json!(null), json!({ "content": null })] {
+        let choice = json!({ "delta": { "content": "hi" }, "logprobs": logprobs });
+        let mut state = ChunkProcessingState::default();
+        let payload = process_choice_delta(&choice, &mut state).expect("content still emits");
+        assert!(
+            payload.logprobs.is_none(),
+            "null logprobs must not surface a logprobs field"
+        );
+    }
+}
+
+#[test]
+fn process_choice_delta_keeps_logprobs_only_delta() {
+    let logprobs = json!([{
+        "token": "hi",
+        "logprob": -0.5,
+        "bytes": [104, 105],
+        "top_logprobs": []
+    }]);
+    let choice = json!({ "delta": {}, "logprobs": { "content": logprobs } });
+    let mut state = ChunkProcessingState::default();
+    let payload = process_choice_delta(&choice, &mut state)
+        .expect("a logprobs-only delta carries real data and must not be dropped");
+    assert_eq!(payload.content, "");
+    assert_eq!(payload.thinking, "");
+    assert_eq!(payload.logprobs, Some(logprobs));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

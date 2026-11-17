@@ -1725,3 +1725,362 @@ async fn chat_stream_stats_estimate_from_text_lengths_not_chunk_count() {
 
     p.mock.verify().await;
 }
+
+// ---------------------------------------------------------------------------
+// streaming logprobs: the backend's per-chunk array reaches the Ollama chunk
+// ---------------------------------------------------------------------------
+
+/// The per-token array LM Studio puts under `choices[].logprobs.content`.
+fn backend_logprobs() -> Value {
+    json!([{
+        "token": "Hi",
+        "logprob": -0.25,
+        "bytes": [72, 105],
+        "top_logprobs": [{ "token": "Hi", "logprob": -0.25, "bytes": [72, 105] }]
+    }])
+}
+
+fn llama3_catalog() -> Value {
+    json!({
+        "models": [{"key": "llama3", "type": "llm", "publisher": "meta",
+                    "architecture": "llama", "format": "gguf",
+                    "quantization": {"name": "Q4_K_M", "bits_per_weight": 4.5},
+                    "max_context_length": 8192, "loaded_instances": [],
+                    "capabilities": {"vision": false, "trained_for_tool_use": false}}]
+    })
+}
+
+#[tokio::test]
+async fn chat_stream_logprobs_reach_the_ollama_chunk() {
+    let p = spawn_proxy().await;
+
+    let with_logprobs = json!({
+        "choices": [{
+            "delta": { "content": "Hi" },
+            "logprobs": { "content": backend_logprobs() },
+            "finish_reason": null
+        }]
+    })
+    .to_string();
+    let without_logprobs = json!({
+        "choices": [{ "delta": { "content": " there" }, "finish_reason": null }]
+    })
+    .to_string();
+    let finishing = json!({
+        "choices": [{ "delta": {}, "finish_reason": "stop" }]
+    })
+    .to_string();
+    let body = sse_body(&[&with_logprobs, &without_logprobs, &finishing]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(llama3_catalog()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+            "logprobs": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+
+    let hi = chunks
+        .iter()
+        .find(|c| c["message"]["content"] == "Hi")
+        .expect("the chunk carrying the \"Hi\" delta");
+    assert_eq!(
+        hi["logprobs"],
+        backend_logprobs(),
+        "the streamed chunk must carry the backend's logprobs array: {hi}"
+    );
+
+    let there = chunks
+        .iter()
+        .find(|c| c["message"]["content"] == " there")
+        .expect("the chunk carrying the \" there\" delta");
+    assert!(
+        there.get("logprobs").is_none(),
+        "a chunk whose backend delta carries no logprobs stays field-less: {there}"
+    );
+}
+
+#[tokio::test]
+async fn generate_stream_logprobs_reach_the_ollama_chunk() {
+    let p = spawn_proxy().await;
+
+    let with_logprobs = json!({
+        "choices": [{
+            "text": "Hi",
+            "logprobs": { "content": backend_logprobs() },
+            "finish_reason": null
+        }]
+    })
+    .to_string();
+    let finishing = json!({
+        "choices": [{ "text": "", "finish_reason": "stop" }]
+    })
+    .to_string();
+    let body = sse_body(&[&with_logprobs, &finishing]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(llama3_catalog()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3",
+            "prompt": "hello",
+            "stream": true,
+            "logprobs": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+
+    let hi = chunks
+        .iter()
+        .find(|c| c["response"] == "Hi")
+        .expect("the chunk carrying the \"Hi\" delta");
+    assert_eq!(
+        hi["logprobs"],
+        backend_logprobs(),
+        "the streamed generate chunk must carry the backend's logprobs array: {hi}"
+    );
+
+    let last = chunks.last().expect("final chunk");
+    assert!(
+        last.get("logprobs").is_none(),
+        "the terminal chunk stays field-less: {last}"
+    );
+}
+
+#[tokio::test]
+async fn chat_stream_logprobs_only_delta_still_emits_a_chunk() {
+    let p = spawn_proxy().await;
+
+    // A delta carrying logprobs but no content: real data the translation must
+    // not drop on the floor just because the text is empty.
+    let logprobs_only = json!({
+        "choices": [{
+            "delta": {},
+            "logprobs": { "content": backend_logprobs() },
+            "finish_reason": null
+        }]
+    })
+    .to_string();
+    let finishing = json!({
+        "choices": [{ "delta": {}, "finish_reason": "stop" }]
+    })
+    .to_string();
+    let body = sse_body(&[&logprobs_only, &finishing]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(llama3_catalog()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+            "logprobs": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+
+    let carrier = chunks
+        .iter()
+        .find(|c| c.get("logprobs").is_some())
+        .expect("a backend delta's logprobs must reach a chunk even with no content");
+    assert_eq!(
+        carrier["logprobs"],
+        backend_logprobs(),
+        "the emitted chunk carries the backend's array: {carrier}"
+    );
+    assert_eq!(
+        carrier["message"]["content"], "",
+        "the chunk's content stays empty: {carrier}"
+    );
+    assert_eq!(
+        carrier["done"], false,
+        "the logprobs-only chunk is not terminal: {carrier}"
+    );
+}
+
+#[tokio::test]
+async fn chat_stream_recovered_chunk_carries_logprobs() {
+    let p = spawn_proxy().await;
+
+    // A parseable chunk behind a garbage prefix: the stream driver's recovery
+    // branch salvages the object, and the salvaged delta must keep its logprobs.
+    let recovered = format!(
+        r#"garbage prefix {{"choices":[{{"delta":{{"content":"Hi"}},"logprobs":{{"content":{}}},"finish_reason":null}}]}}"#,
+        backend_logprobs()
+    );
+    let finishing = json!({
+        "choices": [{ "delta": {}, "finish_reason": "stop" }]
+    })
+    .to_string();
+    let body = sse_body(&[&recovered, &finishing]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(llama3_catalog()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+            "logprobs": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+
+    let hi = chunks
+        .iter()
+        .find(|c| c["message"]["content"] == "Hi")
+        .expect("the recovered chunk's content");
+    assert_eq!(
+        hi["logprobs"],
+        backend_logprobs(),
+        "a recovered delta keeps its logprobs: {hi}"
+    );
+}
+
+#[tokio::test]
+async fn chat_stream_tool_call_chunk_carries_no_logprobs() {
+    let p = spawn_proxy().await;
+
+    let with_logprobs = json!({
+        "choices": [{
+            "delta": { "content": "Hi" },
+            "logprobs": { "content": backend_logprobs() },
+            "finish_reason": null
+        }]
+    })
+    .to_string();
+    let tool_start = json!({
+        "choices": [{
+            "delta": { "tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "get_weather", "arguments": "{\"loc\":" }
+            }] },
+            "finish_reason": null
+        }]
+    })
+    .to_string();
+    let tool_end = json!({
+        "choices": [{
+            "delta": { "tool_calls": [{
+                "index": 0,
+                "function": { "arguments": "\"Paris\"}" }
+            }] },
+            "finish_reason": "tool_calls"
+        }]
+    })
+    .to_string();
+    let body = sse_body(&[&with_logprobs, &tool_start, &tool_end]);
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/chat/completions"))
+        .respond_with(sse_response(body))
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(llama3_catalog()))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/chat"))
+        .json(&json!({
+            "model": "llama3",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+            "logprobs": true
+        }))
+        .send()
+        .await
+        .expect("POST /api/chat");
+
+    assert_eq!(resp.status(), 200);
+    let chunks = collect_ndjson(resp).await;
+
+    let tool_chunk = chunks
+        .iter()
+        .find(|c| c["message"].get("tool_calls").is_some())
+        .expect("the assembled tool-call chunk");
+    assert!(
+        tool_chunk.get("logprobs").is_none(),
+        "the tool-call chunk stays field-less: {tool_chunk}"
+    );
+    let last = chunks.last().expect("final chunk");
+    assert_eq!(last["done"], true);
+    assert!(
+        last.get("logprobs").is_none(),
+        "the terminal chunk stays field-less: {last}"
+    );
+}
