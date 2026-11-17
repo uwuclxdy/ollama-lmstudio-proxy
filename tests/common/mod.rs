@@ -64,6 +64,7 @@ pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy
         false,
         true,
         None,
+        None,
         false,
         false,
         15,
@@ -77,28 +78,37 @@ pub async fn spawn_proxy_with_recovery(enable_chunk_recovery: bool) -> TestProxy
 /// OUTSIDE the whole production stack, so any response extension an inner
 /// error render carries is dropped before the client sees the body.
 pub async fn spawn_proxy_with_rebuild_layer() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, false, false, 15, true, None).await
+    spawn_proxy_inner(
+        true, false, false, true, None, None, false, false, 15, true, None,
+    )
+    .await
 }
 
 /// Boot a proxy with the experimental native `/api/v1/chat` path enabled, so
 /// `/api/chat` routes through LM Studio's native endpoint instead of the
 /// OpenAI-compat `/api/v0/chat/completions`.
 pub async fn spawn_proxy_with_native() -> TestProxy {
-    spawn_proxy_inner(true, true, false, true, None, false, false, 15, false, None).await
+    spawn_proxy_inner(
+        true, true, false, true, None, None, false, false, 15, false, None,
+    )
+    .await
 }
 
 /// Boot a proxy with the `/api/web_search` configured to forward to the mock
 /// server's `/search` endpoint (with a bearer key). Mount a POST `/search`
 /// mock to drive it.
 pub async fn spawn_proxy_with_search() -> TestProxy {
-    spawn_proxy_inner(true, false, true, true, None, false, false, 15, false, None).await
+    spawn_proxy_inner(
+        true, false, true, true, None, None, false, false, 15, false, None,
+    )
+    .await
 }
 
 /// Boot a proxy with the web_fetch SSRF guard ENABLED (private/loopback targets
 /// rejected) — i.e. `--allow-private-fetch` off.
 pub async fn spawn_proxy_strict_ssrf() -> TestProxy {
     spawn_proxy_inner(
-        true, false, false, false, None, false, false, 15, false, None,
+        true, false, false, false, None, None, false, false, 15, false, None,
     )
     .await
 }
@@ -113,6 +123,29 @@ pub async fn spawn_proxy_with_api_key(api_key: &str) -> TestProxy {
         false,
         true,
         Some(api_key.to_string()),
+        None,
+        false,
+        false,
+        15,
+        false,
+        None,
+    )
+    .await
+}
+
+/// Boot a proxy requiring the inbound `api_key` AND configured with an outbound
+/// LM Studio token, so a test can pin which credential reaches the backend.
+pub(crate) async fn spawn_proxy_with_api_key_and_token(
+    api_key: &str,
+    lmstudio_token: &str,
+) -> TestProxy {
+    spawn_proxy_inner(
+        true,
+        false,
+        false,
+        true,
+        Some(api_key.to_string()),
+        Some(lmstudio_token.to_string()),
         false,
         false,
         15,
@@ -126,13 +159,19 @@ pub async fn spawn_proxy_with_api_key(api_key: &str) -> TestProxy {
 /// (`stream:true`) routes through native `/api/v1/chat`, non-streaming stays on
 /// the OpenAI-compat `/api/v0/chat/completions` path.
 pub async fn spawn_proxy_with_native_streaming() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, true, false, 15, false, None).await
+    spawn_proxy_inner(
+        true, false, false, true, None, None, true, false, 15, false, None,
+    )
+    .await
 }
 
 /// Boot a proxy with `--auto-evict` on: proactively evicts other loaded models
 /// before inference when the target model is not yet loaded.
 pub async fn spawn_proxy_with_auto_evict() -> TestProxy {
-    spawn_proxy_inner(true, false, false, true, None, false, true, 15, false, None).await
+    spawn_proxy_inner(
+        true, false, false, true, None, None, false, true, 15, false, None,
+    )
+    .await
 }
 
 /// Boot a proxy with a custom `load_timeout_seconds` — useful for tests that
@@ -144,6 +183,7 @@ pub async fn spawn_proxy_with_load_timeout(load_timeout_seconds: u64) -> TestPro
         false,
         false,
         true,
+        None,
         None,
         false,
         false,
@@ -165,6 +205,7 @@ pub async fn spawn_proxy_with_lmstudio_prefix(prefix: &str) -> TestProxy {
         false,
         false,
         true,
+        None,
         None,
         false,
         false,
@@ -189,6 +230,7 @@ async fn spawn_proxy_inner(
     configure_search: bool,
     allow_private_fetch: bool,
     api_key: Option<String>,
+    lmstudio_token: Option<String>,
     native_chat_streaming: bool,
     auto_evict: bool,
     load_timeout_seconds: u64,
@@ -215,7 +257,7 @@ async fn spawn_proxy_inner(
         max_buffer_size: 262_144,
         enable_chunk_recovery,
         model_resolution_cache_ttl_seconds: 1,
-        lmstudio_token: None,
+        lmstudio_token,
         api_key,
         use_native_chat,
         native_chat_streaming,

@@ -9,9 +9,11 @@
 // (root) instead — both are served locally with no LM Studio mock, keeping
 // these tests fully deterministic.
 
-use serde_json::Value;
+use serde_json::{Value, json};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 
-use crate::common::{spawn_proxy, spawn_proxy_with_api_key};
+use crate::common::{spawn_proxy, spawn_proxy_with_api_key, spawn_proxy_with_api_key_and_token};
 
 const KEY: &str = "s3cret-test-key";
 
@@ -226,5 +228,163 @@ async fn key_set_rejects_v1_messages_with_anthropic_envelope() {
             .as_str()
             .is_some_and(|m| m.contains("unauthorized")),
         "message must mention unauthorized: {body}"
+    );
+}
+
+// ── the api-key gate owns Authorization: the proxy key never rides upstream ──
+//
+// With `--api-key` set, the inbound `Authorization` / `x-api-key` header is the
+// PROXY credential. Forwarding it overwrote the configured `--lmstudio-token`
+// (reqwest's per-request header wins over the client default), so a backend
+// with its own auth answered 401.
+
+/// Mount a plain 200 for `GET /v1/models` and return the request the backend saw.
+async fn forwarded_v1_models_request(p: &crate::common::TestProxy) -> wiremock::Request {
+    let recorded = p
+        .mock
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    recorded
+        .into_iter()
+        .find(|r| r.url.path() == "/v1/models")
+        .expect("the backend must see GET /v1/models")
+}
+
+async fn mount_v1_models(p: &crate::common::TestProxy) {
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+        .mount(&p.mock)
+        .await;
+}
+
+#[tokio::test]
+async fn matched_api_key_is_stripped_so_the_lmstudio_token_is_forwarded() {
+    let p = spawn_proxy_with_api_key_and_token(KEY, "lms-outbound-token").await;
+    mount_v1_models(&p).await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .header("authorization", format!("Bearer {KEY}"))
+        .send()
+        .await
+        .expect("GET /v1/models with the proxy key");
+
+    assert_eq!(resp.status(), 200);
+    let forwarded = forwarded_v1_models_request(&p).await;
+    assert_eq!(
+        forwarded
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok()),
+        Some("Bearer lms-outbound-token"),
+        "the backend must receive the configured LM Studio token, never the proxy key"
+    );
+}
+
+#[tokio::test]
+async fn matched_x_api_key_is_stripped_from_the_forwarded_request() {
+    let p = spawn_proxy_with_api_key_and_token(KEY, "lms-outbound-token").await;
+    mount_v1_models(&p).await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .header("x-api-key", KEY)
+        .send()
+        .await
+        .expect("GET /v1/models with x-api-key");
+
+    assert_eq!(resp.status(), 200);
+    let forwarded = forwarded_v1_models_request(&p).await;
+    assert!(
+        forwarded.headers.get("x-api-key").is_none(),
+        "the proxy credential must not ride upstream as x-api-key"
+    );
+    assert_eq!(
+        forwarded
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok()),
+        Some("Bearer lms-outbound-token"),
+        "the configured LM Studio token must be the one forwarded"
+    );
+}
+
+#[tokio::test]
+async fn matched_api_key_is_not_forwarded_without_an_lmstudio_token() {
+    let p = spawn_proxy_with_api_key(KEY).await;
+    mount_v1_models(&p).await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .header("authorization", format!("Bearer {KEY}"))
+        .send()
+        .await
+        .expect("GET /v1/models with the proxy key");
+
+    assert_eq!(resp.status(), 200);
+    let forwarded = forwarded_v1_models_request(&p).await;
+    assert!(
+        forwarded.headers.get("authorization").is_none(),
+        "with no configured backend credential, nothing must be forwarded as Authorization"
+    );
+}
+
+#[tokio::test]
+async fn matched_authorization_strips_a_caller_x_api_key_too() {
+    let p = spawn_proxy_with_api_key_and_token(KEY, "lms-outbound-token").await;
+    mount_v1_models(&p).await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .header("authorization", format!("Bearer {KEY}"))
+        .header("x-api-key", "caller-lm-token")
+        .send()
+        .await
+        .expect("GET /v1/models with both credential headers");
+
+    assert_eq!(resp.status(), 200);
+    let forwarded = forwarded_v1_models_request(&p).await;
+    assert!(
+        forwarded.headers.get("x-api-key").is_none(),
+        "the second credential channel must not override the backend token"
+    );
+    assert_eq!(
+        forwarded
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok()),
+        Some("Bearer lms-outbound-token"),
+        "the configured LM Studio token must stand"
+    );
+}
+
+#[tokio::test]
+async fn matched_x_api_key_is_not_forwarded_without_an_lmstudio_token() {
+    let p = spawn_proxy_with_api_key(KEY).await;
+    mount_v1_models(&p).await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .header("x-api-key", KEY)
+        .send()
+        .await
+        .expect("GET /v1/models with x-api-key and no backend token");
+
+    assert_eq!(resp.status(), 200);
+    let forwarded = forwarded_v1_models_request(&p).await;
+    assert!(
+        forwarded.headers.get("x-api-key").is_none(),
+        "the matched x-api-key must never ride upstream"
+    );
+    assert!(
+        forwarded.headers.get("authorization").is_none(),
+        "no configured backend credential means no Authorization either"
     );
 }

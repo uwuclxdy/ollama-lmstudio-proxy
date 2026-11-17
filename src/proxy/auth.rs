@@ -10,10 +10,12 @@ use crate::error::{ProxyError, is_anthropic_surface};
 
 /// Inbound Bearer API-key gate. When the configured key is `None` the gate is a
 /// pure no-op (fully open). When set, inbound requests must carry
-/// `Authorization: Bearer <key>` or receive a 401.
+/// `Authorization: Bearer <key>` or `x-api-key: <key>` or receive a 401. On a
+/// match both credential headers are removed from the request so neither rides
+/// upstream in place of the configured LM Studio token.
 pub async fn api_key_gate(
     State(expected): State<Arc<Option<String>>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     // No key configured -> fully open.
@@ -45,6 +47,12 @@ pub async fn api_key_gate(
     );
 
     if authorized {
+        // The matched credential authenticates this proxy's caller, not the
+        // backend: drop both headers the gate accepts so the proxy key never
+        // rides upstream in place of the configured `--lmstudio-token`.
+        let headers = req.headers_mut();
+        headers.remove(header::AUTHORIZATION);
+        headers.remove("x-api-key");
         next.run(req).await
     } else {
         log::warn!(
