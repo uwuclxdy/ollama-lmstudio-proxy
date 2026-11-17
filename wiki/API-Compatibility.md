@@ -32,17 +32,13 @@ Every error the proxy raises is JSON in the endpoint's own envelope, `{"error":m
 
 ## Verbatim passthrough
 
-`ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without
-modification. This includes `POST /v1/messages` (Anthropic-compat) and
-`POST /v1/responses` (OpenAI Responses), which LM Studio serves natively. The
-proxy remaps the `model` field (and the `GET /v1/models/{id}` path segment)
-from the Ollama-style name or a `/api/copy` alias to the resolved LM Studio id
-before forwarding. A few compatibility shims apply on top:
+`ANY /v1/*` and `ANY /api/v1/*` are forwarded directly to LM Studio without modification, `GET /v1/models` aside (see the listing shim below). This includes `POST /v1/messages` (Anthropic-compat) and `POST /v1/responses` (OpenAI Responses), which LM Studio serves natively. The proxy remaps the `model` field (and the `GET /v1/models/{id}` path segment) from the Ollama-style name or a `/api/copy` alias to the resolved LM Studio id before forwarding. A few compatibility shims apply on top:
 
 - `response_format: {"type": "json_object"}` is rewritten to the permissive
   `json_schema` envelope LM Studio accepts.
 - `encoding_format: "base64"` on `/v1/embeddings` is honored by the proxy
   (LM Studio always returns floats; the proxy re-encodes them).
+- `GET /v1/models` merges every `/api/copy` alias into LM Studio's listing (the backend cannot know a proxy-created alias): each alias not already listed is appended as an OpenAI model object, `owned_by`/`created` mirrored from its target's entry (an orphan alias, whose target left the listing, borrows the first entry's `owned_by` and gets no `created`), rows in id order. The envelope keeps the backend's status, `content-type` and custom headers, and drops framing/validator headers (`content-length`, `transfer-encoding`, the hop-by-hop set, `proxy-connection`, `etag`, `last-modified`) because the body is replaced. A body that is not a model listing, a non-2xx status, or a listing with no alias to add keeps the backend's exact bytes — though a 2xx still goes through the rebuild, so those validator headers drop there too.
 - Proxy-generated errors on `/v1/messages` use Anthropic's `{"type":"error","error":{...}}` envelope, auth rejections and pre-handler refusals (oversized body, undecodable path or query) included.
 - Mid-stream proxy errors (timeout, cancel, upstream failure) are framed per
   protocol: `event: error` for Anthropic, `event: response.failed` for

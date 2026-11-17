@@ -4,6 +4,8 @@ Available only on the native chat path. Start the proxy with `--use-native-chat`
 
 On that path `/api/chat` accepts an `integrations` array, forwarded verbatim to LM Studio's `/api/v1/chat`. Non-array values are ignored.
 
+On the default (OpenAI-compat) chat path the array cannot be forwarded: a non-empty `integrations` array is dropped and the response carries a `warning` naming the field — on the body when non-streaming, on the final `done:true` chunk when streaming.
+
 ## Element types
 
 Each element of the array may be:

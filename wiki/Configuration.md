@@ -16,8 +16,8 @@ Every setting is a CLI flag. Where a flag reads an environment variable too, the
 | `--model-resolution-cache-ttl-seconds` | `300` | Cache TTL for model resolution |
 | `--max-buffer-size` | `262144` | Initial buffer size for SSE message assembly (bytes) |
 | `--enable-chunk-recovery` | `false` | Enable partial chunk recovery for streams |
-| `--lmstudio-token` | _none_ | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); sent on backend requests, overridden by a caller-supplied `Authorization` |
-| `--api-key` | _none_ | Inbound credential gate (`OLLAMA_API_KEY` env). Unset means the proxy is open. When set, every request needs `Authorization: Bearer <key>` or `x-api-key: <key>`; `GET /api/version` and CORS preflight stay open |
+| `--lmstudio-token` | _none_ | Bearer token for LM Studio auth (`LMSTUDIO_TOKEN` env); sent on backend requests. On an open proxy (no `--api-key`), a caller-supplied `Authorization` overrides it on the `/v1/*` and `/api/v1/*` passthrough (the `/api/*` handlers forward no inbound headers); with `--api-key` set the gate strips the inbound credential, so this token is the one that reaches the backend |
+| `--api-key` | _none_ | Inbound credential gate (`OLLAMA_API_KEY` env). Unset means the proxy is open. When set, every request needs `Authorization: Bearer <key>` or `x-api-key: <key>`; the matched credential (both headers) is removed before forwarding, so the proxy key never rides upstream; `GET /api/version` and CORS preflight stay open |
 | `--use-native-chat` | `false` | Route `/api/chat` through native `/api/v1/chat` for richer reasoning events, MCP tools, and accurate stats |
 | `--native-chat-streaming` | `false` | Same routing for streaming `/api/chat` only; non-streaming stays on the v0 path |
 | `--auto-evict` | `false` | Unload every other model's instances before loading a requested one (mirrors Ollama's single-model default). Single-tenant setups only: one client's load evicts another's |
@@ -34,7 +34,7 @@ Every setting is a CLI flag. Where a flag reads an environment variable too, the
 
 `--use-native-chat` routes every `/api/chat` request through LM Studio's `/api/v1/chat`. `--native-chat-streaming` routes the streaming ones only; the rest stay on the v0 path.
 
-The native path adds per-event reasoning deltas, real streaming token stats, [MCP integrations](MCP-Integrations). Its schema has no slot for `tools`, `tool_choice`, `format`: a request carrying any of them gets a `warning` field naming what the proxy dropped.
+The native path adds per-event reasoning deltas, real streaming token stats, [MCP integrations](MCP-Integrations). Its schema has no slot for `tools`, `tool_choice`, `format`, `response_format`, `logprobs`, `top_logprobs` or `images`: a request carrying any of them gets a `warning` field naming what the proxy dropped.
 
 `keep_alive` sets no backend TTL on this path: LM Studio 0.4.28's `/api/v1` surface rejects a `ttl` field (measured 2026-11-16), so a finite value only drives `/api/ps`'s deadline. `keep_alive: 0` still unloads the model once the response body ends.
 
