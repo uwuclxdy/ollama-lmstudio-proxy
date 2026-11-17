@@ -76,3 +76,6 @@ mod keep_alive_streaming;
 
 #[path = "integration/passthrough_stream_timeout.rs"]
 mod passthrough_stream_timeout;
+
+#[path = "integration/v1_models_wire.rs"]
+mod v1_models_wire;

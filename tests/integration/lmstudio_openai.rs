@@ -785,3 +785,115 @@ async fn openai_models_path_resolves_virtual_alias() {
     let body: serde_json::Value = resp.json().await.expect("json body");
     assert_eq!(body["id"], target);
 }
+
+// ── GET /v1/models lists proxy-created virtual aliases ────────────────────────
+//
+// A `/api/copy` alias lives only in the proxy's VirtualModelStore; LM Studio's
+// listing cannot know it. `/api/tags` merges aliases in, and a `/v1` caller can
+// already use one as a `model` or a `/v1/models/{alias}` path, so the listing a
+// client browses must show it too.
+
+#[tokio::test]
+async fn openai_models_list_includes_virtual_alias() {
+    let p = spawn_proxy().await;
+    let target = "lmstudio-community/meta-llama-3.1-8b";
+    let other = "publisher-two/second-model";
+    mount_native_models(&p, target).await;
+    create_copy_alias(&p, "my-alias", target).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-lmstudio-backend", "yes")
+                .set_body_json(json!({
+                    "object": "list",
+                    "data": [
+                        { "id": other, "object": "model", "owned_by": "publisher-two", "created": 111 },
+                        { "id": target, "object": "model", "owned_by": "organization_owner", "created": 222 }
+                    ]
+                })),
+        )
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models"))
+        .send()
+        .await
+        .expect("GET /v1/models");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("x-lmstudio-backend").unwrap(),
+        "yes",
+        "the backend's response headers must survive the rebuilt envelope"
+    );
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    let data = body["data"].as_array().expect("data array");
+    let ids: Vec<&str> = data.iter().filter_map(|e| e["id"].as_str()).collect();
+    assert!(
+        ids.contains(&target),
+        "the backend's own entries must survive the merge: {body}"
+    );
+    assert!(
+        ids.contains(&"my-alias"),
+        "the `/api/copy` alias must be listed: {body}"
+    );
+    let alias_entry = data
+        .iter()
+        .find(|e| e["id"] == "my-alias")
+        .expect("alias entry");
+    assert_eq!(
+        alias_entry["object"], "model",
+        "the alias entry must be an OpenAI model object: {body}"
+    );
+    // The alias stands for `target`, so the fields the backend reports for that
+    // model — not for whichever entry happens to be first — shape its row.
+    assert_eq!(
+        alias_entry["owned_by"], "organization_owner",
+        "the alias row mirrors its target's owned_by: {body}"
+    );
+    assert_eq!(
+        alias_entry["created"], 222,
+        "the alias row mirrors its target's created: {body}"
+    );
+}
+
+#[tokio::test]
+async fn openai_models_path_never_merges_aliases() {
+    let p = spawn_proxy().await;
+    let target = "lmstudio-community/meta-llama-3.1-8b";
+    mount_native_models(&p, target).await;
+    create_copy_alias(&p, "my-alias", target).await;
+
+    // A per-model body that happens to carry a `data` array: only the exact
+    // listing path may merge, so this must round-trip byte-for-byte.
+    let backend_body = json!({
+        "id": target,
+        "object": "model",
+        "data": []
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("/v1/models/{target}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(backend_body.clone()))
+        .expect(1)
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .get(p.url("/v1/models/my-alias"))
+        .send()
+        .await
+        .expect("GET /v1/models/{alias}");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body, backend_body,
+        "the per-segment route must not merge aliases into its body: {body}"
+    );
+}

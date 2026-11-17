@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::response::Response;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::RequestContext;
@@ -17,6 +17,7 @@ use crate::http::body::{parse_json_body_template, prepare_request_body};
 use crate::http::{build_forward_headers, client::CancellableRequest};
 use crate::logging::{LogConfig, format_duration, log_request, log_timed};
 use crate::model::ModelResolver;
+use crate::storage::{VirtualModelEntry, VirtualModelStore};
 use crate::streaming::{
     PassthroughProtocol, handle_passthrough_streaming_response, is_streaming_request,
 };
@@ -130,6 +131,14 @@ pub async fn handle_lmstudio_passthrough(
                     endpoint = format!("/v1/models/{}", resolved_model);
                 }
 
+                // `/v1/models` is the one passthrough response the proxy
+                // rewrites: a `/api/copy` alias exists only in the proxy's
+                // store, so the listing must merge it in the way `/api/tags`
+                // already does for Ollama clients. Every other path — the
+                // per-segment `/v1/models/{id}` included — forwards verbatim.
+                let virtual_models = (method == http::Method::GET && endpoint == "/v1/models")
+                    .then(|| Arc::clone(&context.virtual_models));
+
                 // LM Studio's /v1 chat/completions rejects
                 // response_format:{"type":"json_object"} (only json_schema/text),
                 // so translate it to a permissive json_schema, matching the
@@ -180,6 +189,7 @@ pub async fn handle_lmstudio_passthrough(
                         endpoint: &endpoint,
                         original_model_name: original_model_name.as_deref(),
                         transcode_base64,
+                        virtual_models,
                         cancellation_token,
                         stream_timeout_seconds,
                     })
@@ -191,6 +201,7 @@ pub async fn handle_lmstudio_passthrough(
                         &final_endpoint_url,
                         &headers,
                         &body_bytes,
+                        virtual_models,
                         cancellation_token,
                     )
                     .await
@@ -230,6 +241,7 @@ struct ForwardJsonRequest<'a> {
     endpoint: &'a str,
     original_model_name: Option<&'a str>,
     transcode_base64: bool,
+    virtual_models: Option<Arc<VirtualModelStore>>,
     cancellation_token: CancellationToken,
     stream_timeout_seconds: u64,
 }
@@ -247,6 +259,7 @@ async fn forward_json_body_request(
         endpoint,
         original_model_name,
         transcode_base64,
+        virtual_models,
         cancellation_token,
         stream_timeout_seconds,
     } = req;
@@ -260,6 +273,10 @@ async fn forward_json_body_request(
     let response = cancellable_request
         .make_raw_request(method, endpoint_url, forward_headers, prepared_body.bytes)
         .await?;
+
+    if let Some(virtual_models) = virtual_models {
+        return forward_models_listing(response, &virtual_models).await;
+    }
 
     if original_model_name.is_some()
         && (endpoint.contains("completion") || endpoint.contains("chat"))
@@ -292,6 +309,7 @@ async fn forward_raw_body_request(
     endpoint_url: &str,
     headers: &http::HeaderMap,
     body_bytes: &Bytes,
+    virtual_models: Option<Arc<VirtualModelStore>>,
     cancellation_token: CancellationToken,
 ) -> Result<axum::response::Response, ProxyError> {
     let forward_headers = build_forward_headers(headers, false);
@@ -301,6 +319,10 @@ async fn forward_raw_body_request(
     let response = cancellable_request
         .make_raw_request(method, endpoint_url, forward_headers, prepared_body.bytes)
         .await?;
+
+    if let Some(virtual_models) = virtual_models {
+        return forward_models_listing(response, &virtual_models).await;
+    }
 
     forward_raw_response(response).await
 }
@@ -407,6 +429,126 @@ async fn forward_raw_response(response: reqwest::Response) -> Result<Response, P
     builder
         .body(body)
         .map_err(|_| ProxyError::internal_server_error("failed to build passthrough response"))
+}
+
+/// Render the OpenAI model listing with the proxy's `/api/copy` aliases
+/// appended. The backend cannot know an alias (it exists only in the proxy's
+/// store), yet a `/v1` client already uses one as a `model` or a
+/// `/v1/models/{id}` path, so the listing it browses must show it too.
+async fn forward_models_listing(
+    response: reqwest::Response,
+    virtual_models: &VirtualModelStore,
+) -> Result<Response, ProxyError> {
+    if !response.status().is_success() {
+        return forward_raw_response(response).await;
+    }
+
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| ProxyError::bad_gateway(&format!("models listing body unreadable: {e}")))?;
+    let aliases = virtual_models.list().await;
+
+    // A body the proxy cannot merge into, or one with no alias to add, keeps
+    // the backend's exact bytes; only the response envelope is rebuilt.
+    let payload = merge_virtual_models_into_listing(&body, &aliases)
+        .map(Bytes::from)
+        .unwrap_or(body);
+    Ok(rebuild_passthrough_response(status, headers, payload))
+}
+
+/// Build the listing body a `/v1` client receives: the backend's own bytes
+/// with each `/api/copy` alias appended as an OpenAI model object. The row
+/// copies `owned_by` and `created` from the listed entry the alias targets, so
+/// it describes that model; an orphan alias (target no longer listed) falls
+/// back to the first entry's `owned_by`. Rows are appended in id order because
+/// the store's `HashMap` iteration order is process-random. `None` means the
+/// body is not a model listing, so the caller forwards the backend's bytes
+/// untouched.
+fn merge_virtual_models_into_listing(
+    body: &[u8],
+    aliases: &[VirtualModelEntry],
+) -> Option<Vec<u8>> {
+    let mut listing: Value = serde_json::from_slice(body).ok()?;
+    let data = listing.get_mut("data").and_then(Value::as_array_mut)?;
+    let first_owned_by = data
+        .first()
+        .and_then(|entry| entry.get("owned_by"))
+        .cloned();
+    let mut sorted_aliases: Vec<&VirtualModelEntry> = aliases.iter().collect();
+    sorted_aliases.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut merged = false;
+    for alias in sorted_aliases {
+        let already_listed = data
+            .iter()
+            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(alias.name.as_str()));
+        if already_listed {
+            continue;
+        }
+        let source = data.iter().find(|entry| {
+            entry.get("id").and_then(Value::as_str) == Some(alias.target_model_id.as_str())
+        });
+        // A listed target without `owned_by` leaves the row without one too:
+        // the first entry's value describes a different model.
+        let owned_by = match source {
+            Some(entry) => entry.get("owned_by"),
+            None => first_owned_by.as_ref(),
+        }
+        .cloned();
+        let created = source.and_then(|entry| entry.get("created")).cloned();
+        let mut row = json!({ "id": alias.name.clone(), "object": "model" });
+        if let Some(object) = row.as_object_mut() {
+            if let Some(owned_by) = owned_by {
+                object.insert("owned_by".to_string(), owned_by);
+            }
+            if let Some(created) = created {
+                object.insert("created".to_string(), created);
+            }
+        }
+        data.push(row);
+        merged = true;
+    }
+    if !merged {
+        return None;
+    }
+    serde_json::to_vec(&listing).ok()
+}
+
+/// Response headers that describe the bytes the proxy replaced rather than the
+/// payload: hyper frames the replacement body itself, so a copied
+/// `transfer-encoding` would abort the connection, and a copied validator
+/// (`etag`, `last-modified`) would vouch for bytes no client can fetch.
+const REPLACED_BODY_HEADERS: [&str; 12] = [
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "etag",
+    "last-modified",
+];
+
+/// Reuse the backend response's status and headers around a replacement body,
+/// dropping only the headers [`REPLACED_BODY_HEADERS`] names.
+fn rebuild_passthrough_response(
+    status: http::StatusCode,
+    mut headers: http::HeaderMap,
+    body: Bytes,
+) -> Response {
+    for name in REPLACED_BODY_HEADERS {
+        headers.remove(name);
+    }
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
+    response
 }
 
 #[cfg(test)]
