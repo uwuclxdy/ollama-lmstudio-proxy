@@ -201,6 +201,45 @@ async fn key_set_rejects_wrong_x_api_key() {
     assert_eq!(resp.status(), 401);
 }
 
+#[tokio::test]
+async fn correct_x_api_key_is_accepted_beside_a_stale_bearer() {
+    // A client switching to x-api-key can leave a stale Authorization header
+    // behind; the gate must judge each credential on its own rather than let
+    // the first non-empty one short-circuit the other.
+    let p = spawn_proxy_with_api_key(KEY).await;
+
+    let resp = p
+        .client
+        .get(p.url("/"))
+        .header("authorization", "Bearer wrong-key")
+        .header("x-api-key", KEY)
+        .send()
+        .await
+        .expect("GET / stale bearer + correct x-api-key");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "a correct x-api-key must authenticate even when Authorization carries a stale Bearer token"
+    );
+}
+
+#[tokio::test]
+async fn wrong_values_in_both_credential_headers_are_rejected() {
+    let p = spawn_proxy_with_api_key(KEY).await;
+
+    let resp = p
+        .client
+        .get(p.url("/"))
+        .header("authorization", "Bearer wrong-key")
+        .header("x-api-key", "wrong-key")
+        .send()
+        .await
+        .expect("GET / wrong bearer + wrong x-api-key");
+
+    assert_eq!(resp.status(), 401);
+}
+
 // ── /v1/messages 401 wears the Anthropic error envelope ─────────────────────
 
 #[tokio::test]

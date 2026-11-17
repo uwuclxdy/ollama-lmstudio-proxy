@@ -36,15 +36,18 @@ pub async fn api_key_gate(
     }
 
     // Accept the OpenAI-style `Authorization: Bearer <key>` or the Anthropic
-    // SDK's default `x-api-key: <key>` header. Constant-time compare so the
-    // check can't be timed into a byte-at-a-time oracle; ct_eq returns unequal
-    // (0) without panicking on differing token lengths. `matches!` drops the
-    // header borrow before `req` moves into `next.run`.
-    let authorized = matches!(
-        extract_bearer(req.headers().get(header::AUTHORIZATION))
-            .or_else(|| extract_api_key(req.headers().get("x-api-key"))),
-        Some(token) if expected.as_bytes().ct_eq(token.as_bytes()).into()
-    );
+    // SDK's default `x-api-key: <key>` header. Both are judged independently so
+    // a stale or malformed header in one cannot shadow a valid credential in
+    // the other. Constant-time compare so the check can't be timed into a
+    // byte-at-a-time oracle; ct_eq returns unequal (0) without panicking on
+    // differing token lengths.
+    let authorized = [
+        extract_bearer(req.headers().get(header::AUTHORIZATION)),
+        extract_api_key(req.headers().get("x-api-key")),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|token| expected.as_bytes().ct_eq(token.as_bytes()).into());
 
     if authorized {
         // The matched credential authenticates this proxy's caller, not the
