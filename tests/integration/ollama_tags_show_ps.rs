@@ -44,6 +44,26 @@ fn lms_models(models: Vec<Value>) -> Value {
     json!({ "models": models })
 }
 
+/// Minimal LM Studio /api/v0/completions response for a non-streaming generate.
+fn lm_completion_response(text: &str) -> Value {
+    json!({
+        "id": "cmpl-test",
+        "object": "text_completion",
+        "created": 1_700_000_000u64,
+        "model": "llama3.2-3b-instruct",
+        "choices": [{
+            "index": 0,
+            "text": text,
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/tags
 // ---------------------------------------------------------------------------
@@ -878,6 +898,60 @@ async fn ps_loaded_model_has_expires_at_and_size_vram_mirrors_size() {
         m["details"]["parent_model"],
         json!(""),
         "ps details.parent_model must be empty string; {m}"
+    );
+}
+
+#[tokio::test]
+async fn ps_after_i64_max_keep_alive_reports_expires_at_string() {
+    let p = spawn_proxy().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(lms_models(vec![native_model(
+                "llama3.2-3b-instruct",
+                "llama",
+                true,
+            )])),
+        )
+        .mount(&p.mock)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v0/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lm_completion_response("OK")))
+        .mount(&p.mock)
+        .await;
+
+    let resp = p
+        .client
+        .post(p.url("/api/generate"))
+        .json(&json!({
+            "model": "llama3.2:3b",
+            "prompt": "Hi",
+            "stream": false,
+            "keep_alive": 9_223_372_036_854_775_807_i64
+        }))
+        .send()
+        .await
+        .expect("POST /api/generate with keep_alive at i64::MAX");
+    assert_eq!(resp.status(), 200);
+
+    let resp = p
+        .client
+        .get(p.url("/api/ps"))
+        .send()
+        .await
+        .expect("GET /api/ps after a keep_alive at i64::MAX");
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.expect("json body");
+    let models = body["models"].as_array().expect("models array");
+    assert_eq!(models.len(), 1, "expected 1 loaded model; got {body}");
+    let m = &models[0];
+    assert!(
+        m["expires_at"].is_string(),
+        "expires_at must be a JSON string even when the deadline saturates; got {m}"
     );
 }
 

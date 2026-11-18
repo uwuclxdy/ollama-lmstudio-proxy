@@ -88,7 +88,7 @@ impl LoadTracker {
 
     /// Unix-seconds expiry for `key`, or `None` when untracked or deadline is unknown.
     ///
-    /// - Finite deadline → `Some(now + remaining)`.
+    /// - Finite deadline → `Some(now + remaining)`, saturating at `i64::MAX`.
     /// - Forever → `Some(far_future_unix)`. The exact sentinel (~100 years from
     ///   now) mirrors real Ollama's far-future `expires_at` for `keep_alive: -1`;
     ///   the spec (api-docs/ollama/api/ps.md) does not prescribe the value.
@@ -108,7 +108,9 @@ impl LoadTracker {
                 let elapsed = loaded_at.elapsed();
                 let remaining = d.saturating_sub(elapsed);
                 // Anchor deadline at now + remaining (Instant → wall-clock).
-                Some(now_unix + i64::try_from(remaining.as_secs()).unwrap_or(i64::MAX))
+                Some(
+                    now_unix.saturating_add(i64::try_from(remaining.as_secs()).unwrap_or(i64::MAX)),
+                )
             }
             Some(StoredTtl::Forever) => {
                 // ~100 years in seconds; large enough to be unmistakably "never".
@@ -210,6 +212,17 @@ mod tests {
         assert!(
             exp <= now + 300,
             "expiry must be within ttl: {exp} > {now}+300"
+        );
+    }
+
+    #[test]
+    fn finite_ttl_saturates_at_i64_max() {
+        let t = LoadTracker::new();
+        t.record("m", KeepAlive::Finite(Duration::from_secs(i64::MAX as u64)));
+        assert_eq!(
+            t.expires_at_unix("m"),
+            Some(i64::MAX),
+            "an i64::MAX-second ttl must saturate the deadline"
         );
     }
 
